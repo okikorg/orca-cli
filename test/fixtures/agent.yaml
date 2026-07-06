@@ -1,0 +1,21 @@
+name: support-bot
+runtime: claude
+model: claude-sonnet-5
+systemPrompt: |
+  You answer support questions about Orca.
+skills:
+  - orca-docs
+tools:
+  - "@orchestration"
+mcpServers:
+  - name: docs
+    transport: http
+    url: https://mcp.example.com/docs
+fs:
+  read:
+    - /agents/self
+sandbox:
+  provider: e2b
+  resources:
+    cpu: 2
+    memoryMB: 1024

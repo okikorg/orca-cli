@@ -1,0 +1,264 @@
+import { Box, Static, Text, useApp, useInput } from 'ink'
+import Spinner from 'ink-spinner'
+import TextInput from 'ink-text-input'
+import { useEffect, useRef, useState } from 'react'
+
+import type { ChatEvent, ChatToolStatus, ChatTurnResult } from '../lib/gateway.js'
+import { POINTER, theme } from './theme.js'
+
+// send is injected by the chat command so this component never touches fetch
+// or the gateway client directly (mirrors RunTail's `subscribe`), keeping it
+// unit-testable under ink-testing-library. It resolves with how the turn
+// ended; it does not reject for gateway `error` events (those arrive as a
+// { terminated: 'error' } result so the REPL stays alive).
+export type SendTurn = (
+  message: string,
+  handlers: { onEvent: (event: ChatEvent) => void; signal: AbortSignal },
+  conversationId: string | undefined,
+) => Promise<ChatTurnResult>
+
+export type ChatProps = {
+  agentLabel: string
+  initialConversationId?: string
+  send: SendTurn
+  onExit: (conversationId?: string) => void
+}
+
+type ToolState = { id: string; name: string; status: ChatToolStatus }
+
+type Item =
+  | { kind: 'intro'; key: number; agent: string }
+  | { kind: 'user'; key: number; text: string }
+  | { kind: 'assistant'; key: number; text: string; tools: ToolState[]; cancelled?: boolean }
+  | { kind: 'error'; key: number; message: string }
+  | { kind: 'summary'; key: number; conversationId?: string }
+
+// Omit over a union is not distributive by default; this keeps each member's
+// own fields so pushItem accepts a fully-typed item minus its key.
+type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never
+type ItemInput = DistributiveOmit<Item, 'key'>
+
+function toolColor(status: ChatToolStatus): string {
+  return status === 'error' ? theme.destructive : theme.subtle
+}
+
+function ToolRows({ tools }: { tools: ToolState[] }) {
+  return (
+    <>
+      {tools.map((t) => (
+        <Text key={t.id || t.name}>
+          <Text color={theme.subtle}>tool </Text>
+          <Text color={theme.muted}>{t.name}</Text>
+          <Text color={toolColor(t.status)}> {t.status}</Text>
+        </Text>
+      ))}
+    </>
+  )
+}
+
+function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }) {
+  switch (item.kind) {
+    case 'intro':
+      return (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text>
+            <Text color={theme.muted}>chatting with </Text>
+            <Text color={theme.accent}>{item.agent}</Text>
+          </Text>
+          <Text color={theme.subtle}>type a message and press enter; Ctrl-C to exit</Text>
+        </Box>
+      )
+    case 'user':
+      return (
+        <Box>
+          <Text color={theme.accent}>{POINTER} </Text>
+          <Text>{item.text}</Text>
+        </Box>
+      )
+    case 'assistant':
+      return (
+        <Box flexDirection="column" marginTop={1}>
+          {item.tools.length > 0 ? <ToolRows tools={item.tools} /> : null}
+          <Text>
+            <Text color={theme.muted}>{agentLabel} </Text>
+            {item.text || <Text color={theme.subtle}>(empty reply)</Text>}
+            {item.cancelled ? <Text color={theme.subtle}> (cancelled)</Text> : null}
+          </Text>
+        </Box>
+      )
+    case 'error':
+      return (
+        <Box marginTop={1}>
+          <Text color={theme.destructive}>error: {item.message}</Text>
+        </Box>
+      )
+    case 'summary':
+      return (
+        <Box marginTop={1}>
+          <Text color={theme.subtle}>
+            {item.conversationId ? `conversation ${item.conversationId}` : 'no conversation started'}
+          </Text>
+        </Box>
+      )
+  }
+}
+
+export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatProps) {
+  const { exit } = useApp()
+  const [items, setItems] = useState<Item[]>([{ kind: 'intro', key: 0, agent: agentLabel }])
+  const [input, setInput] = useState('')
+  const [streaming, setStreaming] = useState(false)
+  const [liveText, setLiveText] = useState('')
+  const [liveTools, setLiveTools] = useState<ToolState[]>([])
+  const [exiting, setExiting] = useState(false)
+
+  // Refs mirror state for the useInput closure (which Ctrl-C reads) and for
+  // the deferred-exit effect, avoiding stale reads.
+  const keyRef = useRef(1)
+  const abortRef = useRef<AbortController | null>(null)
+  const streamingRef = useRef(false)
+  const exitingRef = useRef(false)
+  const convRef = useRef<string | undefined>(initialConversationId)
+
+  const pushItem = (item: ItemInput) =>
+    setItems((prev) => [...prev, { ...item, key: keyRef.current++ } as Item])
+
+  function beginExit() {
+    if (exitingRef.current) return
+    exitingRef.current = true
+    pushItem({ kind: 'summary', conversationId: convRef.current })
+    setExiting(true)
+  }
+
+  function submit(raw: string) {
+    const message = raw.trim()
+    setInput('')
+    if (!message || streamingRef.current || exitingRef.current) return
+
+    pushItem({ kind: 'user', text: message })
+    streamingRef.current = true
+    setStreaming(true)
+    setLiveText('')
+    setLiveTools([])
+
+    const controller = new AbortController()
+    abortRef.current = controller
+    const tools = new Map<string, ToolState>()
+    let accum = ''
+
+    send(
+      message,
+      {
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (event.type === 'delta') {
+            accum += event.text
+            setLiveText(accum)
+          } else if (event.type === 'tool') {
+            tools.set(event.id, { id: event.id, name: event.name, status: event.status })
+            setLiveTools([...tools.values()])
+          }
+        },
+      },
+      convRef.current,
+    )
+      .then((result) => {
+        finishTurn(result, accum, [...tools.values()])
+      })
+      .catch((err: unknown) => {
+        // send() maps gateway HTTP failures to an error result, so a reject
+        // here is unexpected; surface it and keep the REPL alive.
+        pushItem({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
+        endStreaming()
+      })
+  }
+
+  function endStreaming() {
+    abortRef.current = null
+    streamingRef.current = false
+    setStreaming(false)
+    setLiveText('')
+    setLiveTools([])
+  }
+
+  function finishTurn(result: ChatTurnResult, accum: string, tools: ToolState[]) {
+    if (result.terminated === 'done') {
+      pushItem({ kind: 'assistant', text: result.message || accum, tools })
+      if (result.conversationId) convRef.current = result.conversationId
+    } else if (result.terminated === 'aborted') {
+      pushItem({ kind: 'assistant', text: accum, tools, cancelled: true })
+    } else if (result.terminated === 'dropped') {
+      if (accum) pushItem({ kind: 'assistant', text: accum, tools })
+      pushItem({ kind: 'error', message: 'stream closed before a terminal done/error event' })
+    } else {
+      // terminated === 'error'
+      pushItem({ kind: 'error', message: result.message || result.errorCode || 'upstream error' })
+    }
+    endStreaming()
+  }
+
+  useInput((inputChar, key) => {
+    if (key.ctrl && inputChar === 'c') {
+      if (streamingRef.current && abortRef.current) {
+        abortRef.current.abort()
+        return
+      }
+      beginExit()
+    }
+  })
+
+  // Defer exit one tick so the summary <Static> item commits before Ink tears
+  // down the dynamic region (same race RunTail guards against).
+  useEffect(() => {
+    if (!exiting) return
+    const t = setTimeout(() => {
+      onExit(convRef.current)
+      exit()
+    }, 0)
+    return () => clearTimeout(t)
+    // onExit/exit are stable for the command's lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exiting])
+
+  return (
+    <Box flexDirection="column">
+      <Static items={items}>
+        {(item) => (
+          <Box key={item.key} flexDirection="column">
+            <TranscriptItem item={item} agentLabel={agentLabel} />
+          </Box>
+        )}
+      </Static>
+
+      {exiting ? null : streaming ? (
+        <Box flexDirection="column">
+          {liveTools.length > 0 ? <ToolRows tools={liveTools} /> : null}
+          {liveText === '' ? (
+            <Text>
+              <Text color={theme.accent}>
+                <Spinner type="dots" />
+              </Text>
+              <Text color={theme.muted}> thinking</Text>
+            </Text>
+          ) : (
+            <Text>
+              <Text color={theme.muted}>{agentLabel} </Text>
+              {liveText}
+            </Text>
+          )}
+        </Box>
+      ) : (
+        <Box>
+          <Text color={theme.accent}>{POINTER} </Text>
+          <TextInput
+            value={input}
+            onChange={setInput}
+            onSubmit={submit}
+            focus={!streaming && !exiting}
+            placeholder="message"
+          />
+        </Box>
+      )}
+    </Box>
+  )
+}
