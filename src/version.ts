@@ -24,3 +24,9 @@ function versionFromPackageJson(): string {
 }
 
 export const VERSION = injected || versionFromPackageJson()
+
+// True only inside a Bun-compiled standalone binary, where the version was
+// injected at build time. Node/tsup and dev (tsx) runs read package.json off
+// disk instead and report false. `orca update` consults this to decide whether
+// it can rewrite its own executable in place.
+export const IS_STANDALONE = Boolean(injected)

@@ -17,9 +17,11 @@ import { registerSessions } from './commands/sessions.js'
 import { registerSkills } from './commands/skills.js'
 import { registerStats } from './commands/stats.js'
 import { registerStorage } from './commands/storage.js'
+import { registerUpdate } from './commands/update.js'
 import { registerUsage } from './commands/usage.js'
 import { registerWorkflows } from './commands/workflows.js'
 import { CliError, ExitCode } from './lib/errors.js'
+import { notifyIfUpdateAvailable } from './lib/update-check.js'
 import { bannerString } from './ui/banner.js'
 import { ansi, paint } from './ui/theme.js'
 import { VERSION } from './version.js'
@@ -41,6 +43,7 @@ program.addHelpText('beforeAll', (ctx) => (ctx.command === program ? bannerStrin
 registerAuth(program)
 registerContext(program)
 registerDoctor(program)
+registerUpdate(program)
 registerAgents(program)
 registerPools(program)
 registerRuns(program)
@@ -72,7 +75,14 @@ async function main(): Promise<void> {
     if (err instanceof CommanderError) {
       // Help/version output already happened; usage errors already printed
       // to stderr by commander. Map them onto the exit-code contract.
-      if (err.code === 'commander.helpDisplayed' || err.code === 'commander.version' || err.code === 'commander.help') {
+      if (err.code === 'commander.version') {
+        // `-v` printed the version to stdout; append a best-effort "update
+        // available" hint on stderr (cached, TTY-only, never throws).
+        await notifyIfUpdateAvailable(VERSION)
+        process.exitCode = 0
+        return
+      }
+      if (err.code === 'commander.helpDisplayed' || err.code === 'commander.help') {
         process.exitCode = 0
         return
       }
