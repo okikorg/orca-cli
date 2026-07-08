@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 
 import { formatTimestamp } from '../lib/format.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
+import { assertWindow } from '../lib/window.js'
 import { statusColor } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
@@ -135,7 +136,7 @@ function fmtLast(iso?: string): string {
 }
 
 function window(opts: { window?: string }): string {
-  return opts.window && opts.window.trim() ? opts.window.trim() : DEFAULT_WINDOW
+  return opts.window && opts.window.trim() ? assertWindow(opts.window.trim()) : DEFAULT_WINDOW
 }
 
 // -- per-agent table (shared by `orca stats` and `orca stats agents`) --------

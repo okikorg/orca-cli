@@ -156,6 +156,19 @@ describe('checkContext', () => {
     expect(r.message).toContain('apiUrl=flag')
     expect(r.message).toContain('key=file')
   })
+
+  it('fails when an explicitly named context is unknown', () => {
+    const r = checkContext({
+      name: 'typpo',
+      sources: { apiUrl: 'default', gatewayUrl: 'default', dashboardUrl: 'default', apiKey: 'unset' },
+      missing: 'typpo',
+      configPath: '/home/ada/.config/orca/config.json',
+    })
+    expect(r.status).toBe('fail')
+    expect(r.message).toContain('context "typpo" not found')
+    expect(r.message).toContain('/home/ada/.config/orca/config.json')
+    expect(r.fix).toContain('orca context list')
+  })
 })
 
 describe('computeFieldSources', () => {
@@ -504,6 +517,53 @@ describe('gatherContext', () => {
     expect(ctx.apiUrl).toBe(DEFAULT_API_URL)
     expect(ctx.sources.apiUrl).toBe('default')
     expect(ctx.apiKey).toBeUndefined()
+  })
+
+  it('flags an unknown explicitly-named context (--context flag)', async () => {
+    await saveConfig({
+      currentContext: 'default',
+      contexts: { default: { apiUrl: 'http://localhost:8080', apiKey: KEY } },
+    })
+    const ctx = await gatherContext({ context: 'nope' }, process.env)
+    expect(ctx.missingContext).toBe('nope')
+    // The check turns that into a hard failure.
+    const results = await runDoctor({
+      ctx,
+      env: { ...process.env },
+      isTTY: true,
+      nodeVersion: '22.0.0',
+      fetchImpl: networkError,
+      timeoutMs: 20,
+    })
+    const context = results.find((r) => r.name === 'context')!
+    expect(context.status).toBe('fail')
+    expect(context.message).toContain('context "nope" not found')
+  })
+
+  it('flags an unknown context named via ORCA_CONTEXT', async () => {
+    await saveConfig({ contexts: { default: { apiKey: KEY } } })
+    process.env.ORCA_CONTEXT = 'ghost'
+    try {
+      const ctx = await gatherContext({}, process.env)
+      expect(ctx.missingContext).toBe('ghost')
+    } finally {
+      delete process.env.ORCA_CONTEXT
+    }
+  })
+
+  it('does not flag a known context or an unset context', async () => {
+    await saveConfig({
+      currentContext: 'default',
+      contexts: { default: { apiKey: KEY }, prod: { apiKey: KEY } },
+    })
+    expect((await gatherContext({ context: 'prod' }, process.env)).missingContext).toBeUndefined()
+    expect((await gatherContext({}, process.env)).missingContext).toBeUndefined()
+  })
+
+  it('does not flag a missing context when env fully overrides (key + url)', async () => {
+    const env = { ...process.env, ORCA_API_KEY: KEY, ORCA_API_URL: 'http://test:8080', ORCA_CONTEXT: 'ci' }
+    const ctx = await gatherContext({ context: 'ci' }, env)
+    expect(ctx.missingContext).toBeUndefined()
   })
 
   it('records a parseError on a corrupt config without throwing', async () => {

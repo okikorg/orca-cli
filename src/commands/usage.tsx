@@ -3,6 +3,7 @@ import type { Command } from 'commander'
 import { renderChart } from '../lib/chart.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatTimestamp } from '../lib/format.js'
+import { assertWindow } from '../lib/window.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
@@ -91,7 +92,7 @@ function cleanDuration(d: string): string {
 // resolveWindow maps the flags onto the conductor's window token. --window wins
 // over --days; the default (7d) matches the dashboard Usage page.
 function resolveWindow(opts: { window?: string; days?: number }): string {
-  if (opts.window) return opts.window
+  if (opts.window) return assertWindow(opts.window)
   if (opts.days != null) {
     if (!Number.isFinite(opts.days) || opts.days <= 0) {
       throw new CliError('--days must be a positive number', ExitCode.Usage)
