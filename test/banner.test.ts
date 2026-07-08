@@ -15,8 +15,8 @@ describe('bannerString', () => {
   it('includes the ASCII wordmark and version', () => {
     // Non-TTY in tests, so no ANSI: assert on the plain art + tagline.
     const s = bannerString()
-    expect(s).toContain('\\___/') // the O glyph tail
-    expect(s).toContain('|_) |') // the R glyph
+    expect(s).toContain('\\____/') // the O glyph tail
+    expect(s).toContain('_, _') // the R glyph
     expect(s).toContain('Manage agents')
     expect(s).toContain(`v${VERSION}`)
   })

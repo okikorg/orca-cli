@@ -140,7 +140,7 @@ CI needs no config file: `ORCA_API_KEY=... ORCA_API_URL=... orca agents list --j
 ## Commands
 
 ```
-orca auth login [--api-url u] [--dashboard-url u] [--label l] [--no-browser] [--with-token ao_...]
+orca auth login [--api-url u] [--dashboard-url u] [--gateway-url u] [--label l] [--no-browser] [--with-token ao_...]
 orca auth status
 orca auth logout [--revoke]
 orca context list|use <name>|show
@@ -151,14 +151,18 @@ orca agents update [name] -f agent.yaml  # target old name to rename
 orca agents delete <name> [--yes]
 orca agents publish <name> [--slug s] [--visibility v] [--expose-tool-events]
 orca agents unpublish <name> [--yes]
-orca agents keys list|create|revoke <agent> [id]
+orca agents keys list|create [--label l]|revoke <agent> [id]
 
 orca run <agent> "prompt" [--title t] [--session id] [--detach]
 orca runs list [--agent name]
 orca runs get|tail|cancel <id>
 
-orca keys list|create [name]|revoke <id>
+orca keys list|create [name] [--expires <iso8601>]|revoke <id>
 ```
+
+List commands that page (`agents list`, `runs list`, `keys list`, and the other
+`list` views) share `--limit N`, `--offset N`, and `--all` (fetch every page);
+see each command's `--help` for its per-command default limit.
 
 Every list/get command supports `--json` (raw API payloads, stdout only).
 When stdout is not a TTY, output degrades to uncolored tab-separated lines,

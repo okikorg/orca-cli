@@ -68,6 +68,11 @@ export type DoctorContext = {
   configPresent: boolean
   parseError?: string
   sources: Record<SourcedField, FieldSource>
+  // Set when an explicitly requested context (--context / ORCA_CONTEXT) is not
+  // present in the config file, mirroring resolveContext's "not found" error.
+  // Without this, a typo'd name silently resolves to all-defaults and doctor
+  // would report a falsely-healthy context using the wrong settings.
+  missingContext?: string
 }
 
 async function fileExists(p: string): Promise<boolean> {
@@ -135,8 +140,17 @@ export async function gatherContext(
     parseError = err instanceof Error ? err.message : String(err)
   }
 
-  const name = flags.context || env.ORCA_CONTEXT || cfg.currentContext || DEFAULT_CONTEXT
+  const explicitName = flags.context || env.ORCA_CONTEXT
+  const name = explicitName || cfg.currentContext || DEFAULT_CONTEXT
   const file = cfg.contexts[name] ?? {}
+
+  // An explicitly named context that the config does not know is a mistake
+  // (matches resolveContext): flag it so the context check fails instead of
+  // silently falling back to defaults. Env that fully overrides the context
+  // (both key and URL) makes contexts moot, so it is not an error there.
+  const envOverrides = Boolean(env.ORCA_API_KEY && env.ORCA_API_URL)
+  const missingContext =
+    explicitName && !(explicitName in cfg.contexts) && !envOverrides ? explicitName : undefined
 
   const defaulted = new Set<DefaultableField>()
   const withDefault = (
@@ -180,6 +194,7 @@ export async function gatherContext(
     configPresent: present,
     parseError,
     sources: computeFieldSources({ defaulted, flags, env, file }),
+    missingContext,
   }
 }
 
@@ -333,15 +348,28 @@ export async function checkConfigPermissions(path: string): Promise<CheckResult>
   return { name, status: 'pass', message: `owner-only (mode ${octal})` }
 }
 
-// 5. Effective context resolution. Informational: shows the active context and
-//    where each field's value came from (flag/env/file/default).
+// 5. Effective context resolution. Informational when the context resolves;
+//    a hard failure when an explicitly named context is unknown (a typo would
+//    otherwise silently resolve to defaults and report as healthy).
 export function checkContext(o: {
   name: string
   sources: Record<SourcedField, FieldSource>
+  missing?: string
+  configPath?: string
 }): CheckResult {
+  const name = 'context'
+  if (o.missing) {
+    const where = o.configPath ? ` in ${o.configPath}` : ''
+    return {
+      name,
+      status: 'fail',
+      message: `context "${o.missing}" not found${where}`,
+      fix: 'list contexts with: orca context list',
+    }
+  }
   const s = o.sources
   const summary = `apiUrl=${s.apiUrl}, gateway=${s.gatewayUrl}, dashboard=${s.dashboardUrl}, key=${s.apiKey}`
-  return { name: 'context', status: 'pass', message: `active "${o.name}"; ${summary}` }
+  return { name, status: 'pass', message: `active "${o.name}"; ${summary}` }
 }
 
 // -- Connectivity + auth checks (read-only probes only) -----------------------
@@ -648,7 +676,12 @@ export async function runDoctor(o: RunDoctorOptions): Promise<CheckResult[]> {
     envKey: Boolean(env.ORCA_API_KEY),
   })
   const perms = await checkConfigPermissions(ctx.configPath)
-  const context = checkContext({ name: ctx.name, sources: ctx.sources })
+  const context = checkContext({
+    name: ctx.name,
+    sources: ctx.sources,
+    missing: ctx.missingContext,
+    configPath: ctx.configPath,
+  })
   const apiKey = checkApiKeyPresent(ctx.apiKey)
   const dashboard = checkDashboard({
     dashboardUrl: ctx.dashboardUrl,
