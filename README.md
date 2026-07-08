@@ -25,6 +25,31 @@ Windows users download `orca-windows-x64.tar.gz` from the
 This repo is the public home of the CLI source and its release binaries; the
 Orca platform it talks to is a separate, private service.
 
+### Updating
+
+`orca update` updates a standalone binary to the latest release in place: it
+queries the GitHub Release, downloads the matching `orca-<os>-<arch>` binary,
+verifies its SHA-256 against `SHA256SUMS`, and atomically swaps the running
+executable.
+
+```sh
+orca update                 # update to the latest release
+orca update --check         # report whether a newer version exists, don't install
+orca update --tag cli-v0.1.0  # install a specific version (also accepts 0.1.0)
+orca update --force         # reinstall the target version even if already current
+```
+
+`orca -v` prints the version and, in an interactive terminal, appends a hint
+when a newer release is available. The check is cached for ~24h under the config
+dir (`update-check.json`), is skipped in scripts (non-TTY stderr), and is
+disabled entirely by `ORCA_NO_UPDATE_CHECK`. Both commands honor `GITHUB_TOKEN`
+to lift the anonymous GitHub API rate limit.
+
+Self-update is only available for the standalone binary. npm installs update via
+`npm install -g @agent-orc/cli@latest`; Windows can't replace a running `.exe`,
+so re-download `orca-windows-x64.tar.gz` from the releases page. In each of these
+cases `orca update` prints the right instructions instead of attempting a swap.
+
 ### Releasing binaries
 
 Binaries are Bun-compiled (each embeds the Bun runtime, ~60–100 MB raw / ~23 MB
