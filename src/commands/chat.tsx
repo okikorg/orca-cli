@@ -1,7 +1,7 @@
 import type { Command } from 'commander'
 
 import { ApiClient } from '../lib/api.js'
-import { resolveContext } from '../lib/config.js'
+import { resolveContext, type ResolvedContext } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import {
   GatewayClient,
@@ -139,17 +139,63 @@ async function runRepl(client: GatewayClient, agent: string, opts: ChatOpts): Pr
   await instance.waitUntilExit()
 }
 
+// pickPublishedAgent opens the generic Picker over the tenant's published
+// agents so an interactive `orca chat` with no agent arg still resolves one.
+// It only runs in an interactive TTY with a conductor key configured; every
+// non-TTY path keeps the byte-identical missing-arg usage error. Rows show the
+// profile name with the published slug as subtle detail; the chosen value is
+// the profile name, which the tenant-resolution block below already accepts
+// (falling back to a slug match).
+async function pickPublishedAgent(resolved: ResolvedContext): Promise<string> {
+  if (!resolved.apiUrl || !resolved.apiKey) {
+    throw new CliError('agent name required', ExitCode.Usage, [
+      'Usage: orca chat <agent> "message"',
+      'Configure a conductor context (orca auth login) to pick from published agents.',
+    ])
+  }
+  const api = new ApiClient({
+    apiUrl: resolved.apiUrl,
+    apiKey: resolved.apiKey,
+    contextName: resolved.name,
+  })
+  const page = await fetchAll((params) => api.listPublishedAgents(params))
+  if (page.items.length === 0) {
+    throw new CliError('no published agents to chat with', ExitCode.Usage, [
+      'Publish one first: orca agents publish <agent>',
+    ])
+  }
+  const { pickOne } = await import('../ui/AgentPicker.js')
+  // pickOne takes plain names; the profile name is what tenant resolution keys
+  // off, and it is the human-facing label anyway.
+  return pickOne('Select a published agent', page.items.map((p) => p.profileName))
+}
+
 export function registerChat(program: Command): void {
   program
-    .command('chat <agent> [prompt...]')
+    .command('chat [agent] [prompt...]')
     .description('chat with a published agent through the public gateway (always streams over SSE)')
     .option('--key <chat-key>', 'published-agent chat key (or env ORCA_CHAT_KEY)')
     .option('--tenant <slug>', 'tenant the agent was published under (or env ORCA_TENANT)')
     .option('--conversation <id>', 'resume a prior conversation (single-shot)')
     .option('--end-user <id>', 'metadata.end_user_id passed to the gateway')
-    .action(async (agent: string, promptParts: string[], opts: ChatOpts, cmd: Command) => {
+    .action(async (agentArg: string | undefined, promptParts: string[], opts: ChatOpts, cmd: Command) => {
       const flags = globalFlags(cmd)
       const resolved = await resolveContext(flags)
+
+      // An omitted agent arg opens the picker only in an interactive TTY; the
+      // non-TTY / --json / piped paths keep the original usage error so scripts
+      // and machine contracts are untouched.
+      let agent = agentArg
+      if (!agent) {
+        const piped = !process.stdin.isTTY
+        if (Boolean(flags.json) || piped || !interactive()) {
+          throw new CliError('agent name required', ExitCode.Usage, [
+            'Usage: orca chat <agent> "message"',
+            'Or pipe stdin: echo hi | orca chat <agent>',
+          ])
+        }
+        agent = await pickPublishedAgent(resolved)
+      }
 
       const gatewayUrl = resolved.gatewayUrl
       if (!gatewayUrl) {

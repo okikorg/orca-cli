@@ -112,6 +112,15 @@ describe('secrets list', () => {
     stubFetch({ 'GET /api/secrets?limit=10': jsonResponse({ error: 'bad key' }, { status: 401 }) })
     await expect(run(['secrets', 'list'])).rejects.toMatchObject({ exitCode: ExitCode.Auth })
   })
+
+  it('hints the set command on an empty list (stderr only)', async () => {
+    stubFetch({ 'GET /api/secrets?limit=10': jsonResponse({ total: 0, secrets: [] }) })
+    await run(['secrets', 'list'])
+    expect(stdout()).toBe('')
+    const errText = vi.mocked(console.error).mock.calls.map((c) => c.map(String).join(' ')).join('\n')
+    expect(errText).toContain('No secrets')
+    expect(errText).toContain('orca secrets set')
+  })
 })
 
 describe('secrets set', () => {

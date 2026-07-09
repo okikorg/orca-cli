@@ -3,6 +3,7 @@ import type { Command } from 'commander'
 import { formatDuration, formatTimestamp } from '../lib/format.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import type { RunSummary } from '../lib/types.js'
+import { hintText } from '../ui/theme.js'
 import {
   addPageFlags,
   apiContext,
@@ -75,7 +76,15 @@ export function registerSessions(program: Command): void {
         return
       }
       if (items.length === 0) {
-        console.error(opts.agent ? `No sessions for agent "${opts.agent}".` : 'No sessions.')
+        // Empty state names the command that creates a session. stderr only, so
+        // plain stdout stays empty (byte-identical) for scripts.
+        console.error(
+          hintText(
+            opts.agent
+              ? `No sessions for agent "${opts.agent}". Start one with: orca run ${opts.agent} "prompt"`
+              : 'No sessions yet. Start one with: orca run <agent> "prompt"',
+          ),
+        )
         return
       }
       if (mode === 'plain') {
@@ -94,26 +103,32 @@ export function registerSessions(program: Command): void {
       }
 
       const { Table } = await import('../ui/Table.js')
-      const { Panel } = await import('../ui/Panel.js')
-      const { theme } = await import('../ui/theme.js')
+      const { glyphs, theme } = await import('../ui/theme.js')
+      // Wide, multi-column table: header line + UPPERCASE labels + a `next:`
+      // hint. The status cell shows the tier glyph + word (`● running`), tinted
+      // by sessionStatusColor. Session status is a free string (idle/running/
+      // errored/shutdown), not a RunStatus, so the glyph is composed inline
+      // rather than through Table's RunStatus-typed statusDot helper.
       await renderStatic(
-        <Panel title="SESSIONS" subtitle={pagedSubtitle(items.length, page.total)}>
-          <Table
-            columns={[
-              { header: 'id', get: (s: Session) => s.id, color: () => theme.accent, bold: true },
-              { header: 'profile', get: (s: Session) => s.profile },
-              { header: 'runtime', get: (s: Session) => s.runtime },
-              {
-                header: 'status',
-                get: (s: Session) => s.status,
-                color: (s: Session) => sessionStatusColor(s.status, theme),
-              },
-              { header: 'last used', get: (s: Session) => formatTimestamp(s.lastUsedAt) },
-              { header: 'runs', get: (s: Session) => String(s.runCount) },
-            ]}
-            rows={items}
-          />
-        </Panel>,
+        <Table
+          title="Sessions"
+          meta={pagedSubtitle(items.length, page.total)}
+          headers
+          hint="orca sessions get <id> · orca runs list --agent <name>"
+          columns={[
+            { header: 'id', get: (s: Session) => s.id, color: () => theme.accent, bold: true },
+            { header: 'profile', get: (s: Session) => s.profile },
+            { header: 'runtime', get: (s: Session) => s.runtime },
+            {
+              header: 'status',
+              get: (s: Session) => `${glyphs.statusFilled} ${s.status}`,
+              color: (s: Session) => sessionStatusColor(s.status, theme),
+            },
+            { header: 'last used', get: (s: Session) => formatTimestamp(s.lastUsedAt) },
+            { header: 'runs', get: (s: Session) => String(s.runCount) },
+          ]}
+          rows={items}
+        />,
       )
       printPageHint(items.length, page.total)
     })

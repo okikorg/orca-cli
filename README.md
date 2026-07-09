@@ -3,10 +3,15 @@
 Manage agents, runs, and publishing on the Orca platform from the terminal.
 TypeScript + commander for command routing, Ink (React) for TTY rendering.
 
-Running `orca` with no arguments shows an ASCII wordmark and the command list.
-In a terminal, list and detail views render as coral-titled, single-line
-bordered panels following the Orca design language (`src/ui/theme.ts`); piped
-or `--json` output stays plain and machine-clean. `NO_COLOR` is honored.
+Running `orca` with no arguments shows a one-line brand banner and the command
+list. In a terminal, list and detail views are borderless: hierarchy comes from
+whitespace and weight, not boxes. Each view opens with a bold coral title and
+` · `-separated metadata in subtle gray, content rows indent two spaces, and
+list views end with a subtle `next:` hint teaching follow-up commands. Coral is
+the only accent (`src/ui/theme.ts`); piped or `--json` output stays plain and
+machine-clean. Unicode glyphs are restricted to a CP437/Latin-1 safe tier and
+fall back to ASCII when the locale is not UTF-8 or `ORCA_ASCII=1` is set.
+`NO_COLOR` is honored, independently of the glyph tier.
 
 ## Install
 
@@ -106,7 +111,7 @@ only (it never creates a run, key, or any resource), timeboxes each network
 probe to 3s so it never hangs, and completes in a few seconds.
 
 ```sh
-orca doctor            # coral DOCTOR panel: one row per check, fix lines under failures
+orca doctor            # Doctor header line, one row per check (status glyph + word), fix lines under failures
 orca doctor --json     # array of { name, status, message, fix? }
 orca doctor --strict   # promote warnings to failures
 ```
@@ -134,6 +139,7 @@ Environment overrides (all optional, win over the config file):
 | `ORCA_TENANT`     | tenant slug for `orca chat`      |
 | `ORCA_CONTEXT`    | context name                     |
 | `ORCA_CONFIG_DIR` | config directory (default XDG)   |
+| `ORCA_ASCII`      | set to `1` to force ASCII glyphs (no Unicode tier) |
 
 CI needs no config file: `ORCA_API_KEY=... ORCA_API_URL=... orca agents list --json`.
 
@@ -244,7 +250,8 @@ orca agents changes <name> [--limit N]       # profile change history
 ```
 
 `orca stats` is the tenant health snapshot: aggregate totals (`GET
-/api/stats/summary`) as a field panel, a per-agent activity table (`GET
+/api/stats/summary`) as a labeled field block under the header line, a per-agent
+activity table (`GET
 /api/stats/agents`, failures colored on the run-status palette), and an
 activity-hotspots section (`GET /api/stats/hotspots`). It complements `orca
 usage`, which owns the time-series chart and spend; stats carries no cost column
@@ -254,9 +261,10 @@ plain mode the top-level `orca stats` prints single-shape key/value totals, and
 `agents` / `hotspots` print their own rows.
 
 `orca topology` (`GET /api/topology`) renders the runner pool as an indented
-tree: a coral `conductor` root, `|-` connectors in gray, each runner's hash in
-coral with health and session/latency detail. It returns exit 4 in single-runner
-mode (the conductor is not pooled).
+tree: a coral `conductor` root, tree-edge connectors in gray (`├`/`└` on the
+Unicode tier, `|-`/`` `- `` on the ASCII tier), each runner's hash in coral with
+health and session/latency detail. It returns exit 4 in single-runner mode (the
+conductor is not pooled).
 
 `orca ping` resolves the context's API URL (no key required), times a request to
 `GET /healthz`, and exits `0` when healthy or `1` when the conductor is
@@ -291,7 +299,8 @@ orca workflows schedules delete <id> [--yes]
 
 The definition/run views render steps in execution order as an indented
 tree: step names in the default foreground, profiles in coral, dependency
-edges (`|-` indent, `<- after`) in gray. `workflows tail` streams full
+edges (tree connector plus `<- after`, `├` on the Unicode tier and `|-` on the
+ASCII tier) in gray. `workflows tail` streams full
 run snapshots (not incremental events), diffing them into per-step
 transition lines; `tail --json` emits one raw `{type, workflowRun}` frame
 per line. Ctrl-C detaches the tail (exit 130); the run keeps going. A tail

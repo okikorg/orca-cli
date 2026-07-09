@@ -4,8 +4,31 @@ import { CliError, ExitCode } from '../lib/errors.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import type { ControlPlaneAPIKeyMetadata } from '../lib/types.js'
 import { accentVerb, hintText } from '../ui/theme.js'
-import { confirm, revealIssuedKey } from './prompts.js'
+import { revealIssuedKey } from './prompts.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
+
+// confirmDestructive mounts the shared Confirm component for a y/N gate in
+// interactive TTY mode (single keypress; Enter declines, so the safe answer is
+// the default). Non-TTY callers never reach here — they require --yes and
+// throw a Usage error first — so this changes nothing about the machine
+// contract. Kept local per command because the shared prompts module is owned
+// by another wave; the mount pattern mirrors pickOne/promptText.
+async function confirmDestructive(message: string): Promise<boolean> {
+  const { render } = await import('ink')
+  const { Confirm } = await import('../ui/Confirm.js')
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (v: boolean) => {
+      if (settled) return
+      settled = true
+      instance.unmount()
+      resolve(v)
+    }
+    const instance = render(<Confirm message={message} onDecision={finish} />, { exitOnCtrlC: true })
+    // Ctrl-C unmounts without a decision; treat it as a decline (safe default).
+    void instance.waitUntilExit().then(() => finish(false))
+  })
+}
 
 export function registerKeys(program: Command): void {
   const keys = program
@@ -25,7 +48,8 @@ export function registerKeys(program: Command): void {
         return
       }
       if (items.length === 0) {
-        console.error(hintText('No API keys. Create one with: orca keys create <name>'))
+        console.error(hintText('No API keys yet.'))
+        console.error(hintText('  create one: orca keys create <name>'))
         return
       }
       const state = (k: ControlPlaneAPIKeyMetadata) =>
@@ -53,6 +77,8 @@ export function registerKeys(program: Command): void {
               },
             ]}
             rows={items}
+            headers
+            hint="orca keys create [name]"
           />
         </Panel>,
       )
@@ -93,7 +119,7 @@ export function registerKeys(program: Command): void {
         if (!interactive()) {
           throw new CliError('refusing to revoke without --yes in non-interactive mode', ExitCode.Usage)
         }
-        if (!(await confirm(`Revoke key ${id}? Anything authenticating with it stops working.`))) {
+        if (!(await confirmDestructive(`Revoke key ${id}? Anything authenticating with it stops working.`))) {
           console.error(hintText('Aborted.'))
           return
         }

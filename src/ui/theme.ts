@@ -1,17 +1,22 @@
 // Orca design language, translated to the terminal. Source tokens:
-// dashboard/src/index.css and landing/src/index.css (dark-first, flat,
-// border-delineated, instrument aesthetic). Components import from here and
-// never hardcode colors.
+// dashboard/src/index.css and landing/src/index.css. Components import from
+// here and never hardcode a color or a glyph.
 //
-// Rules carried over from the design language:
-// - coral is the one accent: wordmark, panel titles, selection pointer,
-//   active/primary emphasis
-// - panels are delineated by single-line borders (the flat, 2px-radius look);
-//   no rounded or double border styles
-// - selection/active state is the coral pointer plus coral text, never an
-//   accent bar or inverted block
-// - default foreground is left to the user's terminal; we only color
-//   emphasis, secondary text, borders, and errors
+// Grammar (see docs/superpowers/specs/2026-07-09-cli-ui-modernization-design.md):
+// - Hierarchy comes from whitespace and weight, not boxes. No panel borders.
+//   The border token survives only for tree edges (topology, workflow DAG) and
+//   chart axes.
+// - A view starts with a header line: bold coral title, then ` · `-separated
+//   metadata in subtle gray. Content rows indent two spaces; blank lines
+//   separate groups.
+// - Coral is the ONLY accent: headers, prompt marker, running/active state,
+//   primary emphasis. Status palette: running=accent, error=destructive,
+//   cancelled/interrupted=subtle, ok=default foreground.
+// - Default foreground is left to the user's terminal; we only color emphasis,
+//   secondary text, tree/axis edges, and errors.
+// - No emoji, ever. No rounded/double borders. No background colors.
+// - Glyphs route through `glyphs` (below): a safe CP437/Latin-1 tier by
+//   default, an ASCII tier when the locale is not UTF-8 or ORCA_ASCII is set.
 
 import type { RunStatus } from '../lib/types.js'
 
@@ -42,8 +47,84 @@ export const ansi = {
   reset: '\x1b[0m',
 } as const
 
-// Pointer glyph for pickers; matches the flat instrument look.
-export const POINTER = '>'
+// unicodeEnabled decides the glyph tier, once, at startup. ORCA_ASCII=1 forces
+// the ASCII tier. Otherwise: on non-Windows we accept the Unicode tier only
+// when the locale env (LC_ALL / LC_CTYPE / LANG) advertises UTF-8, since the
+// user's terminal font renders tofu for anything outside the CP437/Latin-1
+// safe set on a non-UTF-8 locale; on Windows we use the same terminal
+// heuristics is-unicode-supported uses (Windows Terminal, VS Code, ConEmu,
+// mintty), hand-rolled to avoid a dependency. This is orthogonal to color:
+// NO_COLOR and non-TTY suppress color, not glyphs.
+export function unicodeEnabled(): boolean {
+  const env = process.env
+  if (env.ORCA_ASCII === '1') return false
+
+  if (process.platform !== 'win32') {
+    const locale = env.LC_ALL || env.LC_CTYPE || env.LANG || ''
+    return /UTF-?8$/i.test(locale)
+  }
+
+  // Windows: no reliable locale signal, so gate on the terminal instead.
+  return Boolean(
+    env.WT_SESSION || // Windows Terminal
+      env.TERMINUS_SUBLIME || // Terminus
+      env.ConEmuTask === '{cmd::Cmder}' || // ConEmu / cmder
+      env.TERM_PROGRAM === 'Terminus-Sublime' ||
+      env.TERM_PROGRAM === 'vscode' ||
+      env.TERM === 'xterm-256color' ||
+      env.TERM === 'alacritty' ||
+      env.TERMINAL_EMULATOR === 'JetBrains-JediTerm',
+  )
+}
+
+// Glyph tiers. Every glyph the UI draws comes from here, chosen once via
+// unicodeEnabled(). The Unicode tier is restricted to the CP437/Latin-1 legacy
+// set (universal font coverage); never add a glyph outside that tier. Do NOT
+// use the tofu offenders `▚ ❯ ✖ ✔ ✓ ▲ ◐` or braille.
+const UNICODE_GLYPHS = {
+  pointer: '»',
+  statusFilled: '●',
+  statusOpen: '○',
+  treeBranch: '├',
+  treeLast: '└',
+  treeVertical: '│',
+  separator: '·',
+  brandMark: '▀▄',
+  rule: '─',
+  spinner: ['░', '▒', '▓', '█', '▓', '▒'],
+} as const
+
+const ASCII_GLYPHS = {
+  pointer: '>',
+  statusFilled: '*',
+  statusOpen: 'o',
+  treeBranch: '|-',
+  treeLast: '`-',
+  treeVertical: '|',
+  separator: '-',
+  brandMark: '', // no mark in the ASCII tier
+  rule: '-',
+  spinner: ['-', '\\', '|', '/'],
+} as const
+
+// The active glyph set, resolved once at module load. Shape is stable across
+// tiers so call sites read `glyphs.pointer` etc. without a branch.
+export const glyphs: {
+  pointer: string
+  statusFilled: string
+  statusOpen: string
+  treeBranch: string
+  treeLast: string
+  treeVertical: string
+  separator: string
+  brandMark: string
+  rule: string
+  spinner: readonly string[]
+} = unicodeEnabled() ? UNICODE_GLYPHS : ASCII_GLYPHS
+
+// Pointer glyph for pickers, kept as an alias so existing call sites compile.
+// Selection state per the design language: coral pointer plus coral text.
+export const POINTER = glyphs.pointer
 
 export function statusColor(status: RunStatus): string | undefined {
   switch (status) {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { registerDoctor } from '../../src/commands/doctor.js'
 import { saveConfig } from '../../src/lib/config.js'
 import { DoctorReport } from '../../src/ui/DoctorReport.js'
+import { glyphs } from '../../src/ui/theme.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
 import { useTmpConfigDir } from '../helpers/tmp-config.js'
 
@@ -157,10 +158,10 @@ describe('orca doctor --strict', () => {
 })
 
 describe('DoctorReport (TTY rendering)', () => {
-  it('renders a DOCTOR panel with themed status cells and fix lines', () => {
+  it('renders a borderless report with a header line, glyph status rows, fix lines, and a footer summary', () => {
     const { lastFrame } = render(
       <DoctorReport
-        subtitle="1 failed, 1 warned, 1 ok"
+        host="test:8080"
         results={[
           { name: 'conductor', status: 'pass', message: 'reachable in 11ms (HTTP 200)' },
           { name: 'api key', status: 'fail', message: 'no API key configured', fix: 'run orca auth login' },
@@ -170,14 +171,25 @@ describe('DoctorReport (TTY rendering)', () => {
       />,
     )
     const frame = lastFrame() ?? ''
-    expect(frame).toContain('DOCTOR')
-    expect(frame).toContain('1 failed, 1 warned, 1 ok')
+    // Header line: title, host, and check count (borderless — no "DOCTOR" box).
+    expect(frame).toContain('Doctor')
+    expect(frame).toContain('test:8080')
+    expect(frame).toContain('4 checks')
+    // Status words, one per row.
     expect(frame).toContain('ok')
     expect(frame).toContain('fail')
     expect(frame).toContain('warn')
     expect(frame).toContain('skip')
     expect(frame).toContain('conductor')
+    // Status glyphs come from the active tier (filled dot for pass/warn/fail,
+    // open dot for skip) — assert whichever tier this run resolved to.
+    expect(frame).toContain(glyphs.statusFilled)
+    expect(frame).toContain(glyphs.statusOpen)
     // The fix line appears under the failing row.
     expect(frame).toContain('fix: run orca auth login')
+    // Footer summary counts, colored per severity.
+    expect(frame).toContain('1 ok')
+    expect(frame).toContain('1 warn')
+    expect(frame).toContain('1 fail')
   })
 })

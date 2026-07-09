@@ -41,7 +41,6 @@ import {
   type WorkflowRun,
   type WorkflowSchedule,
 } from '../lib/workflows.js'
-import { confirm } from './prompts.js'
 import {
   addPageFlags,
   apiContext,
@@ -147,8 +146,30 @@ async function tailWorkflow(api: ApiContext, runId: string, mode: OutputMode): P
   }
 }
 
+// confirmDestructive mounts the shared Confirm component for a y/N gate in
+// interactive TTY mode (single keypress; Enter declines). Local per command
+// because the shared prompts module belongs to another wave; the mount pattern
+// mirrors pickOne/promptText.
+async function confirmDestructive(message: string): Promise<boolean> {
+  const { render } = await import('ink')
+  const { Confirm } = await import('../ui/Confirm.js')
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (v: boolean) => {
+      if (settled) return
+      settled = true
+      instance.unmount()
+      resolve(v)
+    }
+    const instance = render(<Confirm message={message} onDecision={finish} />, { exitOnCtrlC: true })
+    void instance.waitUntilExit().then(() => finish(false))
+  })
+}
+
 // guardDestructive enforces the same --yes / interactive-confirm contract the
-// other mutating commands use, returning false when the user aborts.
+// other mutating commands use, returning false when the user aborts. Non-TTY
+// callers require --yes and hit the Usage error, so the machine contract is
+// unchanged.
 async function guardDestructive(
   yes: boolean | undefined,
   verb: string,
@@ -159,7 +180,7 @@ async function guardDestructive(
     throw new CliError(`refusing to ${verb} without --yes in non-interactive mode`, ExitCode.Usage)
   }
   const { hintText } = await import('../ui/theme.js')
-  if (!(await confirm(question))) {
+  if (!(await confirmDestructive(question))) {
     console.error(hintText('Aborted.'))
     return false
   }
@@ -197,7 +218,7 @@ export function registerWorkflows(program: Command): void {
       }
       const { Table } = await import('../ui/Table.js')
       const { Panel } = await import('../ui/Panel.js')
-      const { theme } = await import('../ui/theme.js')
+      const { theme, glyphs } = await import('../ui/theme.js')
       await renderStatic(
         <Panel title="WORKFLOW DEFINITIONS" subtitle={pagedSubtitle(items.length, page.total)}>
           <Table
@@ -208,6 +229,7 @@ export function registerWorkflows(program: Command): void {
               { header: 'updated', get: (d: WorkflowDefinition) => formatTimestamp(d.updatedAt) },
             ]}
             rows={items}
+            hint={`orca workflows get <id> ${glyphs.separator} orca workflows start <id>`}
           />
         </Panel>,
       )
@@ -315,7 +337,7 @@ export function registerWorkflows(program: Command): void {
       }
       const { Table } = await import('../ui/Table.js')
       const { Panel } = await import('../ui/Panel.js')
-      const { theme } = await import('../ui/theme.js')
+      const { theme, glyphs } = await import('../ui/theme.js')
       const { wfStatusColor } = await import('../lib/workflows.js')
       await renderStatic(
         <Panel title="WORKFLOW RUNS" subtitle={pagedSubtitle(items.length, page.total)}>
@@ -332,6 +354,7 @@ export function registerWorkflows(program: Command): void {
               { header: 'duration', get: (r: WorkflowRun) => runDuration(r) },
             ]}
             rows={items}
+            hint={`orca workflows tail <run-id> ${glyphs.separator} orca workflows runs get <run-id>`}
           />
         </Panel>,
       )
@@ -519,7 +542,7 @@ export function registerWorkflows(program: Command): void {
       }
       const { Table } = await import('../ui/Table.js')
       const { Panel } = await import('../ui/Panel.js')
-      const { theme } = await import('../ui/theme.js')
+      const { theme, glyphs } = await import('../ui/theme.js')
       const { scheduleStateColor } = await import('../lib/workflows.js')
       await renderStatic(
         <Panel title="WORKFLOW SCHEDULES" subtitle={pagedSubtitle(items.length, page.total)}>
@@ -537,6 +560,7 @@ export function registerWorkflows(program: Command): void {
               { header: 'last run', get: (s: WorkflowSchedule) => (s.lastRunAt ? formatTimestamp(s.lastRunAt) : '-') },
             ]}
             rows={items}
+            hint={`orca workflows schedules get <id> ${glyphs.separator} orca workflows schedules pause <id>`}
           />
         </Panel>,
       )

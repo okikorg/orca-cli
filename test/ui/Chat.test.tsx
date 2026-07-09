@@ -51,7 +51,7 @@ describe('Chat REPL', () => {
       />,
     )
 
-    await waitFor(() => frames.join('').includes('chatting with support'))
+    await waitFor(() => frames.join('').includes('published agent'))
     await ready(stdin as unknown as EventEmitter)
 
     stdin.write('hello')
@@ -77,7 +77,7 @@ describe('Chat REPL', () => {
     let exitCalled = false
     const { stdin, frames } = render(<Chat agentLabel="support" send={send} onExit={() => (exitCalled = true)} />)
 
-    await waitFor(() => frames.join('').includes('chatting with support'))
+    await waitFor(() => frames.join('').includes('published agent'))
     await ready(stdin as unknown as EventEmitter)
 
     stdin.write('go')
@@ -102,7 +102,7 @@ describe('Chat REPL', () => {
     let exitCalled = false
     const { stdin, frames } = render(<Chat agentLabel="support" send={send} onExit={() => (exitCalled = true)} />)
 
-    await waitFor(() => frames.join('').includes('chatting with support'))
+    await waitFor(() => frames.join('').includes('published agent'))
     await ready(stdin as unknown as EventEmitter)
 
     stdin.write('go')

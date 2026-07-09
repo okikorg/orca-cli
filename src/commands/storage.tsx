@@ -11,8 +11,7 @@ import {
   printPlainRows,
   renderStatic,
 } from '../lib/output.js'
-import { accentVerb, hintText } from '../ui/theme.js'
-import { confirm } from './prompts.js'
+import { accentVerb, glyphs, hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
 // -- Wire shapes (tenant VFS bucket, the dashboard "Files" page) --------------
@@ -152,6 +151,27 @@ function isBinaryObject(o: StorageObject, bytes: Buffer): boolean {
   return false
 }
 
+// confirmDestructive mounts the shared Confirm component for a y/N gate in
+// interactive TTY mode (single keypress; Enter declines). Non-TTY callers
+// require --yes and throw a Usage error before reaching here, so the machine
+// contract is unchanged. Local per command because the shared prompts module
+// belongs to another wave; the mount pattern mirrors pickOne/promptText.
+async function confirmDestructive(message: string): Promise<boolean> {
+  const { render } = await import('ink')
+  const { Confirm } = await import('../ui/Confirm.js')
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (v: boolean) => {
+      if (settled) return
+      settled = true
+      instance.unmount()
+      resolve(v)
+    }
+    const instance = render(<Confirm message={message} onDecision={finish} />, { exitOnCtrlC: true })
+    void instance.waitUntilExit().then(() => finish(false))
+  })
+}
+
 export function registerStorage(program: Command): void {
   const storage = program.command('storage').description('manage tenant storage objects')
 
@@ -170,6 +190,7 @@ export function registerStorage(program: Command): void {
       }
       if (!info.configured) {
         console.error(hintText('Storage is not configured for this tenant.'))
+        console.error(hintText('  enable it in the dashboard, then: orca storage ls'))
         return
       }
       if (mode === 'plain') {
@@ -235,7 +256,8 @@ export function registerStorage(program: Command): void {
         return
       }
       if (list.entries.length === 0) {
-        console.error(hintText(prefix ? `No objects under "${prefix}".` : 'No objects.'))
+        console.error(hintText(prefix ? `No objects under "${prefix}" yet.` : 'No objects yet.'))
+        console.error(hintText('  upload one: orca storage put <key> <file>'))
         return
       }
       if (mode === 'plain') {
@@ -258,6 +280,8 @@ export function registerStorage(program: Command): void {
               { header: 'modified', get: (e: StorageEntry) => formatTimestamp(e.lastModified) },
             ]}
             rows={list.entries}
+            headers
+            hint={`orca storage get <key> ${glyphs.separator} orca storage rm <key>`}
           />
         </Panel>,
       )
@@ -356,7 +380,7 @@ export function registerStorage(program: Command): void {
         const question = isPrefix
           ? `Delete every object under "${key}"?`
           : `Delete object "${key}"?`
-        if (!(await confirm(question))) {
+        if (!(await confirmDestructive(question))) {
           console.error(hintText('Aborted.'))
           return
         }

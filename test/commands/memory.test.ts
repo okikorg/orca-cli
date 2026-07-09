@@ -111,7 +111,10 @@ describe('memory list', () => {
     })
     await run(['memory', 'list', 'support'])
     expect(stdout()).toBe('')
-    expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('No memories')
+    const errText = vi.mocked(console.error).mock.calls.join(' ')
+    expect(errText).toContain('No memories')
+    // The empty state names how memories come to exist (agent runs).
+    expect(errText).toContain('orca run support')
   })
 
   it('maps a 401 to the auth exit code', async () => {

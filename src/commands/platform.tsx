@@ -4,7 +4,7 @@ import { ApiError, mapApiError } from '../lib/api.js'
 import { requireApiUrl, resolveContext } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
-import { ansi, colorEnabled, hintText } from '../ui/theme.js'
+import { ansi, colorEnabled, glyphs, hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
 // -- Wire shapes -------------------------------------------------------------
@@ -53,22 +53,25 @@ function tint(text: string, code: string, color: boolean): string {
   return `${code}${text}${ansi.reset}`
 }
 
-// renderTopologyTree draws the runner pool as an indented ASCII tree in the
-// WorkflowTail StepTree idiom: a coral "conductor" root, `|- ` connectors in
-// subtle gray, each runner's hash in coral, health colored, details gray. No
-// box-drawing. Kept pure (no Ink) so it is unit-testable and embeds verbatim
-// in a <Text> block, exactly like renderChart.
+// renderTopologyTree draws the runner pool as an indented tree in the
+// WorkflowTail StepTree idiom: a coral "conductor" root, subtle tree-branch
+// connectors, each runner's hash in coral, health colored, details gray. The
+// edge glyph comes from the active theme tier (box-drawing `├` on Unicode, the
+// `|-` fallback on ASCII) - never hardcoded here. Kept pure (no Ink) so it is
+// unit-testable and embeds verbatim in a <Text> block, exactly like
+// renderChart.
 export function renderTopologyTree(
   runners: RunnerTopology[],
   opts: { color?: boolean } = {},
 ): string {
   const color = opts.color ?? colorEnabled()
+  const branch = `${glyphs.treeBranch} `
   const healthy = runners.filter((r) => r.healthy).length
   const summary = `  ${runners.length} runner${runners.length === 1 ? '' : 's'}, ${healthy} healthy`
   const lines = [tint('conductor', ansi.accent, color) + tint(summary, ansi.subtle, color)]
 
   if (runners.length === 0) {
-    lines.push(tint('|- ', ansi.subtle, color) + tint('(no runners registered)', ansi.subtle, color))
+    lines.push(tint(branch, ansi.subtle, color) + tint('(no runners registered)', ansi.subtle, color))
     return lines.join('\n')
   }
 
@@ -81,7 +84,7 @@ export function renderTopologyTree(
     if (r.latencyMs != null) detail.push(`${r.latencyMs}ms`)
     if (r.error) detail.push(r.error)
     lines.push(
-      tint('|- ', ansi.subtle, color) +
+      tint(branch, ansi.subtle, color) +
         tint(hash, ansi.accent, color) +
         '  ' +
         tint(state.padEnd(8), stateCode, color) +
@@ -122,7 +125,7 @@ function registerTopology(program: Command): void {
       const { Panel } = await import('../ui/Panel.js')
       const { Box, Text } = await import('ink')
       await renderStatic(
-        <Panel title="TOPOLOGY">
+        <Panel title="Topology" subtitle={`${runners.length} runner${runners.length === 1 ? '' : 's'}`}>
           <Box flexDirection="column">
             <Text>{renderTopologyTree(runners)}</Text>
           </Box>
@@ -178,7 +181,7 @@ function registerPing(program: Command): void {
         const { Panel, Field } = await import('../ui/Panel.js')
         const { theme } = await import('../ui/theme.js')
         await renderStatic(
-          <Panel title="PING" subtitle={ctx.name}>
+          <Panel title="Ping" subtitle={ctx.name}>
             <Field label="api url" value={apiUrl} />
             <Field
               label="status"
@@ -233,8 +236,9 @@ function registerBundles(program: Command): void {
       const { Panel } = await import('../ui/Panel.js')
       const { theme } = await import('../ui/theme.js')
       await renderStatic(
-        <Panel title="CAPABILITY BUNDLES" subtitle={`${bundles.length} total`}>
+        <Panel title="Capability bundles" subtitle={`${bundles.length} total`}>
           <Table
+            headers
             columns={[
               { header: 'bundle', get: (b: CapabilityBundle) => b.value, color: () => theme.accent, bold: true },
               { header: 'label', get: (b: CapabilityBundle) => b.label },
@@ -308,7 +312,7 @@ function registerApps(program: Command): void {
 
       if (providers.length > 0) {
         await renderStatic(
-          <Panel title="CONNECTED APP PROVIDERS" subtitle={`${providers.length} total`}>
+          <Panel title="Connected app providers" subtitle={`${providers.length} total`}>
             <Table
               columns={[
                 { header: 'provider', get: (p: ConnectedProvider) => p.name, color: () => theme.accent, bold: true },
@@ -325,8 +329,9 @@ function registerApps(program: Command): void {
       }
       if (connections.length > 0) {
         await renderStatic(
-          <Panel title="CONNECTIONS" subtitle={`${connections.length} total`}>
+          <Panel title="Connections" subtitle={`${connections.length} total`}>
             <Table
+              headers
               columns={[
                 { header: 'id', get: (c: AppConnection) => c.id, color: () => theme.accent, bold: true },
                 { header: 'provider', get: (c: AppConnection) => c.provider },

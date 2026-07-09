@@ -91,6 +91,21 @@ describe('context use', () => {
     await saveConfig({ contexts: {} })
     await expect(run(['context', 'use', 'nope'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
   })
+
+  it('requires a name in non-interactive mode when omitted (no picker)', async () => {
+    // stdout is not a TTY under vitest, so the picker never mounts; the
+    // missing-arg contract applies (Usage error, exit 2).
+    await saveConfig({
+      currentContext: 'default',
+      contexts: { default: { apiUrl: 'http://test:8080' }, prod: { apiUrl: 'https://prod.example' } },
+    })
+    await expect(run(['context', 'use'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+  })
+
+  it('errors with the setup hint when no contexts exist and no name is given', async () => {
+    await saveConfig({ contexts: {} })
+    await expect(run(['context', 'use'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+  })
 })
 
 describe('context show', () => {

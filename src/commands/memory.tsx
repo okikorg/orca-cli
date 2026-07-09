@@ -9,8 +9,7 @@ import {
   printPlainRows,
   renderStatic,
 } from '../lib/output.js'
-import { accentVerb, hintText } from '../ui/theme.js'
-import { confirm } from './prompts.js'
+import { accentVerb, glyphs, hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
 // -- Wire shapes (agent memories + the cross-profile memory bank) -------------
@@ -68,6 +67,27 @@ type MemoryBankStats = {
 }
 
 type MemoryDeleteResult = { id: string; deleted: boolean }
+
+// confirmDestructive mounts the shared Confirm component for a y/N gate in
+// interactive TTY mode (single keypress; Enter declines). Non-TTY callers
+// require --yes and throw a Usage error before reaching here, so the machine
+// contract is unchanged. Local per command because the shared prompts module
+// belongs to another wave; the mount pattern mirrors pickOne/promptText.
+async function confirmDestructive(message: string): Promise<boolean> {
+  const { render } = await import('ink')
+  const { Confirm } = await import('../ui/Confirm.js')
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (v: boolean) => {
+      if (settled) return
+      settled = true
+      instance.unmount()
+      resolve(v)
+    }
+    const instance = render(<Confirm message={message} onDecision={finish} />, { exitOnCtrlC: true })
+    void instance.waitUntilExit().then(() => finish(false))
+  })
+}
 
 function fmtConfidence(n: number): string {
   return Number.isFinite(n) ? n.toFixed(2) : '-'
@@ -134,7 +154,8 @@ export function registerMemory(program: Command): void {
         return
       }
       if (res.memories.length === 0) {
-        console.error(hintText(`No memories for agent "${agent}".`))
+        console.error(hintText(`No memories for agent "${agent}" yet.`))
+        console.error(hintText(`  memories accrue as the agent runs: orca run ${agent} "..."`))
         return
       }
       if (mode === 'plain') {
@@ -170,6 +191,8 @@ export function registerMemory(program: Command): void {
               { header: 'created', get: (m: AgentMemory) => formatTimestamp(m.createdAt) },
             ]}
             rows={res.memories}
+            headers
+            hint={`orca memory show ${agent} <id> ${glyphs.separator} orca memory search ${agent} <query>`}
           />
         </Panel>,
       )
@@ -208,6 +231,7 @@ export function registerMemory(program: Command): void {
         }
         if (res.results.length === 0) {
           console.error(hintText(`No memories matched "${query}" for agent "${agent}".`))
+          console.error(hintText(`  browse them all: orca memory list ${agent}`))
           return
         }
         if (mode === 'plain') {
@@ -289,7 +313,7 @@ export function registerMemory(program: Command): void {
         if (!interactive()) {
           throw new CliError('refusing to delete without --yes in non-interactive mode', ExitCode.Usage)
         }
-        if (!(await confirm(`Delete memory "${id}" from agent "${agent}"?`))) {
+        if (!(await confirmDestructive(`Delete memory "${id}" from agent "${agent}"?`))) {
           console.error(hintText('Aborted.'))
           return
         }
@@ -326,6 +350,7 @@ export function registerMemory(program: Command): void {
 
     if (flat.length === 0) {
       console.error(hintText('The memory bank is empty.'))
+      console.error(hintText('  memories accrue as agents run: orca run <agent> "..."'))
       return
     }
     if (mode === 'plain') {

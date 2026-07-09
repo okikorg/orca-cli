@@ -135,6 +135,17 @@ describe('agents list', () => {
     expect(stdout()).toBe('late\tclaude\t-\tyes\n')
   })
 
+  it('names the create command in the empty state, keeping stdout clean', async () => {
+    stubFetch({
+      'GET /api/profiles?limit=10': jsonResponse([]),
+      'GET /api/published?limit=200': jsonResponse({ publishedAgents: [], total: 0 }),
+    })
+    await run(['agents', 'list'])
+    // Empty state is a stderr hint (never stdout, so piping stays clean).
+    expect(stdout()).toBe('')
+    expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('orca agents create')
+  })
+
   it('--all pages through every profile and concatenates', async () => {
     const first = Array.from({ length: 200 }, (_, i) => ({ name: `p${i}`, runtime: 'claude' }))
     const calls = stubFetch({
@@ -160,6 +171,15 @@ describe('agents get', () => {
     await expect(run(['agents', 'get', 'nope'])).rejects.toMatchObject({
       exitCode: ExitCode.NotFound,
     })
+  })
+
+  // The name is now an optional positional so an interactive TTY can open the
+  // picker. Non-TTY (the test harness) must keep the byte-identical usage error
+  // and never touch the network — the picker only mounts in a real terminal.
+  it('requires the agent name in non-interactive mode and hits no endpoint', async () => {
+    const calls = stubFetch({})
+    await expect(run(['agents', 'get'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    expect(calls).toHaveLength(0)
   })
 })
 
@@ -215,5 +235,30 @@ describe('agents delete', () => {
     })
     await run(['agents', 'delete', 'a', '--yes'])
     expect(calls).toHaveLength(1)
+  })
+
+  // Omitting the name opens the picker in a TTY; non-TTY keeps the usage error.
+  it('requires the agent name in non-interactive mode', async () => {
+    const calls = stubFetch({})
+    await expect(run(['agents', 'delete', '--yes'])).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+    })
+    expect(calls).toHaveLength(0)
+  })
+})
+
+describe('agents publish / unpublish', () => {
+  it('requires the agent name for publish in non-interactive mode', async () => {
+    const calls = stubFetch({})
+    await expect(run(['agents', 'publish'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('requires the agent name for unpublish in non-interactive mode', async () => {
+    const calls = stubFetch({})
+    await expect(run(['agents', 'unpublish', '--yes'])).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+    })
+    expect(calls).toHaveLength(0)
   })
 })

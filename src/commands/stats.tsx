@@ -143,26 +143,28 @@ function window(opts: { window?: string }): string {
 
 async function renderAgentTable(agents: StatsAgent[], w: string, title: string): Promise<void> {
   const { Table } = await import('../ui/Table.js')
-  const { Panel } = await import('../ui/Panel.js')
   const { theme } = await import('../ui/theme.js')
+  // Per-agent breakdown is a wide table: header line + UPPERCASE column labels
+  // so the runs/failed/tokens columns read unambiguously.
   await renderStatic(
-    <Panel title={title} subtitle={`last ${w}`}>
-      <Table
-        columns={[
-          { header: 'agent', get: (a: StatsAgent) => a.name, color: () => theme.accent, bold: true },
-          { header: 'runtime', get: (a: StatsAgent) => a.runtime || '-' },
-          { header: 'runs', get: (a: StatsAgent) => String(a.runs) },
-          {
-            header: 'failed',
-            get: (a: StatsAgent) => String(a.failedRuns),
-            color: (a: StatsAgent) => (a.failedRuns > 0 ? statusColor('error') : theme.subtle),
-          },
-          { header: 'tokens', get: (a: StatsAgent) => fmtCompact(totalTokens(a.tokens)) },
-          { header: 'last active', get: (a: StatsAgent) => fmtLast(a.lastActivityAt) },
-        ]}
-        rows={agents}
-      />
-    </Panel>,
+    <Table
+      title={title}
+      meta={`last ${w}`}
+      headers
+      columns={[
+        { header: 'agent', get: (a: StatsAgent) => a.name, color: () => theme.accent, bold: true },
+        { header: 'runtime', get: (a: StatsAgent) => a.runtime || '-' },
+        { header: 'runs', get: (a: StatsAgent) => String(a.runs) },
+        {
+          header: 'failed',
+          get: (a: StatsAgent) => String(a.failedRuns),
+          color: (a: StatsAgent) => (a.failedRuns > 0 ? statusColor('error') : theme.subtle),
+        },
+        { header: 'tokens', get: (a: StatsAgent) => fmtCompact(totalTokens(a.tokens)) },
+        { header: 'last active', get: (a: StatsAgent) => fmtLast(a.lastActivityAt) },
+      ]}
+      rows={agents}
+    />,
   )
 }
 
@@ -203,7 +205,7 @@ async function renderHotspots(h: StatsHotspots, w: string): Promise<void> {
   }
 
   await renderStatic(
-    <Panel title="HOTSPOTS" subtitle={`last ${w}`}>
+    <Panel title="Hotspots" subtitle={`last ${w}`}>
       {sections.map((s, i) => (
         <Box key={s.key} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
           <Text color={theme.subtle}>{s.label}</Text>
@@ -299,7 +301,7 @@ export function registerStats(program: Command): void {
       const t = summary.totals
       const p = summary.runnerPool
       await renderStatic(
-        <Panel title="STATS" subtitle={`last ${summary.window}`}>
+        <Panel title="Stats" subtitle={`last ${summary.window}`}>
           <Field label="agents" value={String(t.agents)} />
           <Field label="sessions" value={`${t.liveSessions} live / ${t.sessions}`} />
           <Field label="runs" value={String(t.runs)} />
@@ -322,7 +324,7 @@ export function registerStats(program: Command): void {
         </Panel>,
       )
 
-      if (agents.length > 0) await renderAgentTable(agents, summary.window, 'AGENTS')
+      if (agents.length > 0) await renderAgentTable(agents, summary.window, 'Agents')
       if (hotspots) await renderHotspots(hotspots, summary.window)
     })
 
@@ -350,7 +352,7 @@ export function registerStats(program: Command): void {
         console.error('No agent activity in this window.')
         return
       }
-      await renderAgentTable(res.agents, res.window, 'AGENTS')
+      await renderAgentTable(res.agents, res.window, 'Agents')
     })
 
   stats

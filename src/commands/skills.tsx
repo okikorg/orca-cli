@@ -19,6 +19,7 @@ import {
   type SkillPackagePreview,
 } from '../lib/skills.js'
 import type { AgentProfile } from '../lib/types.js'
+import { accentVerb, hintText } from '../ui/theme.js'
 import { confirm } from './prompts.js'
 import {
   addPageFlags,
@@ -147,7 +148,9 @@ export function registerSkills(program: Command): void {
         return
       }
       if (list.length === 0) {
-        console.error('No skills. Import one with: orca skills import <path>')
+        // Empty state names the command that creates the missing thing.
+        console.error(hintText('No skills yet.'))
+        console.error(hintText('  import one: orca skills import <path>'))
         return
       }
       if (mode === 'plain') {
@@ -158,20 +161,20 @@ export function registerSkills(program: Command): void {
         return
       }
       const { Table } = await import('../ui/Table.js')
-      const { Panel } = await import('../ui/Panel.js')
       const { theme } = await import('../ui/theme.js')
       await renderStatic(
-        <Panel title="SKILLS" subtitle={pagedSubtitle(list.length, page.total)}>
-          <Table
-            columns={[
-              { header: 'name', get: (s: Skill) => s.name, color: () => theme.accent, bold: true },
-              { header: 'source', get: (s: Skill) => s.source ?? 'user' },
-              { header: 'files', get: (s: Skill) => String(s.resources?.length ?? 0) },
-              { header: 'description', get: (s: Skill) => s.description ?? '-' },
-            ]}
-            rows={list}
-          />
-        </Panel>,
+        <Table
+          title="Skills"
+          meta={pagedSubtitle(list.length, page.total)}
+          hint='orca skills get <name> · orca skills attach <agent> <name>'
+          columns={[
+            { header: 'name', get: (s: Skill) => s.name, color: () => theme.accent, bold: true },
+            { header: 'source', get: (s: Skill) => s.source ?? 'user' },
+            { header: 'files', get: (s: Skill) => String(s.resources?.length ?? 0) },
+            { header: 'description', get: (s: Skill) => s.description ?? '-' },
+          ]}
+          rows={list}
+        />,
       )
       printPageHint(list.length, page.total)
     })
@@ -225,13 +228,13 @@ export function registerSkills(program: Command): void {
           throw new CliError('refusing to delete without --yes in non-interactive mode', ExitCode.Usage)
         }
         if (!(await confirm(`Delete skill "${name}"?`))) {
-          console.error('Aborted.')
+          console.error(hintText('Aborted.'))
           return
         }
       }
       await withApi(api, (c) => c.request<void>(`/api/skills/${enc(name)}`, { method: 'DELETE' }))
       if (outputMode(flags) === 'json') printJson({ name, deleted: true })
-      else console.log(`Deleted skill "${name}".`)
+      else console.log(`${accentVerb('Deleted')} skill "${name}".`)
     })
 
   skills
@@ -288,7 +291,7 @@ export function registerSkills(program: Command): void {
           body: JSON.stringify({ stagingId: preview.stagingId, force: opts.force ?? false }),
         })
         if (json) printJson(created)
-        else console.log(`Imported skill "${created.name}" (${created.resources?.length ?? 0} resource file(s)).`)
+        else console.log(`${accentVerb('Imported')} skill "${created.name}" (${created.resources?.length ?? 0} resource file(s)).`)
       } catch (err) {
         if (err instanceof CliError) throw err
         if (err instanceof ApiError && err.status === 409) {
@@ -321,7 +324,7 @@ export function registerSkills(program: Command): void {
         throw mapSkillEndpointError(err, api, skill)
       }
       if (json) printJson({ agent, skill, attached: true, changed: true })
-      else console.log(`Attached skill "${skill}" to "${agent}".`)
+      else console.log(`${accentVerb('Attached')} skill "${skill}" to "${agent}".`)
     })
 
   skills
@@ -345,6 +348,6 @@ export function registerSkills(program: Command): void {
         throw mapSkillEndpointError(err, api, skill)
       }
       if (json) printJson({ agent, skill, detached: true, changed: true })
-      else console.log(`Detached skill "${skill}" from "${agent}".`)
+      else console.log(`${accentVerb('Detached')} skill "${skill}" from "${agent}".`)
     })
 }

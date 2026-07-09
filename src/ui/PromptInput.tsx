@@ -3,7 +3,7 @@ import TextInput from 'ink-text-input'
 import { useState } from 'react'
 
 import { CliError, ExitCode } from '../lib/errors.js'
-import { theme } from './theme.js'
+import { glyphs, theme } from './theme.js'
 
 type PromptProps = {
   label: string
@@ -20,7 +20,7 @@ function Prompt({ label, hint, placeholder, initial, mask, onSubmit }: PromptPro
   const [value, setValue] = useState(initial ?? '')
   return (
     <Box>
-      <Text color={theme.accent}>? </Text>
+      <Text color={theme.accent}>{glyphs.pointer} </Text>
       <Text>{label} </Text>
       {hint ? <Text color={theme.subtle}>{hint} </Text> : null}
       <TextInput
