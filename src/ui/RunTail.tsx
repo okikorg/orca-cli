@@ -1,27 +1,51 @@
 import { Box, Static, Text, useApp } from 'ink'
-import Spinner from 'ink-spinner'
 import { useEffect, useRef, useState } from 'react'
 
 import { addUsage, compactJson, formatUsage } from '../lib/format.js'
 import type { RunEvent, RunStatus, Usage } from '../lib/types.js'
-import { statusColor, theme } from './theme.js'
+import { glyphs, statusColor, theme } from './theme.js'
+
+// PulseSpinner is the coral streaming indicator: it cycles glyphs.spinner (a
+// pulse ramp on the Unicode tier, an ASCII spinner otherwise) on a fixed
+// interval. Hand-rolled from the theme glyph set so the frame always comes
+// from a font-safe tier; ink-spinner's default frames are outside it.
+function PulseSpinner() {
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setI((n) => (n + 1) % glyphs.spinner.length), 120)
+    return () => clearInterval(t)
+  }, [])
+  return <Text color={theme.accent}>{glyphs.spinner[i]}</Text>
+}
+
+// meta joins the subtle run-id/elapsed/usage trailer with the separator glyph
+// (`·` on the Unicode tier). Empty segments (no usage yet) are dropped so the
+// line never shows a dangling separator.
+function meta(...parts: (string | number | false | undefined)[]): string {
+  return parts.filter((p) => p !== '' && p !== false && p != null).join(` ${glyphs.separator} `)
+}
 
 // Exported so `orca runs get` can render a finished run's transcript with
-// the same per-type styling as the live tail.
+// the same per-type styling as the live tail. Tool calls hang off a tree glyph
+// so a transcript reads as a call/result outline.
 export function EventLine({ event }: { event: RunEvent }) {
   switch (event.type) {
     case 'assistant':
       return <Text>{event.message ?? ''}</Text>
     case 'tool_call':
       return (
-        <Text color={theme.subtle}>
-          tool <Text color={theme.muted}>{event.toolName ?? '?'}</Text> {compactJson(event.input)}
+        <Text>
+          <Text color={theme.subtle}>
+            {'  '}
+            {glyphs.treeLast} tool{' '}
+          </Text>
+          <Text color={theme.muted}>{event.toolName ?? '?'}</Text> {compactJson(event.input)}
         </Text>
       )
     case 'tool_result':
       return (
         <Text color={event.isError ? theme.destructive : theme.subtle}>
-          {'  -> '}
+          {'    -> '}
           {compactJson(event.output ?? event.message)}
         </Text>
       )
@@ -42,7 +66,7 @@ export function EventLine({ event }: { event: RunEvent }) {
 // region on unmount.
 type Item =
   | { kind: 'event'; key: number; event: RunEvent }
-  | { kind: 'summary'; key: number; status: RunStatus; usage: string; runId: string }
+  | { kind: 'summary'; key: number; status: RunStatus; usage: string; runId: string; elapsed: number }
 
 export type RunTailProps = {
   runId: string
@@ -58,6 +82,7 @@ export function RunTail({ runId, subscribe, onDone }: RunTailProps) {
   const [items, setItems] = useState<Item[]>([])
   const [status, setStatus] = useState<RunStatus>('running')
   const [elapsed, setElapsed] = useState(0)
+  const elapsedRef = useRef(0)
   const usage = useRef<Usage>({})
   const [usageText, setUsageText] = useState('')
   const done = status !== 'running'
@@ -77,7 +102,14 @@ export function RunTail({ runId, subscribe, onDone }: RunTailProps) {
         if (!mounted) return
         setItems((prev) => [
           ...prev,
-          { kind: 'summary', key: prev.length, status: final, usage: formatUsage(usage.current), runId },
+          {
+            kind: 'summary',
+            key: prev.length,
+            status: final,
+            usage: formatUsage(usage.current),
+            runId,
+            elapsed: elapsedRef.current,
+          },
         ])
         setStatus(final)
       })
@@ -107,7 +139,10 @@ export function RunTail({ runId, subscribe, onDone }: RunTailProps) {
 
   useEffect(() => {
     if (done) return
-    const t = setInterval(() => setElapsed((s) => s + 1), 1000)
+    const t = setInterval(() => {
+      elapsedRef.current += 1
+      setElapsed(elapsedRef.current)
+    }, 1000)
     return () => clearInterval(t)
   }, [done])
 
@@ -120,24 +155,27 @@ export function RunTail({ runId, subscribe, onDone }: RunTailProps) {
               <EventLine event={item.event} />
             </Box>
           ) : (
+            // Terminal summary: glyph+word colored by the status palette, the
+            // run id / elapsed / usage trailer subtle and separator-joined.
             <Box key={item.key} marginTop={1}>
               <Text color={statusColor(item.status)}>
-                {item.status} <Text color={theme.subtle}>{item.runId}</Text>
-                {item.usage ? <Text color={theme.subtle}> {item.usage}</Text> : null}
+                {glyphs.statusFilled} {item.status}
+              </Text>
+              <Text color={theme.subtle}>
+                {' '}
+                {meta(item.runId, `${item.elapsed}s`, item.usage)}
               </Text>
             </Box>
           )
         }
       </Static>
       {done ? null : (
+        // Streaming footer: coral pulse spinner + bold context word + subtle
+        // run id / elapsed / usage trailer.
         <Text>
-          <Text color={theme.accent}>
-            <Spinner type="dots" />
-          </Text>
-          <Text color={theme.muted}> streaming </Text>
-          <Text color={theme.subtle}>
-            {runId} {elapsed}s{usageText ? ` ${usageText}` : ''}
-          </Text>
+          <PulseSpinner />
+          <Text bold> streaming</Text>
+          <Text color={theme.subtle}> {meta(runId, `${elapsed}s`, usageText)}</Text>
         </Text>
       )}
     </Box>

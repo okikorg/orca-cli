@@ -5,7 +5,6 @@ import {
   doctorExitCode,
   gatherContext,
   runDoctor,
-  summarize,
   toJsonResults,
   type CheckResult,
 } from '../lib/doctor.js'
@@ -30,7 +29,7 @@ export function registerDoctor(program: Command): void {
       } else if (mode === 'plain') {
         printPlainRows(results.map((r) => [r.name, r.status, r.message]))
       } else {
-        await renderReport(results)
+        await renderReport(results, ctx.apiUrl)
       }
 
       // The report is the primary output; set the exit code directly so stdout
@@ -39,12 +38,20 @@ export function registerDoctor(program: Command): void {
     })
 }
 
-// renderReport paints the coral DOCTOR panel. Ink is imported lazily (only in
-// the TTY path) so it never enters the CLI's cold-start module graph.
-async function renderReport(results: CheckResult[]): Promise<void> {
+// renderReport paints the borderless doctor report. Ink is imported lazily
+// (only in the TTY path) so it never enters the CLI's cold-start module graph.
+// The header shows the API host, so a bare hostname is nicer than the full URL;
+// fall back to the raw value (then a placeholder) when it will not parse.
+async function renderReport(results: CheckResult[], apiUrl?: string): Promise<void> {
   const { DoctorReport } = await import('../ui/DoctorReport.js')
-  const s = summarize(results)
-  const subtitle =
-    `${s.fail} failed, ${s.warn} warned, ${s.pass} ok` + (s.skip ? `, ${s.skip} skipped` : '')
-  await renderStatic(<DoctorReport results={results} subtitle={subtitle} />)
+  await renderStatic(<DoctorReport results={results} host={hostLabel(apiUrl)} />)
+}
+
+function hostLabel(apiUrl?: string): string {
+  if (!apiUrl) return 'no API URL'
+  try {
+    return new URL(apiUrl).host
+  } catch {
+    return apiUrl
+  }
 }

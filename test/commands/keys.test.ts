@@ -168,4 +168,15 @@ describe('tenant keys', () => {
     await run(['keys', 'revoke', 'key_9', '--yes'])
     expect(calls).toHaveLength(1)
   })
+
+  it('hints the create command on an empty list', async () => {
+    stubFetch({ 'GET /api/api-keys': jsonResponse({ keys: [] }) })
+    await run(['keys', 'list'])
+    // Nothing leaks to stdout (plain sink stays clean); the empty state and its
+    // follow-up hint go to stderr only.
+    expect(stdout()).toBe('')
+    const errText = vi.mocked(console.error).mock.calls.map((c) => c.map(String).join(' ')).join('\n')
+    expect(errText).toContain('No API keys')
+    expect(errText).toContain('orca keys create')
+  })
 })

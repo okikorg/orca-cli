@@ -2,6 +2,7 @@ import { render } from 'ink-testing-library'
 import { describe, expect, it } from 'vitest'
 
 import { RunTail } from '../../src/ui/RunTail.js'
+import { glyphs } from '../../src/ui/theme.js'
 import type { RunEvent, RunStatus } from '../../src/lib/types.js'
 
 function subscribeWith(events: RunEvent[], final: RunStatus) {
@@ -46,10 +47,13 @@ describe('RunTail', () => {
     // stream of frames and persist in scrollback after exit.
     const output = frames.join('\n')
     expect(output).toContain('thinking about it')
-    expect(output).toContain('tool web_search')
+    // Tool calls hang off a tree glyph: `  <treeLast> tool web_search {...}`.
+    expect(output).toContain(`${glyphs.treeLast} tool web_search`)
     expect(output).toContain('found it')
     expect(output).toContain('all done')
-    expect(output).toContain('ok run_1')
+    // Terminal summary: status glyph + word, then a separator-joined trailer.
+    expect(output).toContain(`${glyphs.statusFilled} ok`)
+    expect(output).toContain(`run_1 ${glyphs.separator}`)
     expect(output).toContain('in 100 out 20')
     expect(done).toBe('ok')
   })
@@ -68,7 +72,40 @@ describe('RunTail', () => {
     await waitFor(() => done !== null)
     const output = frames.join('\n')
     expect(output).toContain('error: exploded')
-    expect(output).toContain('error run_2')
+    // Terminal summary carries the status glyph + word.
+    expect(output).toContain(`${glyphs.statusFilled} error`)
+    expect(output).toContain('run_2')
     expect(done).toBe('error')
+  })
+
+  it('renders the streaming footer with a pulse spinner while live', async () => {
+    // Hold the stream open so the dynamic footer is guaranteed to render at
+    // least once before the summary replaces it.
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    let done: RunStatus | null = null
+    const { frames, lastFrame } = render(
+      <RunTail
+        runId="run_3"
+        subscribe={async () => {
+          await gate
+          return 'ok'
+        }}
+        onDone={(s) => {
+          done = s
+        }}
+      />,
+    )
+    await waitFor(() => lastFrame()?.includes('streaming') ?? false)
+    // The footer is a pulse spinner frame + bold `streaming` + subtle trailer.
+    const live = frames.join('\n')
+    expect(live).toContain('streaming')
+    expect(live).toContain('run_3')
+    expect(glyphs.spinner.some((f) => live.includes(f))).toBe(true)
+    release()
+    await waitFor(() => done !== null)
+    expect(done).toBe('ok')
   })
 })

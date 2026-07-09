@@ -131,7 +131,10 @@ describe('storage ls', () => {
     stubFetch({ 'GET /api/storage/objects': jsonResponse({ prefix: '', bucket: 'b', entries: [], count: 0 }) })
     await run(['storage', 'ls'])
     expect(stdout()).toBe('')
-    expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('No objects')
+    const errText = vi.mocked(console.error).mock.calls.join(' ')
+    expect(errText).toContain('No objects')
+    // The empty state names the command that uploads the missing thing.
+    expect(errText).toContain('orca storage put')
   })
 
   it('maps a 401 to the auth exit code', async () => {

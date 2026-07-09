@@ -121,6 +121,13 @@ describe('runs get', () => {
     await run(['--json', 'runs', 'get', 'run_1'])
     expect(JSON.parse(stdout())).toEqual({ ...SUMMARY, events: [] })
   })
+
+  it('requires a run id in non-interactive mode (the picker only opens in a TTY)', async () => {
+    // The arg is now optional so a TTY can open the run picker; without a
+    // terminal the missing id stays a usage error (exit 2), unchanged.
+    stubFetch({})
+    await expect(run(['runs', 'get'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+  })
 })
 
 describe('runs tail', () => {
@@ -150,6 +157,31 @@ describe('runs tail', () => {
       exitCode: ExitCode.Failure,
     })
     expect(stdout()).toContain('error: boom')
+  })
+
+  it('requires a run id in non-interactive mode', async () => {
+    stubFetch({})
+    await expect(run(['runs', 'tail'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+  })
+})
+
+describe('runs cancel', () => {
+  it('cancels the run and confirms on stdout in plain mode', async () => {
+    const calls = stubFetch({ 'DELETE /api/runs/run_1': jsonResponse({}) })
+    await run(['runs', 'cancel', 'run_1'])
+    expect(calls[0].path).toBe('/api/runs/run_1')
+    expect(vi.mocked(console.log).mock.calls.join(' ')).toContain('run_1')
+  })
+
+  it('emits the cancelled id with --json', async () => {
+    stubFetch({ 'DELETE /api/runs/run_1': jsonResponse({}) })
+    await run(['--json', 'runs', 'cancel', 'run_1'])
+    expect(JSON.parse(stdout())).toEqual({ id: 'run_1', cancelled: true })
+  })
+
+  it('requires a run id in non-interactive mode', async () => {
+    stubFetch({})
+    await expect(run(['runs', 'cancel'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
   })
 })
 

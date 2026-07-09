@@ -12,13 +12,20 @@ afterEach(() => {
 })
 
 describe('bannerString', () => {
-  it('includes the ASCII wordmark and version', () => {
-    // Non-TTY in tests, so no ANSI: assert on the plain art + tagline.
+  it('is the one-line brand header with wordmark, tagline, and version', () => {
+    // Non-TTY in tests, so no ANSI: assert on the plain text.
     const s = bannerString()
-    expect(s).toContain('\\____/') // the O glyph tail
-    expect(s).toContain('_, _') // the R glyph
-    expect(s).toContain('Manage agents')
+    expect(s).toContain('ORCA')
+    expect(s).toContain('agent platform CLI')
     expect(s).toContain(`v${VERSION}`)
+    // Figlet art is retired: no backslash-and-underscore ASCII glyphs remain.
+    expect(s).not.toContain('\\____/')
+  })
+
+  it('renders on a single content line', () => {
+    // Leading/trailing blank lines frame one content line.
+    const content = bannerString().split('\n').filter(Boolean)
+    expect(content).toHaveLength(1)
   })
 
   it('emits no ANSI escapes when stdout is not a TTY', () => {
@@ -34,9 +41,11 @@ describe('bannerString', () => {
     expect(bannerString()).not.toMatch(/\x1b\[/)
   })
 
-  it('emits coral ANSI on a color TTY', () => {
+  it('emits bold coral ANSI on a color TTY', () => {
     process.stdout.isTTY = true
     vi.stubEnv('NO_COLOR', '')
-    expect(bannerString()).toContain('38;2;254;120;93')
+    const s = bannerString()
+    expect(s).toContain('38;2;254;120;93') // coral
+    expect(s).toContain('\x1b[1m') // bold ORCA
   })
 })

@@ -85,11 +85,13 @@ describe('mcp list', () => {
     expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('Showing 1 of 7')
   })
 
-  it('reports an empty catalog to stderr, nothing on stdout', async () => {
+  it('reports an empty catalog to stderr, nothing on stdout, naming the add command', async () => {
     stubFetch({ 'GET /api/mcp-servers?limit=10': jsonResponse([]) })
     await run(['mcp', 'list'])
     expect(stdout()).toBe('')
-    expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('No MCP servers')
+    const errs = vi.mocked(console.error).mock.calls.join(' ')
+    expect(errs).toContain('No MCP servers')
+    expect(errs).toContain('orca mcp add')
   })
 })
 

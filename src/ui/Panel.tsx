@@ -1,11 +1,13 @@
 import { Box, Text } from 'ink'
 import type { ReactNode } from 'react'
 
-import { theme } from './theme.js'
+import { glyphs, theme } from './theme.js'
 
-// A single-line bordered frame with a coral title, the primary container for
-// every rich view. Faithful to the design language: flat, border-delineated,
-// one coral accent (the title). No rounded or double borders.
+// A borderless Section: a bold coral header line (title, then subtle ` · `
+// metadata from `subtitle`), with children indented two spaces. No frame.
+// Hierarchy is whitespace and weight, not boxes. The name stays `Panel` and the
+// prop stays `subtitle` so every existing detail/list call site compiles
+// unchanged; `subtitle` now reads as the header's ` · `-separated meta.
 export function Panel({
   title,
   subtitle,
@@ -16,21 +18,25 @@ export function Panel({
   children: ReactNode
 }) {
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={theme.border} paddingX={1}>
+    <Box flexDirection="column">
       {title ? (
-        <Box marginBottom={1}>
+        <Box>
           <Text color={theme.accent} bold>
             {title}
           </Text>
-          {subtitle ? <Text color={theme.subtle}>{'  ' + subtitle}</Text> : null}
+          {subtitle ? <Text color={theme.subtle}>{` ${glyphs.separator} ${subtitle}`}</Text> : null}
         </Box>
       ) : null}
-      {children}
+      <Box flexDirection="column" paddingLeft={2}>
+        {children}
+      </Box>
     </Box>
   )
 }
 
-// A dim label / value pair line for detail views.
+// A dim label / value pair line for detail views. The 12-col subtle label is
+// unchanged; the two-space indent comes from the Section's padded body, so a
+// Field used outside a Panel needs its own indent.
 export function Field({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
   return (
     <Box>

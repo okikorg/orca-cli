@@ -1,64 +1,44 @@
-import { Box, Text, render } from 'ink'
-import SelectInput from 'ink-select-input'
+import { render } from 'ink'
 
 import { CliError, ExitCode } from '../lib/errors.js'
-import { POINTER, theme } from './theme.js'
+import { Picker } from './Picker.js'
 
-type Item = { label: string; value: string }
-
-// Selection state per the design language: coral pointer plus coral text,
-// never an accent bar or inverted block.
-function Indicator({ isSelected }: { isSelected?: boolean }) {
-  return <Text color={theme.accent}>{isSelected ? `${POINTER} ` : '  '}</Text>
-}
-
-function Label({ isSelected, label }: { isSelected?: boolean; label: string }) {
-  return <Text color={isSelected ? theme.accent : undefined}>{label}</Text>
-}
-
-function Picker({ title, items, onPick }: { title: string; items: Item[]; onPick: (v: string) => void }) {
-  return (
-    <Box flexDirection="column">
-      <Text color={theme.accent} bold>
-        {title}
-      </Text>
-      <SelectInput
-        items={items}
-        indicatorComponent={Indicator}
-        itemComponent={Label}
-        onSelect={(item) => onPick((item as Item).value)}
-      />
-      <Text color={theme.subtle}>enter to select, ctrl+c to cancel</Text>
-    </Box>
-  )
-}
-
-// pickOne mounts an interactive list picker and resolves with the chosen
-// value. On Ctrl-C it rejects with an interrupt (see promptText for the same
-// pattern). Callers must check interactive() first.
+// pickOne mounts the generic filterable Picker and resolves with the chosen
+// value. Esc (onCancel) and Ctrl-C both reject with an interrupt (see
+// promptText for the same pattern); the missing-arg error path in callers maps
+// that to exit 2 / 130 as before. The former SelectInput-based picker lived
+// here; it is now a thin wrapper so every call site inherits type-to-filter,
+// the coral pointer, and a match count. `title` becomes the filter placeholder
+// since the Picker draws no separate title line. Callers must check
+// interactive() first.
 export async function pickOne(title: string, values: string[]): Promise<string> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(`cannot prompt for "${title}" without a terminal`)
   }
   return new Promise((resolve, reject) => {
     let settled = false
+    const cancel = () => {
+      if (settled) return
+      settled = true
+      instance.unmount()
+      reject(new CliError('cancelled', ExitCode.Interrupt))
+    }
     const instance = render(
       <Picker
-        title={title}
         items={values.map((v) => ({ label: v, value: v }))}
-        onPick={(value) => {
+        placeholder={title}
+        onSubmit={(value) => {
           if (settled) return
           settled = true
           instance.unmount()
           resolve(value)
         }}
+        onCancel={cancel}
       />,
       { exitOnCtrlC: true },
     )
-    void instance.waitUntilExit().then(() => {
-      if (settled) return
-      settled = true
-      reject(new CliError('cancelled', ExitCode.Interrupt))
-    })
+    // Ctrl-C unmounts Ink without calling onSubmit/onCancel; detect that via
+    // waitUntilExit and reject with the same interrupt as an explicit esc.
+    void instance.waitUntilExit().then(cancel)
   })
 }

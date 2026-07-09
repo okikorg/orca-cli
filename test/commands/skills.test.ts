@@ -87,6 +87,13 @@ describe('skills list', () => {
     })
     await expect(run(['skills', 'list'])).rejects.toMatchObject({ exitCode: ExitCode.Auth })
   })
+
+  it('names the import command in the empty state, keeping stdout clean', async () => {
+    stubFetch({ 'GET /api/skills?limit=10': jsonResponse([]) })
+    await run(['skills', 'list'])
+    expect(stdout()).toBe('')
+    expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('orca skills import')
+  })
 })
 
 describe('skills get', () => {

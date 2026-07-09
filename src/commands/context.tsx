@@ -2,7 +2,7 @@ import type { Command } from 'commander'
 
 import { DEFAULT_CONTEXT, loadConfig, maskKey, resolveContext, saveConfig } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
+import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import { accentVerb, hintText } from '../ui/theme.js'
 import { globalFlags } from './shared.js'
 
@@ -32,7 +32,10 @@ export function registerContext(program: Command): void {
         return
       }
       if (names.length === 0) {
-        console.error(hintText('No contexts configured. Run: orca auth login'))
+        // Empty state: name the command that creates the first context. Kept on
+        // stderr (never stdout) so plain/json piping stays clean.
+        console.error(hintText('No contexts yet.'))
+        console.error(hintText('  sign in to create one: orca auth login'))
         return
       }
       if (mode === 'plain') {
@@ -67,16 +70,38 @@ export function registerContext(program: Command): void {
               },
             ]}
             rows={names}
+            hint="orca context use <name> · orca context show"
           />
         </Panel>,
       )
     })
 
   context
-    .command('use <name>')
-    .description('switch the current context')
-    .action(async (name: string) => {
+    .command('use [name]')
+    .description('switch the current context (a picker opens when the name is omitted)')
+    .action(async (nameArg: string | undefined) => {
       const cfg = await loadConfig()
+      const names = Object.keys(cfg.contexts).sort()
+
+      let name = nameArg
+      if (!name) {
+        // No name given: open the picker in an interactive TTY. Non-TTY keeps
+        // the missing-arg contract (Usage error, exit 2). An empty config names
+        // the command that creates the first context.
+        if (names.length === 0) {
+          throw new CliError('no contexts configured', ExitCode.Usage, [
+            'Sign in to create one: orca auth login',
+          ])
+        }
+        if (!interactive()) {
+          throw new CliError('context name required in non-interactive mode', ExitCode.Usage, [
+            'Usage: orca context use <name>',
+          ])
+        }
+        const { pickOne } = await import('../ui/AgentPicker.js')
+        name = await pickOne('Select a context', names)
+      }
+
       if (!cfg.contexts[name]) {
         throw new CliError(`context "${name}" not found`, ExitCode.Usage, [
           'List contexts with: orca context list',

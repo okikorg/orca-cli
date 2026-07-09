@@ -9,7 +9,6 @@ import {
   renderStatic,
 } from '../lib/output.js'
 import { accentVerb, hintText } from '../ui/theme.js'
-import { confirm } from './prompts.js'
 import {
   addPageFlags,
   apiContext,
@@ -37,6 +36,27 @@ type SecretMeta = {
 
 function secretPath(name: string): string {
   return `/api/secrets/${encodeURIComponent(name)}`
+}
+
+// confirmDestructive mounts the shared Confirm component for a y/N gate in
+// interactive TTY mode (single keypress; Enter declines). Non-TTY callers
+// require --yes and throw a Usage error before reaching here, so the machine
+// contract is unchanged. Local per command because the shared prompts module
+// belongs to another wave; the mount pattern mirrors pickOne/promptText.
+async function confirmDestructive(message: string): Promise<boolean> {
+  const { render } = await import('ink')
+  const { Confirm } = await import('../ui/Confirm.js')
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (v: boolean) => {
+      if (settled) return
+      settled = true
+      instance.unmount()
+      resolve(v)
+    }
+    const instance = render(<Confirm message={message} onDecision={finish} />, { exitOnCtrlC: true })
+    void instance.waitUntilExit().then(() => finish(false))
+  })
 }
 
 // stripOneTrailingNewline drops a single trailing newline so the common
@@ -115,6 +135,8 @@ async function renderSecretList(list: SecretMeta[], total: number): Promise<void
           { header: 'description', get: (s: SecretMeta) => s.description ?? '-' },
         ]}
         rows={list}
+        headers
+        hint="orca secrets set NAME --value V"
       />
     </Panel>,
   )
@@ -144,7 +166,8 @@ export function registerSecrets(program: Command): void {
         return
       }
       if (list.length === 0) {
-        console.error(hintText('No secrets. Set one with: orca secrets set NAME --value V'))
+        console.error(hintText('No secrets yet.'))
+        console.error(hintText('  set one: orca secrets set NAME --value V'))
         return
       }
       if (mode === 'plain') {
@@ -208,7 +231,7 @@ export function registerSecrets(program: Command): void {
         if (!interactive()) {
           throw new CliError('refusing to delete without --yes in non-interactive mode', ExitCode.Usage)
         }
-        if (!(await confirm(`Delete secret "${name}"?`))) {
+        if (!(await confirmDestructive(`Delete secret "${name}"?`))) {
           console.error(hintText('Aborted.'))
           return
         }

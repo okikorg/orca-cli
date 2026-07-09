@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { registerPlatform, renderTopologyTree } from '../../src/commands/platform.js'
 import { saveConfig } from '../../src/lib/config.js'
 import { ExitCode } from '../../src/lib/errors.js'
+import { glyphs } from '../../src/ui/theme.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
 import { useTmpConfigDir } from '../helpers/tmp-config.js'
 
@@ -82,11 +83,12 @@ function stdout(): string {
 }
 
 describe('renderTopologyTree', () => {
-  it('draws a conductor root, |- connectors, and per-runner health', () => {
+  it('draws a conductor root, tree-branch connectors, and per-runner health', () => {
     const s = renderTopologyTree(TOPOLOGY, { color: false })
     const lines = s.split('\n')
     expect(lines[0]).toBe('conductor  2 runners, 1 healthy')
-    expect(lines[1]).toContain('|- ')
+    // The edge connector is the active tier's tree-branch glyph, never hardcoded.
+    expect(lines[1]).toContain(`${glyphs.treeBranch} `)
     expect(lines[1]).toContain('a1b2c3d')
     expect(lines[1]).toContain('healthy')
     expect(lines[1]).toContain('2 sessions')

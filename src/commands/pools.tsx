@@ -143,7 +143,9 @@ export function registerPools(program: Command): void {
         return
       }
       if (list.length === 0) {
-        console.error(hintText('No pools. Create one with: orca pools create NAME --member profile:lead'))
+        // Empty state names the command that creates the missing thing.
+        console.error(hintText('No pools yet.'))
+        console.error(hintText('  create one: orca pools create NAME --member profile:lead'))
         return
       }
       if (mode === 'plain') {
@@ -154,20 +156,20 @@ export function registerPools(program: Command): void {
         return
       }
       const { Table } = await import('../ui/Table.js')
-      const { Panel } = await import('../ui/Panel.js')
       const { theme } = await import('../ui/theme.js')
       await renderStatic(
-        <Panel title="POOLS" subtitle={pagedSubtitle(list.length, page.total)}>
-          <Table
-            columns={[
-              { header: 'name', get: (p: AgentPool) => p.name, color: () => theme.accent, bold: true },
-              { header: 'members', get: (p: AgentPool) => String((p.members ?? []).length) },
-              { header: 'profiles', get: membersCell },
-              { header: 'description', get: (p: AgentPool) => p.description ?? '-' },
-            ]}
-            rows={list}
-          />
-        </Panel>,
+        <Table
+          title="Pools"
+          meta={pagedSubtitle(list.length, page.total)}
+          hint='orca pools get <name> · orca pools members add <name> <profile>'
+          columns={[
+            { header: 'name', get: (p: AgentPool) => p.name, color: () => theme.accent, bold: true },
+            { header: 'members', get: (p: AgentPool) => String((p.members ?? []).length) },
+            { header: 'profiles', get: membersCell },
+            { header: 'description', get: (p: AgentPool) => p.description ?? '-' },
+          ]}
+          rows={list}
+        />,
       )
       printPageHint(list.length, page.total)
     })

@@ -26,6 +26,29 @@ import { interactive, outputMode, printJson, renderStatic } from '../lib/output.
 import { accentVerb, hintText } from '../ui/theme.js'
 import { globalFlags } from './shared.js'
 
+// confirmDestructive mounts the shared Confirm component for a y/N gate in
+// interactive TTY mode (single keypress; Enter declines, so the safe answer is
+// the default). Ctrl-C unmounts without a decision and is treated as a decline.
+// Callers gate this on interactive() so the non-TTY machine contract (revoke
+// proceeds without a prompt) stays byte-identical. Kept local per command
+// because the shared prompts module is owned by another wave; the mount pattern
+// mirrors pickOne/promptText.
+async function confirmDestructive(message: string): Promise<boolean> {
+  const { render } = await import('ink')
+  const { Confirm } = await import('../ui/Confirm.js')
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (v: boolean) => {
+      if (settled) return
+      settled = true
+      instance.unmount()
+      resolve(v)
+    }
+    const instance = render(<Confirm message={message} onDecision={finish} />, { exitOnCtrlC: true })
+    void instance.waitUntilExit().then(() => finish(false))
+  })
+}
+
 // verifyKey probes an endpoint every role (including Observer) can read.
 // /api/api-keys is deliberately not used: it can 403 for restricted roles.
 async function verifyKey(apiUrl: string, apiKey: string, contextName: string): Promise<void> {
@@ -291,7 +314,8 @@ export function registerAuth(program: Command): void {
     .command('logout')
     .description('remove the stored API key for a context')
     .option('--revoke', 'revoke the key on the server before clearing it locally')
-    .action(async (opts: { revoke?: boolean }, cmd: Command) => {
+    .option('--yes', 'skip the confirmation prompt for --revoke')
+    .action(async (opts: { revoke?: boolean; yes?: boolean }, cmd: Command) => {
       const flags = globalFlags(cmd)
       const cfg = await loadConfig()
       const name = flags.context || cfg.currentContext || DEFAULT_CONTEXT
@@ -302,6 +326,17 @@ export function registerAuth(program: Command): void {
       }
 
       if (opts.revoke) {
+        // Revoke is destructive: it invalidates the key on the server. Confirm
+        // in an interactive TTY unless --yes bypasses it. Non-TTY (interactive()
+        // false) skips the prompt entirely so the machine contract — revoke
+        // proceeds, then clears locally — stays byte-identical to today. A
+        // decline leaves both the server key and the local key untouched.
+        if (!opts.yes && interactive()) {
+          if (!(await confirmDestructive(`Revoke key for context "${name}" on the server? It stops working everywhere.`))) {
+            console.error(hintText('Aborted.'))
+            return
+          }
+        }
         if (ctx.keyId && ctx.apiUrl) {
           const client = new ApiClient({
             apiUrl: ctx.apiUrl,

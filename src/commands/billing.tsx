@@ -9,7 +9,6 @@ import {
   renderStatic,
 } from '../lib/output.js'
 import { accentVerb, hintText } from '../ui/theme.js'
-import { confirm } from './prompts.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
 // -- Wire shapes (mirrors dashboard/src/lib/types.ts + the conductor's
@@ -48,6 +47,27 @@ type SpendCapResponse = {
   month: SpendCapPeriod
   day: SpendCapPeriod
   billing_email: string
+}
+
+// confirmDestructive mounts the shared Confirm component for a y/N gate in
+// interactive TTY mode (single keypress; Enter declines). Non-TTY callers
+// require --yes and throw a Usage error before reaching here, so the machine
+// contract is unchanged. Local per command because the shared prompts module
+// belongs to another wave; the mount pattern mirrors pickOne/promptText.
+async function confirmDestructive(message: string): Promise<boolean> {
+  const { render } = await import('ink')
+  const { Confirm } = await import('../ui/Confirm.js')
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (v: boolean) => {
+      if (settled) return
+      settled = true
+      instance.unmount()
+      resolve(v)
+    }
+    const instance = render(<Confirm message={message} onDecision={finish} />, { exitOnCtrlC: true })
+    void instance.waitUntilExit().then(() => finish(false))
+  })
 }
 
 // usd formats a cents integer as a dollars-and-cents string. Cents are the
@@ -244,7 +264,7 @@ export function registerBilling(program: Command): void {
           const question = clearing
             ? 'Clear the monthly spend cap and revert to the system default?'
             : `Set the monthly spend cap to ${usd(cents ?? 0)}?`
-          if (!(await confirm(question))) {
+          if (!(await confirmDestructive(question))) {
             console.error(hintText('Aborted.'))
             return
           }

@@ -180,7 +180,7 @@ export function registerUsage(program: Command): void {
         })
 
         await renderStatic(
-          <Panel title="USAGE" subtitle={`last ${window}`}>
+          <Panel title="Usage" subtitle={`last ${window}`}>
             <Field label="tokens" value={fmtCompact(totTokens)} />
             <Field label="runs" value={String(totRuns)} />
             {totFailed > 0 ? (

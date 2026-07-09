@@ -191,6 +191,24 @@ describe('orca chat exit codes', () => {
   })
 })
 
+describe('orca chat missing agent (non-interactive)', () => {
+  it('errors with a usage exit code when the agent arg is omitted and stdin is not a TTY', async () => {
+    // The picker only opens in an interactive TTY; the non-TTY path keeps the
+    // byte-identical missing-arg usage error so scripts and CI stay unchanged.
+    stubFetch({})
+    await expect(buildProgram().parseAsync(['node', 'orca', 'chat'])).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+    })
+  })
+
+  it('errors with a usage exit code when the agent arg is omitted under --json', async () => {
+    stubFetch({})
+    await expect(
+      buildProgram().parseAsync(['node', 'orca', '--json', 'chat']),
+    ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+  })
+})
+
 describe('orca chat tenant resolution', () => {
   it('resolves the tenant by paging the published set when the slug is past the first page', async () => {
     // No ORCA_TENANT, but a conductor key is configured, so the arg is treated

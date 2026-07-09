@@ -196,6 +196,33 @@ describe('auth logout', () => {
     const cfg = await loadConfig()
     expect(cfg.contexts.default.apiKey).toBeUndefined()
   })
+
+  it('--revoke --yes bypasses the TTY confirm and revokes (no Ink mount)', async () => {
+    // Fake a TTY on both streams so interactive() is true; --yes must still
+    // short-circuit the confirm so no Ink component is ever mounted.
+    const savedStdin = process.stdin.isTTY
+    const savedStdout = process.stdout.isTTY
+    process.stdin.isTTY = true
+    process.stdout.isTTY = true
+    try {
+      await saveConfig({
+        currentContext: 'default',
+        contexts: { default: { apiUrl: 'http://test:8080', apiKey: KEY, keyId: 'key_9' } },
+      })
+      const calls = stubFetch({
+        'DELETE /api/api-keys/key_9': () => new Response(null, { status: 204 }),
+      })
+      await run(['auth', 'logout', '--revoke', '--yes'])
+
+      expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/api-keys/key_9')).toBe(true)
+      const cfg = await loadConfig()
+      expect(cfg.contexts.default.apiKey).toBeUndefined()
+      expect(cfg.contexts.default.keyId).toBeUndefined()
+    } finally {
+      process.stdin.isTTY = savedStdin
+      process.stdout.isTTY = savedStdout
+    }
+  })
 })
 
 describe('auth login (browser flow)', () => {

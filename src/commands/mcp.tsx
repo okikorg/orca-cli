@@ -10,6 +10,7 @@ import {
   renderStatic,
 } from '../lib/output.js'
 import type { AgentProfile, MCPServerSpec } from '../lib/types.js'
+import { accentVerb, hintText } from '../ui/theme.js'
 import { confirm } from './prompts.js'
 import {
   addPageFlags,
@@ -186,7 +187,9 @@ export function registerMcp(program: Command): void {
         return
       }
       if (entries.length === 0) {
-        console.error('No MCP servers. Register one with: orca mcp add --name N --url URL')
+        // Empty state names the command that creates the missing thing.
+        console.error(hintText('No MCP servers yet.'))
+        console.error(hintText('  register one: orca mcp add --name N --url URL'))
         return
       }
       if (mode === 'plain') {
@@ -197,25 +200,26 @@ export function registerMcp(program: Command): void {
         return
       }
       const { Table } = await import('../ui/Table.js')
-      const { Panel } = await import('../ui/Panel.js')
       const { theme } = await import('../ui/theme.js')
       await renderStatic(
-        <Panel title="MCP SERVERS" subtitle={pagedSubtitle(entries.length, page.total)}>
-          <Table
-            columns={[
-              {
-                header: 'name',
-                get: (e: MCPServerCatalogEntry) => e.name,
-                color: () => theme.accent,
-                bold: true,
-              },
-              { header: 'transport', get: (e: MCPServerCatalogEntry) => e.transport },
-              { header: 'url', get: (e: MCPServerCatalogEntry) => e.url },
-              { header: 'description', get: (e: MCPServerCatalogEntry) => e.description ?? '-' },
-            ]}
-            rows={entries}
-          />
-        </Panel>,
+        <Table
+          title="MCP servers"
+          meta={pagedSubtitle(entries.length, page.total)}
+          hint='orca mcp get <name> · orca mcp test <name> · orca mcp attach <agent> <name>'
+          headers
+          columns={[
+            {
+              header: 'name',
+              get: (e: MCPServerCatalogEntry) => e.name,
+              color: () => theme.accent,
+              bold: true,
+            },
+            { header: 'transport', get: (e: MCPServerCatalogEntry) => e.transport },
+            { header: 'url', get: (e: MCPServerCatalogEntry) => e.url },
+            { header: 'description', get: (e: MCPServerCatalogEntry) => e.description ?? '-' },
+          ]}
+          rows={entries}
+        />,
       )
       printPageHint(entries.length, page.total)
     })
@@ -295,7 +299,7 @@ export function registerMcp(program: Command): void {
           printJson(created ?? entry)
           return
         }
-        console.log(`Registered MCP server "${name}" (${transport}).`)
+        console.log(`${accentVerb('Registered')} MCP server "${name}" (${transport}).`)
       },
     )
 
@@ -367,7 +371,7 @@ export function registerMcp(program: Command): void {
           return
         }
         console.log(
-          `Updated MCP server "${name}"${opts.rename ? ` -> "${next.name}"` : ''}.`,
+          `${accentVerb('Updated')} MCP server "${name}"${opts.rename ? ` -> "${next.name}"` : ''}.`,
         )
       },
     )
@@ -385,13 +389,13 @@ export function registerMcp(program: Command): void {
           throw new CliError('refusing to delete without --yes in non-interactive mode', ExitCode.Usage)
         }
         if (!(await confirm(`Delete MCP server "${name}"?`))) {
-          console.error('Aborted.')
+          console.error(hintText('Aborted.'))
           return
         }
       }
       await withApi(api, (c) => c.request<void>(catalogPath(name), { method: 'DELETE' }))
       if (outputMode(flags) === 'json') printJson({ name, deleted: true })
-      else console.log(`Deleted MCP server "${name}".`)
+      else console.log(`${accentVerb('Deleted')} MCP server "${name}".`)
     })
 
   // -- Catalog: test ----------------------------------------------------------
@@ -493,7 +497,7 @@ export function registerMcp(program: Command): void {
       const updated: AgentProfile = { ...profile, mcpServers: servers }
       await withApi(api, (c) => c.updateProfile(agent, updated))
       if (outputMode(flags) === 'json') printJson({ agent, server: spec })
-      else console.log(`Attached MCP server "${entry.name}" to agent "${agent}".`)
+      else console.log(`${accentVerb('Attached')} MCP server "${entry.name}" to agent "${agent}".`)
     })
 
   // -- Profile: detach --------------------------------------------------------
@@ -514,7 +518,7 @@ export function registerMcp(program: Command): void {
       }
       if (!opts.yes) {
         if (!(await confirm(`Detach MCP server "${name}" from agent "${agent}"?`))) {
-          console.error('Aborted.')
+          console.error(hintText('Aborted.'))
           return
         }
       }
@@ -524,6 +528,6 @@ export function registerMcp(program: Command): void {
       }
       await withApi(api, (c) => c.updateProfile(agent, updated))
       if (outputMode(flags) === 'json') printJson({ agent, name, detached: true })
-      else console.log(`Detached MCP server "${name}" from agent "${agent}".`)
+      else console.log(`${accentVerb('Detached')} MCP server "${name}" from agent "${agent}".`)
     })
 }

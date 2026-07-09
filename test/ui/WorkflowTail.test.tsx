@@ -2,6 +2,7 @@ import { render } from 'ink-testing-library'
 import { describe, expect, it } from 'vitest'
 
 import { StepTree, WorkflowTail } from '../../src/ui/WorkflowTail.js'
+import { glyphs } from '../../src/ui/theme.js'
 import type { WfStatus, WorkflowFrame, WorkflowNode } from '../../src/lib/workflows.js'
 
 function node(id: string, status: number, dependsOn: string[] = [], title?: string): WorkflowNode {
@@ -52,9 +53,13 @@ describe('WorkflowTail', () => {
     )
     await waitFor(() => done !== null)
     const output = rendered.join('\n')
-    // Transitions live in <Static> so they show in the frame stream.
+    // Transitions live in <Static> so they show in the frame stream; each
+    // hangs off a tree glyph.
     expect(output).toContain('running')
     expect(output).toContain('ok')
+    expect(output).toContain(`${glyphs.treeLast} `)
+    // Terminal summary: status glyph + word, then a separator-joined trailer.
+    expect(output).toContain(`${glyphs.statusFilled} completed`)
     expect(output).toContain('completed workflow-1')
     expect(output).toContain('2/2 steps ok')
     expect(done).toBe(3)
@@ -72,7 +77,9 @@ describe('WorkflowTail', () => {
       />,
     )
     await waitFor(() => done !== null)
-    expect(rendered.join('\n')).toContain('failed workflow-2')
+    const output = rendered.join('\n')
+    expect(output).toContain(`${glyphs.statusFilled} failed`)
+    expect(output).toContain('failed workflow-2')
     expect(done).toBe(4)
   })
 })
@@ -85,7 +92,7 @@ describe('StepTree', () => {
     const out = frames.join('\n')
     expect(out).toContain('Fetch')
     expect(out).toContain('fetch-agent')
-    expect(out).toContain('|-') // indented child connector
+    expect(out).toContain(glyphs.treeBranch) // indented child connector, from the glyph tier
     expect(out).toContain('<- fetch') // dependency edge
   })
 })

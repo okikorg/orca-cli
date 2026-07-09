@@ -1,5 +1,4 @@
 import { Box, Static, Text, useApp } from 'ink'
-import Spinner from 'ink-spinner'
 import { useEffect, useRef, useState } from 'react'
 
 import {
@@ -16,13 +15,33 @@ import {
   type WorkflowFrame,
   type WorkflowNode,
 } from '../lib/workflows.js'
-import { theme } from './theme.js'
+import { glyphs, theme } from './theme.js'
+
+// PulseSpinner is the coral streaming indicator, cycling glyphs.spinner (a
+// pulse ramp on the Unicode tier, ASCII otherwise). Hand-rolled from the theme
+// glyph set so the frame stays font-safe; mirrors RunTail.
+function PulseSpinner() {
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setI((n) => (n + 1) % glyphs.spinner.length), 120)
+    return () => clearInterval(t)
+  }, [])
+  return <Text color={theme.accent}>{glyphs.spinner[i]}</Text>
+}
+
+// meta joins subtle trailer segments with the separator glyph, dropping empties
+// so the line never shows a dangling separator. Mirrors RunTail.
+function meta(...parts: (string | number | false | undefined)[]): string {
+  return parts.filter((p) => p !== '' && p !== false && p != null).join(` ${glyphs.separator} `)
+}
 
 // StepTree renders a workflow's nodes in execution order as an indented list:
 // step names in the default terminal foreground, profiles in coral, and the
-// dependency edges (indent + `|-` connector + `<- after` note) in subtle gray
-// ASCII. No box-drawing. When showStatus is set (a run, not a definition) each
-// row is prefixed with the node's status, colored via nodeStatusColor.
+// dependency edges (indent + tree connector + `<- after` note) in subtle gray.
+// Edge glyphs come from the theme tier (box-drawing on Unicode, ASCII fallback
+// otherwise) - never hardcoded here. When showStatus is set (a run, not a
+// definition) each row is prefixed with the node's status, colored via
+// nodeStatusColor.
 const STATUS_COL = 10
 const MAX_LABEL = 44
 
@@ -33,9 +52,15 @@ function truncate(text: string, width: number): string {
 
 export function StepTree({ nodes, showStatus }: { nodes: WorkflowNode[]; showStatus?: boolean }) {
   const ordered = orderNodes(nodes)
+  // A child row is `<indent><treeBranch> <name>`; the connector width tracks
+  // the glyph length (1 on Unicode `├`, 2 on the ASCII `|-`) plus its space.
+  const connectorText = `${glyphs.treeBranch} `
   const rawWidth = Math.max(
     4,
-    ...ordered.map(({ node, depth }) => depth * 2 + (depth > 0 ? 3 : 0) + nodeName(node).length),
+    ...ordered.map(
+      ({ node, depth }) =>
+        depth * 2 + (depth > 0 ? connectorText.length : 0) + nodeName(node).length,
+    ),
   )
   const labelWidth = Math.min(MAX_LABEL, rawWidth) + 2
 
@@ -43,7 +68,7 @@ export function StepTree({ nodes, showStatus }: { nodes: WorkflowNode[]; showSta
     <Box flexDirection="column">
       {ordered.map(({ node, depth }) => {
         const indent = '  '.repeat(depth)
-        const connector = depth > 0 ? '|- ' : ''
+        const connector = depth > 0 ? connectorText : ''
         const prefixLen = indent.length + connector.length
         const name = truncate(nodeName(node), labelWidth - prefixLen)
         const deps = (node.dependsOn ?? []).filter((d) => d)
@@ -77,11 +102,14 @@ export function StepTree({ nodes, showStatus }: { nodes: WorkflowNode[]; showSta
 // snapshot-based, so items are node status transitions diffed between frames.
 type Item =
   | { kind: 'transition'; key: number; transition: NodeTransition }
-  | { kind: 'summary'; key: number; status: WfStatus; runId: string; ok: number; total: number }
+  | { kind: 'summary'; key: number; status: WfStatus; runId: string; ok: number; total: number; elapsed: number }
 
+// TransitionLine hangs a step off a tree glyph, then shows its status
+// transition (`from -> to`) with the destination colored by the node palette.
 function TransitionLine({ transition }: { transition: NodeTransition }) {
   return (
     <Text>
+      <Text color={theme.subtle}>{glyphs.treeLast} </Text>
       <Text bold>{transition.name}</Text>
       <Text color={theme.subtle}>
         {'  '}
@@ -110,6 +138,7 @@ export function WorkflowTail({ runId, subscribe, onDone }: WorkflowTailProps) {
   const [live, setLive] = useState<WfStatus>(1)
   const [final, setFinal] = useState<WfStatus | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const elapsedRef = useRef(0)
   const prev = useRef<Map<string, WfNodeStatus>>(new Map())
   const done = final !== null
 
@@ -135,7 +164,15 @@ export function WorkflowTail({ runId, subscribe, onDone }: WorkflowTailProps) {
         const run = prev.current
         setItems((list) => [
           ...list,
-          { kind: 'summary', key: list.length, status, runId, ok: countStatus(run, 3), total: run.size },
+          {
+            kind: 'summary',
+            key: list.length,
+            status,
+            runId,
+            ok: countStatus(run, 3),
+            total: run.size,
+            elapsed: elapsedRef.current,
+          },
         ])
         setFinal(status)
       })
@@ -165,7 +202,10 @@ export function WorkflowTail({ runId, subscribe, onDone }: WorkflowTailProps) {
 
   useEffect(() => {
     if (done) return
-    const t = setInterval(() => setElapsed((s) => s + 1), 1000)
+    const t = setInterval(() => {
+      elapsedRef.current += 1
+      setElapsed(elapsedRef.current)
+    }, 1000)
     return () => clearInterval(t)
   }, [done])
 
@@ -178,29 +218,31 @@ export function WorkflowTail({ runId, subscribe, onDone }: WorkflowTailProps) {
               <TransitionLine transition={item.transition} />
             </Box>
           ) : (
+            // Terminal summary: glyph+word colored by the run status palette,
+            // the run id / steps / elapsed trailer subtle and separator-joined.
             <Box key={item.key} marginTop={1}>
               <Text color={wfStatusColor(item.status)}>
-                {wfStatusLabel(item.status)} <Text color={theme.subtle}>{item.runId}</Text>
-                {item.total > 0 ? (
-                  <Text color={theme.subtle}>
-                    {' '}
-                    {item.ok}/{item.total} steps ok
-                  </Text>
-                ) : null}
+                {glyphs.statusFilled} {wfStatusLabel(item.status)}
+              </Text>
+              <Text color={theme.subtle}>
+                {' '}
+                {meta(
+                  item.runId,
+                  item.total > 0 ? `${item.ok}/${item.total} steps ok` : false,
+                  `${item.elapsed}s`,
+                )}
               </Text>
             </Box>
           )
         }
       </Static>
       {done ? null : (
+        // Streaming footer: coral pulse spinner + bold live status word +
+        // subtle run id / elapsed trailer.
         <Text>
-          <Text color={theme.accent}>
-            <Spinner type="dots" />
-          </Text>
-          <Text color={theme.muted}> {wfStatusLabel(live)} </Text>
-          <Text color={theme.subtle}>
-            {runId} {elapsed}s
-          </Text>
+          <PulseSpinner />
+          <Text bold> {wfStatusLabel(live)}</Text>
+          <Text color={theme.subtle}> {meta(runId, `${elapsed}s`)}</Text>
         </Text>
       )}
     </Box>

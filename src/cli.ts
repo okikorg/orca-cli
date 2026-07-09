@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+
 import { Command, CommanderError } from 'commander'
 
 import { registerAgents } from './commands/agents.js'
@@ -20,6 +22,7 @@ import { registerStorage } from './commands/storage.js'
 import { registerUpdate } from './commands/update.js'
 import { registerUsage } from './commands/usage.js'
 import { registerWorkflows } from './commands/workflows.js'
+import { configPath } from './lib/config.js'
 import { CliError, ExitCode } from './lib/errors.js'
 import { notifyIfUpdateAvailable } from './lib/update-check.js'
 import { bannerString } from './ui/banner.js'
@@ -37,29 +40,145 @@ program
   .option('--json', 'machine-readable JSON output')
   .exitOverride()
 
-// The ASCII wordmark heads the top-level help only (not every subcommand).
-program.addHelpText('beforeAll', (ctx) => (ctx.command === program ? bannerString() : ''))
+// Command groups for the top-level help. Headings are the uppercase group
+// labels the design language prescribes; commander renders each group as a
+// section (see configureHelp below). Order here does not decide section order —
+// that follows registration order (the order commands land in program.commands)
+// — but registration is arranged CORE -> OBSERVE -> MANAGE -> SETUP to match.
+const GROUP = {
+  CORE: 'CORE',
+  OBSERVE: 'OBSERVE',
+  MANAGE: 'MANAGE',
+  SETUP: 'SETUP',
+} as const
+
+// Which group each top-level command belongs to. Commands not listed (and the
+// implicit `help` command) fall through to SETUP so no stray "Commands:"
+// section is emitted. bundles/apps/topology/ping all come from platform.tsx and
+// read as observation surfaces, so they sit in OBSERVE.
+const COMMAND_GROUP: Record<string, string> = {
+  run: GROUP.CORE,
+  chat: GROUP.CORE,
+  agents: GROUP.CORE,
+  runs: GROUP.CORE,
+  stats: GROUP.OBSERVE,
+  usage: GROUP.OBSERVE,
+  sessions: GROUP.OBSERVE,
+  doctor: GROUP.OBSERVE,
+  topology: GROUP.OBSERVE,
+  ping: GROUP.OBSERVE,
+  bundles: GROUP.OBSERVE,
+  apps: GROUP.OBSERVE,
+  workflows: GROUP.MANAGE,
+  pools: GROUP.MANAGE,
+  skills: GROUP.MANAGE,
+  mcp: GROUP.MANAGE,
+  secrets: GROUP.MANAGE,
+  storage: GROUP.MANAGE,
+  memory: GROUP.MANAGE,
+  keys: GROUP.MANAGE,
+  billing: GROUP.MANAGE,
+  auth: GROUP.SETUP,
+  context: GROUP.SETUP,
+  update: GROUP.SETUP,
+}
+
+// Registration order == section order in the grouped help. Grouped
+// CORE -> OBSERVE -> MANAGE -> SETUP so the first command of each group appears
+// in that sequence (commander keys section order on first appearance in
+// program.commands). registerRuns adds both `runs` and the top-level `run`;
+// registerPlatform adds topology/ping/bundles/apps.
+registerChat(program)
+registerAgents(program)
+registerRuns(program)
+
+registerStats(program)
+registerUsage(program)
+registerSessions(program)
+registerDoctor(program)
+registerPlatform(program)
+
+registerWorkflows(program)
+registerPools(program)
+registerSkills(program)
+registerMcp(program)
+registerSecrets(program)
+registerStorage(program)
+registerMemory(program)
+registerKeys(program)
+registerBilling(program)
 
 registerAuth(program)
 registerContext(program)
-registerDoctor(program)
 registerUpdate(program)
-registerAgents(program)
-registerPools(program)
-registerRuns(program)
-registerKeys(program)
-registerChat(program)
-registerMcp(program)
-registerSecrets(program)
-registerSkills(program)
-registerSessions(program)
-registerStorage(program)
-registerMemory(program)
-registerStats(program)
-registerBilling(program)
-registerUsage(program)
-registerWorkflows(program)
-registerPlatform(program)
+
+// The implicit `help` command is added lazily by commander and would otherwise
+// form its own stray "Commands:" section. Register it explicitly so it can be
+// tagged into SETUP alongside auth/context/update. Same name/args/description
+// as commander's default so nothing else changes.
+program.addHelpCommand(
+  new Command('help')
+    .argument('[command]', 'command to show help for')
+    .description('display help for command')
+    .helpGroup(GROUP.SETUP),
+)
+
+// Tag each registered top-level command with its group heading. Done here (not
+// in each register fn) so command ownership stays with those files; the group
+// taxonomy is a top-level-help concern that lives with the help formatter.
+// Anything unlisted (defensive) falls through to SETUP.
+for (const cmd of program.commands) {
+  cmd.helpGroup(COMMAND_GROUP[cmd.name()] ?? GROUP.SETUP)
+}
+
+// Grouped, restyled top-level help (configureHelp overrides apply everywhere,
+// but the banner + GET STARTED footer are gated to the root command only). The
+// group headings arrive already uppercase; styleTitle renders them subtle. The
+// GET STARTED sections' own titles ("Options:", "Global Options:", "Usage:")
+// also pass through styleTitle, so they pick up the same subtle-uppercase look.
+// Color is gated on colorEnabled() (NO_COLOR / non-TTY stay plain), matching
+// every other sink in the CLI; glyphs are never emitted in help text.
+program.configureHelp({
+  // A subtle, uppercased section heading. Group labels are already uppercase;
+  // commander's stock titles ("Usage:", "Options:") get uppercased too for one
+  // consistent grammar. Never colored when color is disabled.
+  styleTitle: (title) => paint(title.toUpperCase(), ansi.subtle),
+  // The command name/term in a section: primary emphasis, bold coral.
+  styleSubcommandTerm: (term) => paint(term, ansi.bold + ansi.accent),
+  // One-line command summaries: muted secondary text.
+  styleSubcommandDescription: (desc) => paint(desc, ansi.muted),
+  styleOptionDescription: (desc) => paint(desc, ansi.muted),
+  styleArgumentDescription: (desc) => paint(desc, ansi.muted),
+})
+
+// The brand banner heads the top-level help only (not every subcommand). On a
+// first run — no config file and no ORCA_API_KEY in the environment — a subtle
+// "not signed in" note follows the brand line, teaching the very first command.
+program.addHelpText('beforeAll', (ctx) => {
+  if (ctx.command !== program) return ''
+  const banner = bannerString()
+  return firstRun() ? `${banner}${paint('not signed in · run orca auth login', ansi.subtle)}\n` : banner
+})
+
+// GET STARTED footer on the top-level help only: the two commands a new user
+// runs first, in coral. Rendered as its own subtle-uppercase section to match
+// the command groups above.
+program.addHelpText('afterAll', (ctx) => {
+  if (ctx.command !== program) return ''
+  const heading = paint('GET STARTED', ansi.subtle)
+  const login = paint('orca auth login', ansi.accent)
+  const doctor = paint('orca doctor', ansi.accent)
+  return `\n${heading}\n  ${login}\n  ${doctor}`
+})
+
+// firstRun is true when the user has never signed in: no config file on disk
+// and no ORCA_API_KEY override in the environment. Sync (fs.existsSync) so it
+// can run inside commander's synchronous help hook; a missing file is the
+// common first-run case and existsSync never throws.
+function firstRun(): boolean {
+  if (process.env.ORCA_API_KEY) return false
+  return !existsSync(configPath())
+}
 
 async function main(): Promise<void> {
   try {

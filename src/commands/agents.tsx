@@ -16,6 +16,7 @@ import { confirm, revealIssuedKey } from './prompts.js'
 import {
   addPageFlags,
   apiContext,
+  type ApiContext,
   fetchAll,
   fetchPageOrAll,
   globalFlags,
@@ -41,6 +42,31 @@ type ProfileChange = {
 
 function printWarnings(warnings: string[]): void {
   for (const w of warnings) console.error(hintText(`warning: ${w}`))
+}
+
+// resolveAgentName returns the positional name when supplied; otherwise, in an
+// interactive TTY, it opens the filterable Picker over the profile list and
+// resolves with the choice. In non-TTY mode a missing name stays the usage
+// error it has always been (exit 2), so scripts see no behaviour change. Esc /
+// Ctrl-C in the picker surface as an interrupt via pickOne. `verb` names the
+// action for the usage message (e.g. "get", "delete").
+async function resolveAgentName(
+  name: string | undefined,
+  verb: string,
+  api: ApiContext,
+): Promise<string> {
+  if (name) return name
+  if (!interactive()) {
+    throw new CliError(`agent name required in non-interactive mode`, ExitCode.Usage, [
+      `Usage: orca agents ${verb} <name>`,
+    ])
+  }
+  const page = await withApi(api, (c) => c.listProfiles())
+  if (page.items.length === 0) {
+    throw new CliError('no agents; create one with: orca agents create -f agent.yaml', ExitCode.Usage)
+  }
+  const { pickOne } = await import('../ui/AgentPicker.js')
+  return pickOne('Select an agent', page.items.map((p) => p.name))
 }
 
 // AgentDetail renders one profile as a coral-titled panel of label/value
@@ -104,7 +130,9 @@ export function registerAgents(program: Command): void {
         published === null ? '?' : published.has(p.name) ? 'yes' : 'no'
 
       if (page.items.length === 0) {
-        console.error(hintText('No agents. Create one with: orca agents create -f agent.yaml'))
+        // Empty state names the command that creates the missing thing.
+        console.error(hintText('No agents yet.'))
+        console.error(hintText('  create one: orca agents create -f agent.yaml'))
         return
       }
 
@@ -115,34 +143,35 @@ export function registerAgents(program: Command): void {
       }
 
       const { Table } = await import('../ui/Table.js')
-      const { Panel } = await import('../ui/Panel.js')
       const { theme } = await import('../ui/theme.js')
       await renderStatic(
-        <Panel title="AGENTS" subtitle={pagedSubtitle(page.items.length, page.total)}>
-          <Table
-            columns={[
-              { header: 'name', get: (p: AgentProfile) => p.name, color: () => theme.accent, bold: true },
-              { header: 'runtime', get: (p: AgentProfile) => p.runtime },
-              { header: 'model', get: (p: AgentProfile) => p.model ?? '-' },
-              {
-                header: 'published',
-                get: pubCell,
-                color: (p: AgentProfile) => (pubCell(p) === 'yes' ? theme.accent : theme.subtle),
-              },
-            ]}
-            rows={page.items}
-          />
-        </Panel>,
+        <Table
+          title="Agents"
+          meta={pagedSubtitle(page.items.length, page.total)}
+          hint='orca agents get <name> · orca run <name> "prompt"'
+          columns={[
+            { header: 'name', get: (p: AgentProfile) => p.name, color: () => theme.accent, bold: true },
+            { header: 'runtime', get: (p: AgentProfile) => p.runtime },
+            { header: 'model', get: (p: AgentProfile) => p.model ?? '-' },
+            {
+              header: 'published',
+              get: pubCell,
+              color: (p: AgentProfile) => (pubCell(p) === 'yes' ? theme.accent : theme.subtle),
+            },
+          ]}
+          rows={page.items}
+        />,
       )
       printPageHint(page.items.length, page.total)
     })
 
   agents
-    .command('get <name>')
-    .description('show one agent')
-    .action(async (name: string, _opts: Record<string, never>, cmd: Command) => {
+    .command('get [name]')
+    .description('show one agent (the agent picker opens when omitted)')
+    .action(async (nameArg: string | undefined, _opts: Record<string, never>, cmd: Command) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
+      const name = await resolveAgentName(nameArg, 'get', api)
       const profile = await withApi(api, (c) => c.getProfile(name))
       const mode = outputMode(flags)
       if (mode === 'json') {
@@ -187,7 +216,7 @@ export function registerAgents(program: Command): void {
         return
       }
       if (changes.length === 0) {
-        console.error(hintText(`No change history for "${name}".`))
+        console.error(hintText(`No change history for "${name}" yet.`))
         return
       }
       const fieldsOf = (c: ProfileChange) => (c.fields?.length ? c.fields.join(', ') : '-')
@@ -196,22 +225,22 @@ export function registerAgents(program: Command): void {
         return
       }
       const { Table } = await import('../ui/Table.js')
-      const { Panel } = await import('../ui/Panel.js')
       const { theme } = await import('../ui/theme.js')
       const actionColor = (c: ProfileChange) =>
         c.action === 'deleted' ? theme.destructive : c.action === 'created' ? theme.accent : undefined
       await renderStatic(
-        <Panel title="CHANGES" subtitle={name}>
-          <Table
-            columns={[
-              { header: 'when', get: (c: ProfileChange) => formatTimestamp(c.at), color: () => theme.subtle },
-              { header: 'action', get: (c: ProfileChange) => c.action, color: actionColor },
-              { header: 'fields', get: fieldsOf },
-              { header: 'id', get: (c: ProfileChange) => c.id, color: () => theme.subtle },
-            ]}
-            rows={changes}
-          />
-        </Panel>,
+        <Table
+          title="Changes"
+          meta={[name, `${changes.length} total`]}
+          headers
+          columns={[
+            { header: 'when', get: (c: ProfileChange) => formatTimestamp(c.at), color: () => theme.subtle },
+            { header: 'action', get: (c: ProfileChange) => c.action, color: actionColor },
+            { header: 'fields', get: fieldsOf },
+            { header: 'id', get: (c: ProfileChange) => c.id, color: () => theme.subtle },
+          ]}
+          rows={changes}
+        />,
       )
     })
 
@@ -250,12 +279,13 @@ export function registerAgents(program: Command): void {
     })
 
   agents
-    .command('delete <name>')
-    .description('delete an agent')
+    .command('delete [name]')
+    .description('delete an agent (the agent picker opens when omitted)')
     .option('--yes', 'skip the confirmation prompt')
-    .action(async (name: string, opts: { yes?: boolean }, cmd: Command) => {
+    .action(async (nameArg: string | undefined, opts: { yes?: boolean }, cmd: Command) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
+      const name = await resolveAgentName(nameArg, 'delete', api)
       if (!opts.yes) {
         if (!interactive()) {
           throw new CliError('refusing to delete without --yes in non-interactive mode', ExitCode.Usage)
@@ -271,19 +301,20 @@ export function registerAgents(program: Command): void {
     })
 
   agents
-    .command('publish <name>')
-    .description('publish an agent to the public chat gateway')
+    .command('publish [name]')
+    .description('publish an agent to the public chat gateway (the agent picker opens when omitted)')
     .option('--slug <slug>', 'public slug (defaults to a server-generated one)')
     .option('--visibility <visibility>', 'private | org | public')
     .option('--expose-tool-events', 'include tool frames in the public stream')
     .action(
       async (
-        name: string,
+        nameArg: string | undefined,
         opts: { slug?: string; visibility?: string; exposeToolEvents?: boolean },
         cmd: Command,
       ) => {
         const flags = globalFlags(cmd)
         const api = await apiContext(cmd)
+        const name = await resolveAgentName(nameArg, 'publish', api)
         if (opts.visibility && !['private', 'org', 'public'].includes(opts.visibility)) {
           throw new CliError('--visibility must be private, org, or public', ExitCode.Usage)
         }
@@ -306,12 +337,13 @@ export function registerAgents(program: Command): void {
     )
 
   agents
-    .command('unpublish <name>')
-    .description('take a published agent off the public gateway')
+    .command('unpublish [name]')
+    .description('take a published agent off the public gateway (the agent picker opens when omitted)')
     .option('--yes', 'skip the confirmation prompt')
-    .action(async (name: string, opts: { yes?: boolean }, cmd: Command) => {
+    .action(async (nameArg: string | undefined, opts: { yes?: boolean }, cmd: Command) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
+      const name = await resolveAgentName(nameArg, 'unpublish', api)
       if (!opts.yes) {
         if (!interactive()) {
           throw new CliError('refusing to unpublish without --yes in non-interactive mode', ExitCode.Usage)
@@ -344,9 +376,8 @@ export function registerAgents(program: Command): void {
         return
       }
       if (items.length === 0) {
-        console.error(
-          hintText(`No chat keys for "${agent}". Create one with: orca agents keys create ${agent}`),
-        )
+        console.error(hintText(`No chat keys for "${agent}" yet.`))
+        console.error(hintText(`  create one: orca agents keys create ${agent}`))
         return
       }
       const state = (k: (typeof items)[number]) =>
@@ -357,25 +388,26 @@ export function registerAgents(program: Command): void {
         return
       }
       const { Table } = await import('../ui/Table.js')
-      const { Panel } = await import('../ui/Panel.js')
       const { theme } = await import('../ui/theme.js')
       await renderStatic(
-        <Panel title="CHAT KEYS" subtitle={agent}>
-          <Table
-            columns={[
-              { header: 'id', get: (k: (typeof items)[number]) => k.id, color: () => theme.accent, bold: true },
-              { header: 'label', get: (k: (typeof items)[number]) => k.label || '-' },
-              { header: 'created', get: (k: (typeof items)[number]) => k.createdAt },
-              { header: 'last used', get: (k: (typeof items)[number]) => k.lastUsedAt ?? '-' },
-              {
-                header: 'state',
-                get: state,
-                color: (k: (typeof items)[number]) => (k.revokedAt ? theme.subtle : undefined),
-              },
-            ]}
-            rows={items}
-          />
-        </Panel>,
+        <Table
+          title="Chat keys"
+          meta={[agent, pagedSubtitle(items.length, page.total)]}
+          hint={`orca agents keys create ${agent} · orca agents keys revoke ${agent} <id>`}
+          headers
+          columns={[
+            { header: 'id', get: (k: (typeof items)[number]) => k.id, color: () => theme.accent, bold: true },
+            { header: 'label', get: (k: (typeof items)[number]) => k.label || '-' },
+            { header: 'created', get: (k: (typeof items)[number]) => k.createdAt },
+            { header: 'last used', get: (k: (typeof items)[number]) => k.lastUsedAt ?? '-' },
+            {
+              header: 'state',
+              get: state,
+              color: (k: (typeof items)[number]) => (k.revokedAt ? theme.subtle : undefined),
+            },
+          ]}
+          rows={items}
+        />,
       )
       printPageHint(items.length, page.total)
     })

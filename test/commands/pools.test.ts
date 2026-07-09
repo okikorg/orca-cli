@@ -79,11 +79,11 @@ describe('pools list', () => {
     expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('Showing 1 of 9')
   })
 
-  it('shows an empty-state hint when there are no pools', async () => {
+  it('shows an empty-state hint naming the create command when there are no pools', async () => {
     stubFetch({ 'GET /api/pools?limit=10': jsonResponse([]) })
     await run(['pools', 'list'])
     expect(stdout()).toBe('')
-    expect(vi.mocked(console.error)).toHaveBeenCalled()
+    expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('orca pools create')
   })
 })
 
