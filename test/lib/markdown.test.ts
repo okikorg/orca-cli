@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { renderMarkdown } from '../../src/lib/markdown.js'
+import { renderMarkdown, stripControlSequences } from '../../src/lib/markdown.js'
 
 const plain = { color: false }
 const colored = { color: true }
@@ -98,5 +98,44 @@ describe('renderMarkdown (color: true)', () => {
     const out = renderMarkdown('```\ncode\n```', colored)
     expect(out).toContain('\x1b[38;2;168;168;168m') // muted
     expect(out).toContain('  ') // two-space indent
+  })
+})
+
+// Remote replies are untrusted: raw escape/control bytes embedded in
+// otherwise-plain text must be neutralized before they reach a terminal
+// (OSC retitles windows / writes the clipboard, CSI moves and erases).
+describe('control-sequence stripping', () => {
+  it('strips OSC sequences (BEL- and ST-terminated, and unterminated)', () => {
+    expect(stripControlSequences('a\x1b]0;evil\x07b')).toBe('ab')
+    expect(stripControlSequences('a\x1b]52;c;payload\x1b\\b')).toBe('ab')
+    expect(stripControlSequences('a\x1b]0;dangling')).toBe('a')
+  })
+
+  it('strips CSI sequences and C1 aliases', () => {
+    expect(stripControlSequences('a\x1b[2Jb')).toBe('ab')
+    expect(stripControlSequences('a\x1b[38;2;1;2;3mb')).toBe('ab')
+    expect(stripControlSequences('a\u009b2Jb')).toBe('a2Jb') // C1 CSI byte dropped
+  })
+
+  it('strips DCS/APC strings and lone escapes', () => {
+    expect(stripControlSequences('a\x1bPqpayload\x1b\\b')).toBe('ab')
+    expect(stripControlSequences('a\x1b_hidden\x1b\\b')).toBe('ab')
+    expect(stripControlSequences('a\x1bcb')).toBe('ab') // RIS
+    expect(stripControlSequences('trailing\x1b')).toBe('trailing')
+  })
+
+  it('strips stray C0 controls but keeps newlines and tabs', () => {
+    expect(stripControlSequences('a\x00\x08\x0b\x7fb')).toBe('ab')
+    expect(stripControlSequences('line1\nline2\tend')).toBe('line1\nline2\tend')
+    expect(stripControlSequences('cr\rout')).toBe('crout')
+  })
+
+  it('renderMarkdown neutralizes injected sequences in both color modes', () => {
+    const md = 'safe \x1b]0;pwn\x07text **bold\x1b[2J** end'
+    const plainOut = renderMarkdown(md, plain)
+    expect(plainOut).toBe('safe text bold end')
+    const coloredOut = renderMarkdown(md, colored)
+    expect(coloredOut).not.toContain('\x1b]')
+    expect(coloredOut).not.toContain('\x1b[2J')
   })
 })

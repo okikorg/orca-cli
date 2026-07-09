@@ -3,7 +3,7 @@ import TextInput from 'ink-text-input'
 import { useEffect, useRef, useState } from 'react'
 
 import type { ChatEvent, ChatToolStatus, ChatTurnResult } from '../lib/gateway.js'
-import { renderMarkdown } from '../lib/markdown.js'
+import { renderMarkdown, stripControlSequences } from '../lib/markdown.js'
 import { colorEnabled, glyphs, theme } from './theme.js'
 
 // send is injected by the chat command so this component never touches fetch
@@ -118,9 +118,10 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
         </Box>
       )
     case 'error':
+      // Gateway error text is remote-controlled; neutralize control bytes.
       return (
         <Box marginTop={1}>
-          <Text color={theme.destructive}>error: {item.message}</Text>
+          <Text color={theme.destructive}>error: {stripControlSequences(item.message)}</Text>
         </Box>
       )
     case 'summary':
@@ -188,8 +189,12 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
         signal: controller.signal,
         onEvent: (event) => {
           if (event.type === 'delta') {
+            // accum keeps the raw stream (finishTurn re-renders it through
+            // renderMarkdown, which sanitizes); the live frame is displayed
+            // as-is, so strip control bytes here. Stripping the whole accum
+            // (not the delta) also catches sequences split across deltas.
             accum += event.text
-            setLiveText(accum)
+            setLiveText(stripControlSequences(accum))
           } else if (event.type === 'tool') {
             tools.set(event.id, { id: event.id, name: event.name, status: event.status })
             setLiveTools([...tools.values()])

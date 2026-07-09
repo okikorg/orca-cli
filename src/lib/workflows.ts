@@ -8,6 +8,7 @@
 // sinks and the Ink views share one source.
 
 import { ApiClient, ApiError, pageQuery, type Paged, type PageParams } from './api.js'
+import { stripControlSequences } from './markdown.js'
 import { SSEBuffer } from './sse.js'
 import { theme } from '../ui/theme.js'
 
@@ -311,8 +312,12 @@ export function orderNodes(nodes: WorkflowNode[]): OrderedNode[] {
     .map(({ node, depth: d }) => ({ node, depth: d }))
 }
 
+// Step titles are user/server-defined free text; strip terminal control bytes
+// at the source so every sink (Ink tree, transitions, plain rows) is safe and
+// width math matches what actually renders.
 export function nodeName(node: WorkflowNode): string {
-  return node.title && node.title.trim() ? node.title : node.id
+  const name = node.title && node.title.trim() ? node.title : node.id
+  return stripControlSequences(name)
 }
 
 // -- Run stream ---------------------------------------------------------------
