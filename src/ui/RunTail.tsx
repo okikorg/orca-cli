@@ -2,6 +2,7 @@ import { Box, Static, Text, useApp } from 'ink'
 import { useEffect, useRef, useState } from 'react'
 
 import { addUsage, compactJson, formatUsage } from '../lib/format.js'
+import { stripControlSequences } from '../lib/markdown.js'
 import type { RunEvent, RunStatus, Usage } from '../lib/types.js'
 import { glyphs, statusColor, theme } from './theme.js'
 
@@ -27,11 +28,13 @@ function meta(...parts: (string | number | false | undefined)[]): string {
 
 // Exported so `orca runs get` can render a finished run's transcript with
 // the same per-type styling as the live tail. Tool calls hang off a tree glyph
-// so a transcript reads as a call/result outline.
+// so a transcript reads as a call/result outline. Free-text fields (message,
+// tool name) are remote-controlled and stripped of terminal control bytes;
+// compactJson output is already control-safe via JSON escaping.
 export function EventLine({ event }: { event: RunEvent }) {
   switch (event.type) {
     case 'assistant':
-      return <Text>{event.message ?? ''}</Text>
+      return <Text>{stripControlSequences(event.message ?? '')}</Text>
     case 'tool_call':
       return (
         <Text>
@@ -39,7 +42,8 @@ export function EventLine({ event }: { event: RunEvent }) {
             {'  '}
             {glyphs.treeLast} tool{' '}
           </Text>
-          <Text color={theme.muted}>{event.toolName ?? '?'}</Text> {compactJson(event.input)}
+          <Text color={theme.muted}>{stripControlSequences(event.toolName ?? '?')}</Text>{' '}
+          {compactJson(event.input)}
         </Text>
       )
     case 'tool_result':
@@ -50,11 +54,17 @@ export function EventLine({ event }: { event: RunEvent }) {
         </Text>
       )
     case 'progress':
-      return event.message ? <Text color={theme.muted}>{event.message}</Text> : null
+      return event.message ? (
+        <Text color={theme.muted}>{stripControlSequences(event.message)}</Text>
+      ) : null
     case 'error':
-      return <Text color={theme.destructive}>error: {event.message ?? 'unknown'}</Text>
+      return (
+        <Text color={theme.destructive}>
+          error: {stripControlSequences(event.message ?? 'unknown')}
+        </Text>
+      )
     case 'result':
-      return event.message ? <Text bold>{event.message}</Text> : null
+      return event.message ? <Text bold>{stripControlSequences(event.message)}</Text> : null
     case 'usage':
       return null
   }

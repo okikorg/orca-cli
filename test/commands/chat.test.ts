@@ -78,6 +78,19 @@ describe('orca chat single-shot (plain)', () => {
     expect(stdout).not.toMatch(/\x1b\[/)
   })
 
+  it('neutralizes escape sequences injected by the gateway, even when piped', async () => {
+    const evil = [
+      { event: 'delta', data: { text: 'safe \x1b]0;pwn\x07' } },
+      { event: 'delta', data: { text: 'text\x1b[2J done' } },
+      { event: 'done', data: { conversation_id: 'conv_1', message: '' } },
+    ]
+    stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(evil) })
+    await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi'])
+    const stdout = out.join('')
+    expect(stdout).toBe('safe text done\n')
+    expect(stdout).not.toContain('\x1b')
+  })
+
   it('prints the conversation id to stderr so scripts can capture it', async () => {
     stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(doneStream) })
     await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi'])

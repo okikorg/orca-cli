@@ -1,33 +1,41 @@
+import { stripControlSequences } from './markdown.js'
 import type { RunEvent, RunSummary, Usage } from './types.js'
 
-// compactJson renders tool inputs/outputs on one line, truncated.
+// compactJson renders tool inputs/outputs on one line, truncated. String
+// values pass through JSON.stringify-free, so they are stripped of terminal
+// control bytes here — tool output is remote-controlled text.
 export function compactJson(v: unknown, max = 120): string {
   if (v == null) return ''
-  const s = typeof v === 'string' ? v : JSON.stringify(v)
+  const s = typeof v === 'string' ? stripControlSequences(v) : JSON.stringify(v)
   const flat = s.replace(/\s+/g, ' ')
   return flat.length > max ? flat.slice(0, max - 3) + '...' : flat
 }
 
 // formatEventText is the uncolored line for plain/non-TTY sinks; RunTail
-// renders the same structure with theme colors.
+// renders the same structure with theme colors. Free-text fields are
+// remote-controlled, so the composed line is stripped of control bytes —
+// piped output must never carry terminal escape sequences.
 export function formatEventText(e: RunEvent): string | null {
-  switch (e.type) {
-    case 'assistant':
-      return e.message ?? ''
-    case 'tool_call':
-      return `tool ${e.toolName ?? '?'} ${compactJson(e.input)}`.trimEnd()
-    case 'tool_result':
-      return `  -> ${e.isError ? 'error ' : ''}${compactJson(e.output ?? e.message)}`.trimEnd()
-    case 'progress':
-      return e.message ?? null
-    case 'error':
-      return `error: ${e.message ?? 'unknown'}`
-    case 'result':
-      return e.message ?? null
-    case 'usage':
-      // Accumulated into totals, never a log line.
-      return null
-  }
+  const line = ((): string | null => {
+    switch (e.type) {
+      case 'assistant':
+        return e.message ?? ''
+      case 'tool_call':
+        return `tool ${e.toolName ?? '?'} ${compactJson(e.input)}`.trimEnd()
+      case 'tool_result':
+        return `  -> ${e.isError ? 'error ' : ''}${compactJson(e.output ?? e.message)}`.trimEnd()
+      case 'progress':
+        return e.message ?? null
+      case 'error':
+        return `error: ${e.message ?? 'unknown'}`
+      case 'result':
+        return e.message ?? null
+      case 'usage':
+        // Accumulated into totals, never a log line.
+        return null
+    }
+  })()
+  return line == null ? null : stripControlSequences(line)
 }
 
 export function addUsage(total: Usage, u?: Usage): Usage {

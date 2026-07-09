@@ -10,6 +10,7 @@ import {
   type ChatTurnResult,
   type GatewayFrame,
 } from '../lib/gateway.js'
+import { stripControlSequences } from '../lib/markdown.js'
 import { interactive } from '../lib/output.js'
 import { ansi } from '../ui/theme.js'
 import type { SendTurn } from '../ui/Chat.js'
@@ -43,12 +44,13 @@ function emitNdjson(frame: GatewayFrame): void {
 }
 
 // noteTool prints a subtle tool notice to stderr in single-shot plain mode,
-// keeping stdout pure answer text. Silent when stderr is not a terminal.
+// keeping stdout pure answer text. Silent when stderr is not a terminal. The
+// tool name is remote-controlled, so control bytes are stripped.
 function noteTool(event: Extract<ChatEvent, { type: 'tool' }>): void {
   if (!process.stderr.isTTY) return
   const color = process.env.NO_COLOR ? '' : ansi.subtle
   const reset = process.env.NO_COLOR ? '' : ansi.reset
-  process.stderr.write(`${color}tool ${event.name} ${event.status}${reset}\n`)
+  process.stderr.write(`${color}tool ${stripControlSequences(event.name)} ${event.status}${reset}\n`)
 }
 
 async function runSingleShot(
@@ -74,7 +76,11 @@ async function runSingleShot(
           ? undefined
           : (event) => {
               if (event.type === 'delta') {
-                process.stdout.write(event.text)
+                // Remote text: never let embedded escape sequences through,
+                // even to a pipe (downstream terminals re-render them). A
+                // sequence split across deltas degrades to visible text,
+                // never to an executed escape.
+                process.stdout.write(stripControlSequences(event.text))
                 wroteText = true
               } else if (event.type === 'tool') {
                 noteTool(event)
@@ -94,7 +100,7 @@ async function runSingleShot(
     if (!json) {
       // The done event carries the full terminal text; fall back to it if no
       // deltas were delivered, then emit exactly one trailing newline.
-      if (!wroteText && result.message) process.stdout.write(result.message)
+      if (!wroteText && result.message) process.stdout.write(stripControlSequences(result.message))
       process.stdout.write('\n')
     }
 

@@ -36,6 +36,28 @@ function bulletGlyph(): string {
   return /UTF-?8$/i.test(locale) ? '·' : '-'
 }
 
+// Remote text (gateway chat replies, run events, workflow step names) must
+// never smuggle terminal control sequences to the user's TTY: OSC can retitle
+// the window or write the clipboard (OSC 52), CSI can move/erase, and C1 bytes
+// alias CSI on some terminals. stripControlSequences removes ESC-introduced
+// sequences (OSC/CSI/DCS/SOS/PM/APC, then any stray ESC pair) and every other
+// C0/C1 control except \n and \t. Alternation order matters: structured
+// sequences must match before the lone-ESC catch-all.
+const CONTROL_SEQUENCES = new RegExp(
+  [
+    '\\x1b\\][^\\x07\\x1b]*(?:\\x07|\\x1b\\\\)?', // OSC ... BEL or ST (or unterminated)
+    '\\x1b\\[[0-?]*[ -/]*[@-~]?', // CSI (or unterminated)
+    '\\x1b[PX^_][^\\x1b]*(?:\\x1b\\\\)?', // DCS/SOS/PM/APC strings
+    '\\x1b.?', // any other ESC + follow byte
+    '[\\x00-\\x08\\x0b-\\x1f\\x7f\\u0080-\\u009f]', // C0 (minus \t \n), DEL, C1
+  ].join('|'),
+  'g',
+)
+
+export function stripControlSequences(text: string): string {
+  return text.replace(CONTROL_SEQUENCES, '')
+}
+
 type Opts = { color: boolean }
 
 function wrap(text: string, code: string, color: boolean): string {
@@ -82,7 +104,9 @@ function renderInline(line: string, opts: Opts): string {
 export function renderMarkdown(md: string, opts: Opts): string {
   const { color } = opts
   const bullet = bulletGlyph()
-  const lines = md.split('\n')
+  // Input is remote/untrusted; neutralize any embedded control sequences
+  // before this module adds its own (whitelisted) ANSI on top.
+  const lines = stripControlSequences(md).split('\n')
   const out: string[] = []
   let inFence = false
 
