@@ -25,8 +25,11 @@ export function statusCell(status: CheckStatus): {
 }
 
 // The status word column is padded to the widest label ("skip"/"warn"/"fail"
-// are 4, "ok" is 2) so the name column aligns regardless of verdict.
+// are 4, "ok" is 2), plus a two-space gutter before the check name. Keeping
+// the gutter inside this fixed width prevents four-letter statuses from
+// collapsing into the name (for example, `failapi key`).
 const WORD_WIDTH = 4
+const STATUS_WIDTH = WORD_WIDTH + 4
 const NAME_WIDTH = 20
 
 // DoctorReport renders the preflight results borderless, per the design grammar:
@@ -56,7 +59,7 @@ export function DoctorReport({ results, host }: { results: CheckResult[]; host: 
             <Box>
               {/* Two-space content indent. */}
               <Text> </Text>
-              <Box width={WORD_WIDTH + 2}>
+              <Box width={STATUS_WIDTH}>
                 <Text color={cell.color}>{`${cell.glyph} ${cell.label}`}</Text>
               </Box>
               <Box width={NAME_WIDTH}>
@@ -67,7 +70,7 @@ export function DoctorReport({ results, host }: { results: CheckResult[]; host: 
             {r.fix ? (
               <Box>
                 {/* Indent the fix line under the name column. */}
-                <Box width={2 + WORD_WIDTH + 2 + NAME_WIDTH}>
+                <Box width={2 + STATUS_WIDTH + NAME_WIDTH}>
                   <Text> </Text>
                 </Box>
                 <Text color={theme.subtle}>{`fix: ${r.fix}`}</Text>

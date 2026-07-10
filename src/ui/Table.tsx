@@ -32,8 +32,9 @@ export function statusDot(status: RunStatus): string {
 
 // Borderless column list. Hierarchy is whitespace and weight, not boxes.
 // - Optional header line: bold coral `title`, then subtle ` · `-joined `meta`.
-// - Optional `headers` row: a single subtle UPPERCASE label row (no coral, no
-//   rule) — pass it for wide/ambiguous tables, omit for short ones.
+// - A subtle UPPERCASE header row by default (no coral, no rule), so every
+//   tabular command uses the same column-label grammar. Pass `headers={false}`
+//   only for a deliberately headerless presentation.
 // - Optional `hint`: a subtle `next: ...` footer teaching follow-up commands.
 // Cells use the terminal default unless a column supplies a color. Two-space
 // gutters, MAX_COL cap, truncation — all preserved. Callers that pass only
@@ -44,7 +45,7 @@ export function Table<T>({
   title,
   meta,
   hint,
-  headers,
+  headers = true,
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -54,7 +55,7 @@ export function Table<T>({
   meta?: string | string[]
   // Subtle `next: ...` footer line teaching follow-up commands.
   hint?: string
-  // Show the subtle UPPERCASE column-label row.
+  // Show the subtle UPPERCASE column-label row (default true).
   headers?: boolean
 }) {
   const widths = columns.map((col) =>

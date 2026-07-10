@@ -5,10 +5,16 @@ import type { Command } from 'commander'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatTimestamp } from '../lib/format.js'
 import {
+  normalizeStoragePrefix,
+  projectStorageChildren,
+  type StorageChild,
+} from '../lib/storage-paths.js'
+import {
   interactive,
   outputMode,
   printJson,
   printPlainRows,
+  renderInk,
   renderStatic,
 } from '../lib/output.js'
 import { accentVerb, glyphs, hintText } from '../ui/theme.js'
@@ -63,6 +69,13 @@ type StoragePutResult = {
 type StorageDeleteResult = {
   key: string
   deleted: number
+}
+
+function validateStorageLimit(limit: number | undefined): void {
+  if (limit == null) return
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+    throw new CliError('--limit must be an integer from 1 to 1000', ExitCode.Usage)
+  }
 }
 
 // encodeStorageKey mirrors the dashboard (dashboard/src/lib/api.ts): the route
@@ -240,6 +253,7 @@ export function registerStorage(program: Command): void {
     .description('list objects under an optional prefix')
     .option('--limit <n>', 'page size (default 100, max 1000)', (v) => parseInt(v, 10))
     .action(async (prefix: string | undefined, opts: { limit?: number }, cmd: Command) => {
+      validateStorageLimit(opts.limit)
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
       const sp = new URLSearchParams()
@@ -270,20 +284,60 @@ export function registerStorage(program: Command): void {
       const { Table } = await import('../ui/Table.js')
       const { Panel } = await import('../ui/Panel.js')
       const { theme } = await import('../ui/theme.js')
-      const subtitle = list.prefix ? `${list.count} under ${list.prefix}` : `${list.count} total`
+      const normalizedPrefix = normalizeStoragePrefix(list.prefix || prefix)
+      const children = projectStorageChildren(list.entries, normalizedPrefix)
+      const subtitle = normalizedPrefix
+        ? `${children.length} items under /${normalizedPrefix}`
+        : `${children.length} items`
       await renderStatic(
         <Panel title="STORAGE" subtitle={subtitle}>
           <Table
             columns={[
-              { header: 'key', get: (e: StorageEntry) => e.key, color: () => theme.accent, bold: true },
-              { header: 'size', get: (e: StorageEntry) => formatBytes(e.size) },
-              { header: 'modified', get: (e: StorageEntry) => formatTimestamp(e.lastModified) },
+              { header: 'type', get: (e: StorageChild) => (e.kind === 'directory' ? 'dir' : 'file') },
+              { header: 'name', get: (e: StorageChild) => e.name, color: () => theme.accent, bold: true },
+              { header: 'size', get: (e: StorageChild) => formatBytes(e.size) },
+              { header: 'modified', get: (e: StorageChild) => formatTimestamp(e.lastModified) },
+              { header: 'objects', get: (e: StorageChild) => String(e.objectCount) },
             ]}
-            rows={list.entries}
+            rows={children}
             headers
-            hint={`orca storage get <key> ${glyphs.separator} orca storage rm <key>`}
+            hint={`orca storage browse ${normalizedPrefix || ''}${glyphs.separator} orca storage get <key>`}
           />
         </Panel>,
+      )
+    })
+
+  storage
+    .command('browse [prefix]')
+    .description('browse storage interactively like a filesystem')
+    .option('--limit <n>', 'objects fetched per directory (default 1000, max 1000)', (v) => parseInt(v, 10))
+    .action(async (prefix: string | undefined, opts: { limit?: number }, cmd: Command) => {
+      if (!interactive()) {
+        throw new CliError('storage browse requires an interactive terminal', ExitCode.Usage, [
+          'Use orca storage ls [prefix] for non-interactive output.',
+        ])
+      }
+      validateStorageLimit(opts.limit)
+      const api = await apiContext(cmd)
+      const limit = opts.limit ?? 1000
+      const { StorageBrowser } = await import('../ui/StorageBrowser.js')
+      await renderInk(
+        <StorageBrowser
+          initialPrefix={prefix}
+          load={async (folder) => {
+            const sp = new URLSearchParams({ limit: String(limit) })
+            if (folder) sp.set('prefix', folder)
+            const list = await withApi(api, (c) =>
+              c.request<StorageObjectList>(`/api/storage/objects?${sp.toString()}`),
+            )
+            return {
+              entries: list.entries,
+              count: list.count,
+              truncated: list.entries.length >= limit,
+            }
+          }}
+          onExit={() => {}}
+        />,
       )
     })
 

@@ -127,6 +127,11 @@ describe('storage ls', () => {
     expect(calls[0].path).toBe('/api/storage/objects?prefix=runs%2F&limit=5')
   })
 
+  it('validates the listing limit', async () => {
+    await expect(run(['storage', 'ls', '--limit', '0'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    await expect(run(['storage', 'ls', '--limit', '1001'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+  })
+
   it('hints an empty state with no entries', async () => {
     stubFetch({ 'GET /api/storage/objects': jsonResponse({ prefix: '', bucket: 'b', entries: [], count: 0 }) })
     await run(['storage', 'ls'])
@@ -140,6 +145,15 @@ describe('storage ls', () => {
   it('maps a 401 to the auth exit code', async () => {
     stubFetch({ 'GET /api/storage/objects': jsonResponse({ error: 'unauthorized' }, { status: 401 }) })
     await expect(run(['storage', 'ls'])).rejects.toMatchObject({ exitCode: ExitCode.Auth })
+  })
+})
+
+describe('storage browse', () => {
+  it('requires an interactive terminal and points scripts to storage ls', async () => {
+    await expect(run(['storage', 'browse'])).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+      message: 'storage browse requires an interactive terminal',
+    })
   })
 })
 

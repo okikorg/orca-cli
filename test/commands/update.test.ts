@@ -4,8 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { registerUpdate, type UpdateDeps } from '../../src/commands/update.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import type { ReleaseInfo, UpdateEnv } from '../../src/lib/release.js'
+import { VERSION } from '../../src/version.js'
 
 const EXEC_PATH = '/home/u/.local/bin/orca'
+const CURRENT_TAG = `cli-v${VERSION}`
+const LATEST_TAG = 'cli-v9.0.0'
 
 function release(tag: string): ReleaseInfo {
   const version = tag.replace(/^cli-v/, '')
@@ -26,7 +29,7 @@ const STANDALONE: UpdateEnv = { standalone: true, platform: 'darwin', arch: 'arm
 function deps(over: Partial<UpdateDeps> = {}): UpdateDeps {
   return {
     env: () => STANDALONE,
-    fetchLatest: async () => release('cli-v0.2.0'),
+    fetchLatest: async () => release(LATEST_TAG),
     fetchByTag: async (tag: string) => release(tag.startsWith('cli-v') ? tag : `cli-v${tag}`),
     performUpdate: async (rel, env) => ({ path: env.execPath, version: rel.version }),
     ...over,
@@ -70,14 +73,14 @@ describe('orca update', () => {
     await run(['update'], deps({ performUpdate }))
     expect(performUpdate).toHaveBeenCalledOnce()
     expect(logged()).toContain('Updated')
-    expect(logged()).toContain('cli-v0.2.0')
+    expect(logged()).toContain(LATEST_TAG)
   })
 
   it('emits a machine-readable result with --json', async () => {
     await run(['--json', 'update'], deps())
     expect(JSON.parse(stdout())).toMatchObject({
-      currentTag: 'cli-v0.1.0',
-      latestTag: 'cli-v0.2.0',
+      currentTag: CURRENT_TAG,
+      latestTag: LATEST_TAG,
       updateAvailable: true,
       updated: true,
       path: EXEC_PATH,
@@ -86,14 +89,14 @@ describe('orca update', () => {
 
   it('does nothing when already on the latest version', async () => {
     const performUpdate = vi.fn(deps().performUpdate)
-    await run(['update'], deps({ fetchLatest: async () => release('cli-v0.1.0'), performUpdate }))
+    await run(['update'], deps({ fetchLatest: async () => release(CURRENT_TAG), performUpdate }))
     expect(performUpdate).not.toHaveBeenCalled()
     expect(logged()).toContain('Already on the latest')
   })
 
   it('reinstalls the current version under --force', async () => {
     const performUpdate = vi.fn(deps().performUpdate)
-    await run(['update', '--force'], deps({ fetchLatest: async () => release('cli-v0.1.0'), performUpdate }))
+    await run(['update', '--force'], deps({ fetchLatest: async () => release(CURRENT_TAG), performUpdate }))
     expect(performUpdate).toHaveBeenCalledOnce()
   })
 
@@ -116,7 +119,7 @@ describe('orca update', () => {
   it('--check --json emits the comparison only', async () => {
     await run(['--json', 'update', '--check'], deps())
     const out = JSON.parse(stdout())
-    expect(out).toMatchObject({ updateAvailable: true, latestTag: 'cli-v0.2.0' })
+    expect(out).toMatchObject({ updateAvailable: true, latestTag: LATEST_TAG })
     expect(out.updated).toBeUndefined()
   })
 

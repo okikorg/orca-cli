@@ -16,26 +16,23 @@ const data: Row[] = [
 ]
 
 describe('Table', () => {
-  it('renders a bare aligned grid with no header row or rule by default', () => {
+  it('renders a consistent UPPERCASE header row by default', () => {
     const { lastFrame } = render(<Table<Row> columns={cols} rows={data} />)
     const frame = lastFrame() ?? ''
     const lines = frame.split('\n')
-    // No uppercase label row and no rule glyph when headers is omitted.
-    expect(frame).not.toContain('NAME')
-    expect(frame).not.toContain(glyphs.rule)
-    // Data starts on the first line and columns stay aligned across rows.
-    expect(lines[0]).toContain('support-bot')
-    expect(lines[0].indexOf('claude')).toBe(lines[1].indexOf('codex'))
-  })
-
-  it('renders a subtle UPPERCASE label row only when headers is set', () => {
-    const { lastFrame } = render(<Table<Row> columns={cols} rows={data} headers />)
-    const lines = (lastFrame() ?? '').split('\n')
     expect(lines[0]).toContain('NAME')
     expect(lines[0]).toContain('RUNTIME')
-    // The label row is not underlined by a rule; data follows immediately.
-    expect(lines[1]).not.toContain(glyphs.rule)
+    expect(frame).not.toContain(glyphs.rule)
+    // Data follows immediately and columns stay aligned across rows.
     expect(lines[1]).toContain('support-bot')
+    expect(lines[1].indexOf('claude')).toBe(lines[2].indexOf('codex'))
+  })
+
+  it('allows a deliberately headerless presentation', () => {
+    const { lastFrame } = render(<Table<Row> columns={cols} rows={data} headers={false} />)
+    const lines = (lastFrame() ?? '').split('\n')
+    expect(lines[0]).not.toContain('NAME')
+    expect(lines[0]).toContain('support-bot')
   })
 
   it('renders a header line from title and meta joined by the separator glyph', () => {

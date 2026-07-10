@@ -462,7 +462,8 @@ subtree. Object keys may contain slashes, which stay literal path separators
 
 ```
 orca storage info                        # bucket usage summary
-orca storage ls [prefix] [--limit N]     # key, size, modified
+orca storage ls [prefix] [--limit N]     # immediate folders/files in a TTY; flat rows when piped
+orca storage browse [prefix]             # interactive filesystem-style navigation
 orca storage get <key> [--output FILE]   # bytes to stdout when piped, or to a file
 orca storage put <key> <file> [--content-type T]   # upload (upsert; overwrites)
 orca storage rm <key> [--yes]            # trailing "/" deletes a whole prefix

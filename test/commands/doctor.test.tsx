@@ -181,6 +181,13 @@ describe('DoctorReport (TTY rendering)', () => {
     expect(frame).toContain('warn')
     expect(frame).toContain('skip')
     expect(frame).toContain('conductor')
+    // Every status column keeps a visible gutter before the check name. In
+    // particular, four-letter statuses must not collapse into `failapi key`
+    // or `warnchat gateway`.
+    expect(frame).toContain(`${glyphs.statusFilled} ok    conductor`)
+    expect(frame).toContain(`${glyphs.statusFilled} fail  api key`)
+    expect(frame).toContain(`${glyphs.statusFilled} warn  chat gateway`)
+    expect(frame).toContain(`${glyphs.statusOpen} skip  billing`)
     // Status glyphs come from the active tier (filled dot for pass/warn/fail,
     // open dot for skip) — assert whichever tier this run resolved to.
     expect(frame).toContain(glyphs.statusFilled)
