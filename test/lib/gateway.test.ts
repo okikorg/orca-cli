@@ -89,11 +89,10 @@ describe('decodeFrame', () => {
     expect(decodeFrame({ event: 'whoknows', data: '{}', comment: null })).toBeNull()
   })
 
-  it('defaults a tool status to running and name to tool', () => {
+  it('defaults a tool status to running without inventing a name', () => {
     expect(decodeFrame({ event: 'tool', data: '{"id":"t"}', comment: null })).toEqual({
       type: 'tool',
       id: 't',
-      name: 'tool',
       status: 'running',
     })
   })
@@ -160,7 +159,7 @@ describe('GatewayClient.streamChat streaming', () => {
   it('surfaces tool events when the agent exposes them', async () => {
     const raw = gwFrames([
       { event: 'tool', data: { id: 'tc1', name: 'web_search', status: 'running' } },
-      { event: 'tool', data: { id: 'tc1', name: 'web_search', status: 'ok' } },
+      { event: 'tool', data: { id: 'tc1', status: 'ok' } },
       { event: 'delta', data: { text: 'answer' } },
       { event: 'done', data: { message: 'answer' } },
     ])
@@ -173,6 +172,7 @@ describe('GatewayClient.streamChat streaming', () => {
     expect(result.terminated).toBe('done')
     const tools = got.filter((e) => e.type === 'tool')
     expect(tools).toHaveLength(2)
+    // Completion frames omit name; streamChat correlates by tool-call id.
     expect(tools.at(-1)).toMatchObject({ name: 'web_search', status: 'ok' })
   })
 

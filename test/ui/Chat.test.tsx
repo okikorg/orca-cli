@@ -32,7 +32,8 @@ describe('Chat REPL', () => {
   it('renders the intro, a submitted turn with tool chips, and the assistant reply', async () => {
     const send: SendTurn = async (_message, handlers) => {
       handlers.onEvent({ type: 'tool', id: 't1', name: 'web_search', status: 'running' })
-      handlers.onEvent({ type: 'tool', id: 't1', name: 'web_search', status: 'ok' })
+      // The gateway's completion event intentionally omits the tool name.
+      handlers.onEvent({ type: 'tool', id: 't1', status: 'ok' })
       handlers.onEvent({ type: 'delta', text: 'Hi ' })
       handlers.onEvent({ type: 'delta', text: 'there' })
       return { terminated: 'done', message: 'Hi there', conversationId: 'conv_1' }
@@ -65,6 +66,8 @@ describe('Chat REPL', () => {
     expect(out).toContain('stop or exit')
     expect(out).toContain('web_search') // tool chip rendered subtly
     expect(out).not.toContain('tool web_search')
+    expect(out).not.toContain('tool tool')
+    expect(out).not.toContain('web_search ok')
     expect(out).toContain('Hi there') // assistant reply committed to the transcript
 
     // Ctrl-C from idle exits cleanly, reporting the carried conversation id.
