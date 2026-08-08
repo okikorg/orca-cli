@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { Chat, type SendTurn } from '../../src/ui/Chat.js'
 import type { ChatTurnResult } from '../../src/lib/gateway.js'
+import { glyphs } from '../../src/ui/theme.js'
 
 // Ink's first yoga layout can block the worker for hundreds of ms, so poll
 // for a condition instead of sleeping a fixed interval.
@@ -61,10 +62,12 @@ describe('Chat REPL', () => {
     await waitFor(() => frames.join('\n').includes('Hi there'))
 
     const out = frames.join('\n')
-    expect(out).toContain('you hello') // user turn has an explicit role
+    expect(out).toContain('you') // user turn has an explicit role
+    expect(out).toContain(`${glyphs.pointer} hello`)
     expect(out).not.toContain('published agent')
     expect(out).toContain('stop or exit')
-    expect(out).toContain('web_search') // tool chip rendered subtly
+    expect(out).toContain('Researching') // tool activity is grouped by intent
+    expect(out).toContain(`${glyphs.statusFilled} web_search`)
     expect(out).not.toContain('tool web_search')
     expect(out).not.toContain('tool tool')
     expect(out).not.toContain('web_search ok')
@@ -74,6 +77,35 @@ describe('Chat REPL', () => {
     stdin.write('\x03')
     await waitFor(() => exitCalled)
     expect(exitConv).toBe('conv_1')
+  }, 20000)
+
+  it('shows an active work phase and open status marker while a tool is running', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const send: SendTurn = async (_message, handlers) => {
+      handlers.onEvent({ type: 'tool', id: 't1', name: 'mcp__runner__read_file', status: 'running' })
+      await gate
+      handlers.onEvent({ type: 'tool', id: 't1', status: 'ok' })
+      return { terminated: 'done', message: 'Project read.' }
+    }
+
+    const { stdin, lastFrame } = render(<Chat agentLabel="support" send={send} onExit={() => {}} />)
+    await waitFor(() => lastFrame()?.includes('Chat') ?? false)
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('read this project')
+    await waitFor(() => lastFrame()?.includes('read this project') ?? false)
+    stdin.write('\r')
+
+    await waitFor(() => lastFrame()?.includes('read_file') ?? false)
+    const live = lastFrame() ?? ''
+    expect(live).toContain('Inspecting')
+    expect(live).toContain(`${glyphs.statusOpen} read_file`)
+    expect(live).toContain('working')
+
+    release()
+    await waitFor(() => lastFrame()?.includes('Project read.') ?? false)
   }, 20000)
 
   it('renders a gateway error turn but keeps the REPL alive', async () => {

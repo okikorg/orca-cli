@@ -38,32 +38,73 @@ type Item =
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never
 type ItemInput = DistributiveOmit<Item, 'key'>
 
-function toolColor(status: ChatToolStatus): string {
-  return status === 'error' ? theme.destructive : theme.subtle
-}
-
 function compactToolName(name: string): string {
   const parts = name.split('__')
   return stripControlSequences(parts.length > 1 ? parts.at(-1) ?? name : name)
 }
 
-// Tool trace: one compact line per tool under the reply. Platform MCP prefixes
-// and successful-status noise are omitted; errors and currently-running calls
-// remain explicit.
-function ToolRows({ tools }: { tools: ToolState[] }) {
+type ToolGroup = { phase: string; tools: ToolState[] }
+
+// The gateway does not expose model reasoning, so phase labels are derived
+// only from real tool names. This adds scan-friendly structure without
+// pretending private chain-of-thought is available to the CLI.
+function toolPhase(name: string): string {
+  const normalized = compactToolName(name).toLowerCase()
+  if (/(^|_)(web|browser|fetch|crawl|search|extract)(_|$)/.test(normalized)) return 'Researching'
+  if (/(^|_)(test|lint|typecheck|check|verify|build|compile)(_|$)/.test(normalized)) return 'Verifying'
+  if (/(^|_)(write|edit|patch|create|delete|remove|move|copy|mkdir|save)(_|$)/.test(normalized)) {
+    return 'Changing files'
+  }
+  if (/(^|_)(read|list|find|inspect|catalog|info|stat|glob)(_|$)/.test(normalized)) return 'Inspecting'
+  if (/(^|_)(run|exec|shell|command|python|bash|terminal)(_|$)/.test(normalized)) return 'Running commands'
+  return 'Working'
+}
+
+function visibleTools(tools: ToolState[]): ToolState[] {
   // A malformed or out-of-order success frame has no useful user-facing
   // detail. Keep failures visible, but never invent a tool named "tool".
-  const visible = tools.filter((tool) => tool.name || tool.status === 'error')
+  return tools.filter((tool) => tool.name || tool.status === 'error')
+}
+
+function groupTools(tools: ToolState[]): ToolGroup[] {
+  const groups: ToolGroup[] = []
+  for (const tool of visibleTools(tools)) {
+    const phase = tool.name ? toolPhase(tool.name) : 'Working'
+    const previous = groups.at(-1)
+    if (previous?.phase === phase) previous.tools.push(tool)
+    else groups.push({ phase, tools: [tool] })
+  }
+  return groups
+}
+
+// A compact worklog inspired by coding-agent terminals: semantic phase
+// headings, one real tool per row, and status conveyed by a stable glyph.
+// No arguments or outputs are shown because the public gateway deliberately
+// excludes them (they may contain secrets).
+function ToolActivity({ tools }: { tools: ToolState[] }) {
+  const groups = groupTools(tools)
   return (
-    <>
-      {visible.map((t) => (
-        <Text key={t.id || t.name || 'tool'} color={theme.subtle}>
-          {`${glyphs.treeLast} `}
-          <Text color={theme.muted}>{t.name ? compactToolName(t.name) : 'tool'}</Text>
-          {t.status === 'ok' || t.status === 'running' ? null : <Text color={toolColor(t.status)}> failed</Text>}
-        </Text>
+    <Box flexDirection="column">
+      {groups.map((group, groupIndex) => (
+        <Box key={`${group.phase}-${groupIndex}`} flexDirection="column" marginTop={groupIndex === 0 ? 0 : 1}>
+          <Text color={theme.muted} bold>{group.phase}</Text>
+          {group.tools.map((tool) => {
+            const running = tool.status === 'running'
+            const failed = tool.status === 'error'
+            const marker = running ? glyphs.statusOpen : glyphs.statusFilled
+            const markerColor = failed ? theme.destructive : running ? theme.accent : theme.subtle
+            const name = tool.name ? compactToolName(tool.name) : 'tool'
+            return (
+              <Text key={tool.id || tool.name || 'tool'}>
+                <Text color={markerColor}>{marker}</Text>
+                <Text color={running ? undefined : theme.muted}> {name}</Text>
+                {failed ? <Text color={theme.destructive}> failed</Text> : null}
+              </Text>
+            )
+          })}
+        </Box>
       ))}
-    </>
+    </Box>
   )
 }
 
@@ -102,10 +143,12 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
       )
     case 'user':
       return (
-        <Box marginTop={1}>
-          <Text color={theme.accent}>{glyphs.pointer} </Text>
-          <Text color={theme.muted}>you </Text>
-          <Text>{item.text}</Text>
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={theme.muted} bold>you</Text>
+          <Box paddingLeft={2}>
+            <Text color={theme.accent}>{glyphs.pointer} </Text>
+            <Text>{item.text}</Text>
+          </Box>
         </Box>
       )
     case 'assistant':
@@ -119,12 +162,14 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
             {item.cancelled ? <Text color={theme.subtle}> (cancelled)</Text> : null}
           </Text>
           <Box flexDirection="column" paddingLeft={2}>
-            {item.tools.length > 0 ? <ToolRows tools={item.tools} /> : null}
-            {item.text ? (
-              <Text>{renderMarkdown(item.text, { color: colorEnabled() })}</Text>
-            ) : (
-              <Text color={theme.subtle}>(empty reply)</Text>
-            )}
+            {visibleTools(item.tools).length > 0 ? <ToolActivity tools={item.tools} /> : null}
+            <Box marginTop={visibleTools(item.tools).length > 0 ? 1 : 0}>
+              {item.text ? (
+                <Text>{renderMarkdown(item.text, { color: colorEnabled() })}</Text>
+              ) : (
+                <Text color={theme.subtle}>(empty reply)</Text>
+              )}
+            </Box>
           </Box>
         </Box>
       )
@@ -158,6 +203,7 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
   const [streaming, setStreaming] = useState(false)
   const [liveText, setLiveText] = useState('')
   const [liveTools, setLiveTools] = useState<ToolState[]>([])
+  const [elapsed, setElapsed] = useState(0)
   const [exiting, setExiting] = useState(false)
 
   // Refs mirror state for the useInput closure (which Ctrl-C reads) and for
@@ -188,6 +234,7 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
     setStreaming(true)
     setLiveText('')
     setLiveTools([])
+    setElapsed(0)
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -236,6 +283,7 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
     setStreaming(false)
     setLiveText('')
     setLiveTools([])
+    setElapsed(0)
   }
 
   function finishTurn(result: ChatTurnResult, accum: string, tools: ToolState[]) {
@@ -277,6 +325,14 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exiting])
 
+  useEffect(() => {
+    if (!streaming) return
+    const timer = setInterval(() => {
+      setElapsed((seconds) => seconds + 1)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [streaming])
+
   return (
     <Box flexDirection="column">
       <Static items={items}>
@@ -291,17 +347,21 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
         <Box flexDirection="column" marginTop={1}>
           <Text color={theme.accent} bold>{agentLabel}</Text>
           <Box flexDirection="column" paddingLeft={2}>
-            {liveTools.length > 0 ? <ToolRows tools={liveTools} /> : null}
-            {liveText === '' ? (
+            {visibleTools(liveTools).length > 0 ? <ToolActivity tools={liveTools} /> : null}
+            <Box marginTop={visibleTools(liveTools).length > 0 ? 1 : 0} flexDirection="column">
               <Text>
                 <PulseSpinner />
-                <Text color={theme.muted}> thinking</Text>
+                <Text color={theme.muted}>
+                  {' '}
+                  {liveText === '' ? 'working' : 'responding'} {glyphs.separator} {elapsed}s
+                </Text>
               </Text>
-            ) : (
-              // Live stream stays raw: markdown is applied only on the committed
-              // final message, to avoid re-parsing partial syntax every delta.
-              <Text>{liveText}</Text>
-            )}
+              {liveText === '' ? null : (
+                // Live stream stays raw: markdown is applied only on the committed
+                // final message, to avoid re-parsing partial syntax every delta.
+                <Text>{liveText}</Text>
+              )}
+            </Box>
           </Box>
         </Box>
       ) : (
