@@ -24,7 +24,7 @@ export type ChatProps = {
   onExit: (conversationId?: string) => void
 }
 
-type ToolState = { id: string; name: string; status: ChatToolStatus }
+type ToolState = { id: string; name?: string; status: ChatToolStatus }
 
 type Item =
   | { kind: 'intro'; key: number; agent: string; conversationId?: string }
@@ -51,13 +51,16 @@ function compactToolName(name: string): string {
 // and successful-status noise are omitted; errors and currently-running calls
 // remain explicit.
 function ToolRows({ tools }: { tools: ToolState[] }) {
+  // A malformed or out-of-order success frame has no useful user-facing
+  // detail. Keep failures visible, but never invent a tool named "tool".
+  const visible = tools.filter((tool) => tool.name || tool.status === 'error')
   return (
     <>
-      {tools.map((t) => (
-        <Text key={t.id || t.name} color={theme.subtle}>
+      {visible.map((t) => (
+        <Text key={t.id || t.name || 'tool'} color={theme.subtle}>
           {`${glyphs.treeLast} `}
-          <Text color={theme.muted}>{compactToolName(t.name)}</Text>
-          {t.status === 'ok' ? null : <Text color={toolColor(t.status)}> {t.status}</Text>}
+          <Text color={theme.muted}>{t.name ? compactToolName(t.name) : 'tool'}</Text>
+          {t.status === 'ok' || t.status === 'running' ? null : <Text color={toolColor(t.status)}> failed</Text>}
         </Text>
       ))}
     </>
@@ -204,7 +207,12 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
             accum += event.text
             setLiveText(stripControlSequences(accum))
           } else if (event.type === 'tool') {
-            tools.set(event.id, { id: event.id, name: event.name, status: event.status })
+            const previous = tools.get(event.id)
+            tools.set(event.id, {
+              id: event.id,
+              name: event.name ?? previous?.name,
+              status: event.status,
+            })
             setLiveTools([...tools.values()])
           }
         },

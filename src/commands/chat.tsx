@@ -12,7 +12,7 @@ import {
 } from '../lib/gateway.js'
 import { stripControlSequences } from '../lib/markdown.js'
 import { interactive } from '../lib/output.js'
-import { ansi } from '../ui/theme.js'
+import { ansi, glyphs } from '../ui/theme.js'
 import type { SendTurn } from '../ui/Chat.js'
 import { fetchAll, globalFlags } from './shared.js'
 
@@ -43,14 +43,21 @@ function emitNdjson(frame: GatewayFrame): void {
   process.stdout.write(JSON.stringify({ event: frame.event, data }) + '\n')
 }
 
-// noteTool prints a subtle tool notice to stderr in single-shot plain mode,
-// keeping stdout pure answer text. Silent when stderr is not a terminal. The
-// tool name is remote-controlled, so control bytes are stripped.
-function noteTool(event: Extract<ChatEvent, { type: 'tool' }>): void {
+// noteTool prints one concise start notice to stderr in single-shot plain mode.
+// Successful completion is silent; a failed completion gets an explicit line.
+// The gateway omits names from completion frames, so retain them by call id.
+function noteTool(event: Extract<ChatEvent, { type: 'tool' }>, names: Map<string, string>): void {
   if (!process.stderr.isTTY) return
+  if (event.name) names.set(event.id, event.name)
+  const rawName = event.name ?? names.get(event.id)
+  if (event.status === 'ok' || (event.status === 'running' && !rawName)) return
+  const name = rawName
+    ? stripControlSequences(rawName.split('__').at(-1) ?? rawName)
+    : 'tool'
   const color = process.env.NO_COLOR ? '' : ansi.subtle
   const reset = process.env.NO_COLOR ? '' : ansi.reset
-  process.stderr.write(`${color}tool ${stripControlSequences(event.name)} ${event.status}${reset}\n`)
+  const status = event.status === 'error' ? ' failed' : ''
+  process.stderr.write(`${color}${glyphs.treeLast} ${name}${status}${reset}\n`)
 }
 
 async function runSingleShot(
@@ -66,6 +73,7 @@ async function runSingleShot(
   try {
     let wroteText = false
     let result: ChatTurnResult
+    const toolNames = new Map<string, string>()
     try {
       result = await client.streamChat(message, {
         conversationId: opts.conversation,
@@ -83,7 +91,7 @@ async function runSingleShot(
                 process.stdout.write(stripControlSequences(event.text))
                 wroteText = true
               } else if (event.type === 'tool') {
-                noteTool(event)
+                noteTool(event, toolNames)
               }
             },
       })

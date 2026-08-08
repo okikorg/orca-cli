@@ -99,6 +99,28 @@ describe('orca chat single-shot (plain)', () => {
     expect(out.join('') + err.join('')).not.toContain(KEY)
   })
 
+  it('prints one named tool line and suppresses its successful completion', async () => {
+    const toolStream = [
+      { event: 'tool', data: { id: 'tc1', name: 'mcp__runner__read_file', status: 'running' } },
+      { event: 'tool', data: { id: 'tc1', status: 'ok' } },
+      ...doneStream,
+    ]
+    stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(toolStream) })
+    const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY')
+    Object.defineProperty(process.stderr, 'isTTY', { value: true, configurable: true })
+    try {
+      await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi'])
+    } finally {
+      if (ttyDescriptor) Object.defineProperty(process.stderr, 'isTTY', ttyDescriptor)
+      else Reflect.deleteProperty(process.stderr, 'isTTY')
+    }
+
+    const toolOutput = err.join('')
+    expect(toolOutput.match(/read_file/g)).toHaveLength(1)
+    expect(toolOutput).not.toContain('tool tool')
+    expect(toolOutput).not.toContain(' ok')
+  })
+
   it('passes --conversation through as conversation_id', async () => {
     const calls = stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(doneStream) })
     await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi', '--conversation', 'conv_prev'])

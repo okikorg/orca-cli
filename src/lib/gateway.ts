@@ -73,7 +73,9 @@ export type ChatToolStatus = 'running' | 'ok' | 'error'
 
 export type ChatEvent =
   | { type: 'delta'; text: string }
-  | { type: 'tool'; id: string; name: string; status: ChatToolStatus }
+  // Completion frames carry only id + status, so name is absent until the
+  // stream correlator joins them to the preceding running frame.
+  | { type: 'tool'; id: string; name?: string; status: ChatToolStatus }
   | { type: 'done'; conversationId?: string; publicRunId?: string; message: string }
   | { type: 'error'; code: string; message: string; publicRunId?: string }
   | { type: 'ping'; comment: string }
@@ -94,13 +96,15 @@ export function decodeFrame(frame: GatewayFrame): ChatEvent | null {
   switch (frame.event) {
     case 'delta':
       return { type: 'delta', text: typeof payload.text === 'string' ? payload.text : '' }
-    case 'tool':
+    case 'tool': {
+      const name = str(payload.name)
       return {
         type: 'tool',
         id: str(payload.id) ?? '',
-        name: str(payload.name) ?? 'tool',
         status: toolStatus(payload.status),
+        ...(name ? { name } : {}),
       }
+    }
     case 'done':
       return {
         type: 'done',
@@ -310,11 +314,22 @@ export class GatewayClient {
     const buf = new GatewayStreamBuffer()
     let accum = ''
     let result: ChatTurnResult = { terminated: 'dropped', message: '', conversationId: opts.conversationId }
+    const toolNames = new Map<string, string>()
 
     const handle = (frame: GatewayFrame) => {
       opts.onFrame?.(frame)
-      const ev = decodeFrame(frame)
+      let ev = decodeFrame(frame)
       if (!ev) return
+      // The public gateway sends name on the running frame, then only id and
+      // status on completion. Preserve the earlier name for renderers while
+      // leaving onFrame's raw NDJSON contract untouched.
+      if (ev.type === 'tool') {
+        if (ev.name) toolNames.set(ev.id, ev.name)
+        else {
+          const name = toolNames.get(ev.id)
+          if (name) ev = { ...ev, name }
+        }
+      }
       switch (ev.type) {
         case 'delta':
           accum += ev.text
