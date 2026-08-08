@@ -42,17 +42,22 @@ function toolColor(status: ChatToolStatus): string {
   return status === 'error' ? theme.destructive : theme.subtle
 }
 
-// Tool trace: one line per tool under the reply, the same tree grammar RunTail
-// uses (`└ tool <name>` — tree glyph + subtle "tool", muted name). Glyphs come
-// from the map so the ASCII tier swaps the branch character.
+function compactToolName(name: string): string {
+  const parts = name.split('__')
+  return stripControlSequences(parts.length > 1 ? parts.at(-1) ?? name : name)
+}
+
+// Tool trace: one compact line per tool under the reply. Platform MCP prefixes
+// and successful-status noise are omitted; errors and currently-running calls
+// remain explicit.
 function ToolRows({ tools }: { tools: ToolState[] }) {
   return (
     <>
       {tools.map((t) => (
         <Text key={t.id || t.name} color={theme.subtle}>
-          {`${glyphs.treeLast} tool `}
-          <Text color={theme.muted}>{t.name}</Text>
-          <Text color={toolColor(t.status)}> {t.status}</Text>
+          {`${glyphs.treeLast} `}
+          <Text color={theme.muted}>{compactToolName(t.name)}</Text>
+          {t.status === 'ok' ? null : <Text color={toolColor(t.status)}> {t.status}</Text>}
         </Text>
       ))}
     </>
@@ -75,27 +80,28 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
   const sep = ` ${glyphs.separator} `
   switch (item.kind) {
     case 'intro':
-      // Header: bold coral agent name, subtle ` · `-separated metadata (adds
-      // the conversation id once the first turn returns one). Hint teaches the
-      // two keys the REPL binds.
+      // Header: name the surface first, then the selected agent and optional
+      // resumed conversation. Avoid exposing the publishing implementation in
+      // the user-facing title.
       return (
         <Box flexDirection="column" marginBottom={1}>
           <Text>
             <Text color={theme.accent} bold>
-              {item.agent}
+              Chat
             </Text>
             <Text color={theme.subtle}>
-              {`${sep}published agent`}
+              {`${sep}${item.agent}`}
               {item.conversationId ? `${sep}${item.conversationId}` : ''}
             </Text>
           </Text>
-          <Text color={theme.subtle}>{`enter send${sep}ctrl-c cancel/exit`}</Text>
+          <Text color={theme.subtle}>{`enter send${sep}ctrl-c stop or exit`}</Text>
         </Box>
       )
     case 'user':
       return (
-        <Box>
+        <Box marginTop={1}>
           <Text color={theme.accent}>{glyphs.pointer} </Text>
+          <Text color={theme.muted}>you </Text>
           <Text>{item.text}</Text>
         </Box>
       )
@@ -105,16 +111,18 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
       // clean — the same axis colorEnabled() governs everywhere.
       return (
         <Box flexDirection="column" marginTop={1}>
-          {item.tools.length > 0 ? <ToolRows tools={item.tools} /> : null}
           <Text>
-            <Text color={theme.muted}>{agentLabel}</Text>
+            <Text color={theme.accent} bold>{agentLabel}</Text>
             {item.cancelled ? <Text color={theme.subtle}> (cancelled)</Text> : null}
           </Text>
-          {item.text ? (
-            <Text>{renderMarkdown(item.text, { color: colorEnabled() })}</Text>
-          ) : (
-            <Text color={theme.subtle}>(empty reply)</Text>
-          )}
+          <Box flexDirection="column" paddingLeft={2}>
+            {item.tools.length > 0 ? <ToolRows tools={item.tools} /> : null}
+            {item.text ? (
+              <Text>{renderMarkdown(item.text, { color: colorEnabled() })}</Text>
+            ) : (
+              <Text color={theme.subtle}>(empty reply)</Text>
+            )}
+          </Box>
         </Box>
       )
     case 'error':
@@ -272,31 +280,32 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
       </Static>
 
       {exiting ? null : streaming ? (
-        <Box flexDirection="column">
-          {liveTools.length > 0 ? <ToolRows tools={liveTools} /> : null}
-          {liveText === '' ? (
-            <Text>
-              <PulseSpinner />
-              <Text color={theme.muted}> thinking</Text>
-            </Text>
-          ) : (
-            // Live stream stays raw: markdown is applied only on the committed
-            // final message, to avoid re-parsing partial syntax every delta.
-            <Text>
-              <Text color={theme.muted}>{agentLabel} </Text>
-              {liveText}
-            </Text>
-          )}
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={theme.accent} bold>{agentLabel}</Text>
+          <Box flexDirection="column" paddingLeft={2}>
+            {liveTools.length > 0 ? <ToolRows tools={liveTools} /> : null}
+            {liveText === '' ? (
+              <Text>
+                <PulseSpinner />
+                <Text color={theme.muted}> thinking</Text>
+              </Text>
+            ) : (
+              // Live stream stays raw: markdown is applied only on the committed
+              // final message, to avoid re-parsing partial syntax every delta.
+              <Text>{liveText}</Text>
+            )}
+          </Box>
         </Box>
       ) : (
-        <Box>
+        <Box marginTop={1}>
           <Text color={theme.accent}>{glyphs.pointer} </Text>
+          <Text color={theme.muted}>you </Text>
           <TextInput
             value={input}
             onChange={setInput}
             onSubmit={submit}
             focus={!streaming && !exiting}
-            placeholder="message"
+            placeholder={`message ${agentLabel}`}
           />
         </Box>
       )}

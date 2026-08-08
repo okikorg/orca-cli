@@ -51,7 +51,7 @@ describe('Chat REPL', () => {
       />,
     )
 
-    await waitFor(() => frames.join('').includes('published agent'))
+    await waitFor(() => frames.join('').includes('Chat'))
     await ready(stdin as unknown as EventEmitter)
 
     stdin.write('hello')
@@ -60,8 +60,11 @@ describe('Chat REPL', () => {
     await waitFor(() => frames.join('\n').includes('Hi there'))
 
     const out = frames.join('\n')
-    expect(out).toContain('hello') // user turn echoed with the coral pointer
+    expect(out).toContain('you hello') // user turn has an explicit role
+    expect(out).not.toContain('published agent')
+    expect(out).toContain('stop or exit')
     expect(out).toContain('web_search') // tool chip rendered subtly
+    expect(out).not.toContain('tool web_search')
     expect(out).toContain('Hi there') // assistant reply committed to the transcript
 
     // Ctrl-C from idle exits cleanly, reporting the carried conversation id.
@@ -77,7 +80,7 @@ describe('Chat REPL', () => {
     let exitCalled = false
     const { stdin, frames } = render(<Chat agentLabel="support" send={send} onExit={() => (exitCalled = true)} />)
 
-    await waitFor(() => frames.join('').includes('published agent'))
+    await waitFor(() => frames.join('').includes('Chat'))
     await ready(stdin as unknown as EventEmitter)
 
     stdin.write('go')
@@ -102,7 +105,7 @@ describe('Chat REPL', () => {
     let exitCalled = false
     const { stdin, frames } = render(<Chat agentLabel="support" send={send} onExit={() => (exitCalled = true)} />)
 
-    await waitFor(() => frames.join('').includes('published agent'))
+    await waitFor(() => frames.join('').includes('Chat'))
     await ready(stdin as unknown as EventEmitter)
 
     stdin.write('go')
