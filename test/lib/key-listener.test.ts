@@ -38,7 +38,7 @@ function pendingWithin<T>(p: Promise<T>, ms: number): Promise<boolean> {
   ])
 }
 
-function arm(opts?: { onFirstInput?: () => void; onCancel?: () => void }) {
+function arm(opts?: { prompt?: string; onFirstInput?: () => void; onCancel?: () => void }) {
   const input = new FakeTty()
   const out = fakeOut()
   const listener = listenForKeyPaste({
@@ -73,13 +73,26 @@ describe('listenForKeyPaste', () => {
     expect(input.paused).toBe(true)
   })
 
-  it('never echoes the key itself, only mask characters', async () => {
+  it('does not echo the pasted key or mask characters', async () => {
     const { input, out, listener } = arm()
     input.emit('data', 'ao_secret')
     input.emit('data', '\r')
     await listener.promise
+    expect(out.chunks).toEqual([])
+  })
+
+  it('renders a stable prompt with one hidden marker, then clears it', async () => {
+    const { input, out, listener } = arm({ prompt: '> Paste key: ' })
+    expect(out.chunks.join('')).toContain('> Paste key: ')
+
+    input.emit('data', 'ao_secret')
     expect(out.chunks.join('')).not.toContain('ao_secret')
-    expect(out.chunks.join('')).toContain('*'.repeat('ao_secret'.length))
+    expect(out.chunks.join('')).toContain('> Paste key: [hidden]')
+    expect(out.chunks.join('')).not.toContain('*********')
+
+    input.emit('data', '\r')
+    await expect(listener.promise).resolves.toBe('ao_secret')
+    expect(out.chunks.at(-1)).toBe('\r\x1b[2K')
   })
 
   it('supports backspace editing before submit', async () => {
@@ -97,14 +110,14 @@ describe('listenForKeyPaste', () => {
     expect(await pendingWithin(listener.promise, 40)).toBe(true)
   })
 
-  it('fires onFirstInput exactly once, before echoing', () => {
+  it('fires onFirstInput exactly once while remaining silent', () => {
     let calls = 0
     const { input, out } = arm({ onFirstInput: () => calls++ })
     expect(out.chunks).toHaveLength(0)
     input.emit('data', 'a')
     input.emit('data', 'b')
     expect(calls).toBe(1)
-    expect(out.chunks.length).toBeGreaterThan(0)
+    expect(out.chunks).toEqual([])
   })
 
   it('routes Ctrl-C to onCancel without resolving', async () => {

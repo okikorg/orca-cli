@@ -37,7 +37,9 @@ export type SandboxSpec = {
 export type AgentProfile = {
   id?: string
   name: string
-  runtime: 'claude' | 'codex' | 'general'
+  // "general" is the deprecated pre-rename label for "vercel" and may still
+  // be returned for older stored profiles.
+  runtime: 'pi' | 'vercel' | 'claude' | 'codex' | 'general'
   systemPrompt?: string
   skills?: string[]
   mcpServers?: MCPServerSpec[]

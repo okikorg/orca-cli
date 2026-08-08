@@ -24,9 +24,10 @@ async function waitFor(cond: () => boolean, timeoutMs = 5000): Promise<void> {
 }
 
 describe('RunTail', () => {
-  it('renders each event type and the terminal summary', async () => {
+  it('renders a compact live transcript and the terminal summary', async () => {
     const events: RunEvent[] = [
       { type: 'assistant', message: 'thinking about it' },
+      { type: 'progress', message: 'starting runtime with a very long tool catalog' },
       { type: 'tool_call', toolName: 'web_search', input: { q: 'orca' } },
       { type: 'tool_result', output: 'found it' },
       { type: 'usage', usage: { inputTokens: 100, outputTokens: 20 } },
@@ -46,10 +47,12 @@ describe('RunTail', () => {
     // Log lines and the summary live in <Static>, so they appear in the
     // stream of frames and persist in scrollback after exit.
     const output = frames.join('\n')
-    expect(output).toContain('thinking about it')
-    // Tool calls hang off a tree glyph: `  <treeLast> tool web_search {...}`.
-    expect(output).toContain(`${glyphs.treeLast} tool web_search`)
-    expect(output).toContain('found it')
+    expect(output).not.toContain('thinking about it')
+    expect(output).not.toContain('starting runtime')
+    expect(output).not.toContain('found it')
+    expect(output).not.toContain('{"q":"orca"}')
+    // Tool calls retain useful activity context without payload noise.
+    expect(output).toContain(`${glyphs.treeLast} web_search`)
     expect(output).toContain('all done')
     // Terminal summary: status glyph + word, then a separator-joined trailer.
     expect(output).toContain(`${glyphs.statusFilled} ok`)

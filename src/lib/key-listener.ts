@@ -5,9 +5,10 @@
 // must accept a paste at any moment while the handshake is still pending,
 // not only after the timeout.
 //
-// The listener echoes a masked line ("key: ****") on the output stream and
-// resolves with the submitted key on Enter. It stays completely silent until
-// the first keystroke so the normal browser flow looks unchanged.
+// The listener can render a stable paste prompt while collecting input and
+// resolves with the submitted key on Enter. Input is represented by one fixed
+// "[hidden]" marker so a pasted credential never produces a long animated row
+// of mask characters in the browser-login flow.
 
 const MAX_KEY_CHARS = 512
 
@@ -30,8 +31,10 @@ export type KeyPasteListener = {
 export function listenForKeyPaste(opts?: {
   input?: NodeJS.ReadStream
   output?: NodeJS.WriteStream
-  // Fired once on the first printable character, before any echo. Callers use
-  // it to clear their own progress output (the elapsed ticker).
+  // Optional stable prompt shown while the listener is armed.
+  prompt?: string
+  // Fired once on the first printable character. Callers use it to clear their
+  // own progress output (the elapsed ticker).
   onFirstInput?: () => void
   // Fired on Ctrl-C, which raw mode swallows instead of raising SIGINT.
   onCancel?: () => void
@@ -43,14 +46,16 @@ export function listenForKeyPaste(opts?: {
   let buf = ''
   let started = false
   let stopped = false
+  let promptVisible = false
   let resolveKey: ((key: string) => void) | null = null
   const promise = new Promise<string>((resolve) => {
     resolveKey = resolve
   })
 
-  const redraw = () => {
-    // \r + erase-line keeps the masked echo on a single stable line.
-    output.write(`\r\x1b[2K  key: ${'*'.repeat(buf.length)}`)
+  const redrawPrompt = () => {
+    if (!opts?.prompt) return
+    promptVisible = true
+    output.write(`\r\x1b[2K${opts.prompt}${buf ? '[hidden]' : ''}`)
   }
 
   const stop = () => {
@@ -63,6 +68,10 @@ export function listenForKeyPaste(opts?: {
       // The stream may already be closed; cooked mode no longer matters.
     }
     input.pause()
+    if (promptVisible) {
+      output.write('\r\x1b[2K')
+      promptVisible = false
+    }
   }
 
   const onData = (chunk: Buffer | string) => {
@@ -80,19 +89,19 @@ export function listenForKeyPaste(opts?: {
         const key = buf.trim()
         if (!key) continue
         stop()
-        output.write('\n')
         resolveKey?.(key)
         return
       }
       if (ch === '\x7f' || ch === '\b') {
+        const hadInput = buf.length > 0
         buf = buf.slice(0, -1)
-        redraw()
+        if (hadInput && buf.length === 0) redrawPrompt()
         continue
       }
       if (ch === '\x15') {
         // Ctrl-U clears the line, matching shell muscle memory.
         buf = ''
-        redraw()
+        redrawPrompt()
         continue
       }
       const code = ch.charCodeAt(0)
@@ -103,13 +112,14 @@ export function listenForKeyPaste(opts?: {
         opts?.onFirstInput?.()
       }
       buf += ch
-      redraw()
+      if (buf.length === 1) redrawPrompt()
     }
   }
 
   input.setRawMode(true)
   input.resume()
   input.on('data', onData)
+  redrawPrompt()
 
   return { promise, stop }
 }

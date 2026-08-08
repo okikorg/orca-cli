@@ -54,7 +54,7 @@ const GROUP = {
 
 // Which group each top-level command belongs to. Commands not listed (and the
 // implicit `help` command) fall through to SETUP so no stray "Commands:"
-// section is emitted. bundles/apps/topology/ping all come from platform.tsx and
+// section is emitted. bundles/apps/topology all come from platform.tsx and
 // read as observation surfaces, so they sit in OBSERVE.
 const COMMAND_GROUP: Record<string, string> = {
   run: GROUP.CORE,
@@ -66,7 +66,6 @@ const COMMAND_GROUP: Record<string, string> = {
   sessions: GROUP.OBSERVE,
   doctor: GROUP.OBSERVE,
   topology: GROUP.OBSERVE,
-  ping: GROUP.OBSERVE,
   bundles: GROUP.OBSERVE,
   apps: GROUP.OBSERVE,
   workflows: GROUP.MANAGE,
@@ -87,7 +86,7 @@ const COMMAND_GROUP: Record<string, string> = {
 // CORE -> OBSERVE -> MANAGE -> SETUP so the first command of each group appears
 // in that sequence (commander keys section order on first appearance in
 // program.commands). registerRuns adds both `runs` and the top-level `run`;
-// registerPlatform adds topology/ping/bundles/apps.
+// registerPlatform adds topology/bundles/apps.
 registerChat(program)
 registerAgents(program)
 registerRuns(program)

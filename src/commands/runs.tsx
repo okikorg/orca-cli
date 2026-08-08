@@ -355,8 +355,11 @@ export function registerRuns(program: Command): void {
           console.error(hintText(`started run ${created.runId} (session ${created.sessionId})`))
           return
         }
-        console.error(hintText(`run ${created.runId} started (agent "${profile}")`))
-        await tailRun(api, created.runId, outputMode(flags))
+        const mode = outputMode(flags)
+        if (mode !== 'ink') {
+          console.error(hintText(`run ${created.runId} started (agent "${profile}")`))
+        }
+        await tailRun(api, created.runId, mode)
       },
     )
 }

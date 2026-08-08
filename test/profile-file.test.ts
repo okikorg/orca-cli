@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { loadProfileFile } from '../src/lib/profile-file.js'
+import { validateProfile } from '../src/lib/profile-schema.js'
 import { CliError, ExitCode } from '../src/lib/errors.js'
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures')
@@ -43,6 +44,22 @@ describe('loadProfileFile', () => {
     expect(detail.some((d) => d.includes('runtime'))).toBe(true)
     expect(detail.some((d) => d.includes('reserved'))).toBe(true)
     expect(detail.some((d) => d.includes('transport'))).toBe(true)
+  })
+
+  it('accepts pi as a first-class runtime', () => {
+    const result = validateProfile({ name: 'pi-agent', runtime: 'pi' })
+    expect(result).toMatchObject({
+      ok: true,
+      warnings: [],
+      profile: { name: 'pi-agent', runtime: 'pi' },
+    })
+  })
+
+  it('normalises the deprecated general runtime to vercel', () => {
+    const result = validateProfile({ name: 'legacy-agent', runtime: 'general' })
+    expect(result.ok).toBe(true)
+    expect(result.profile?.runtime).toBe('vercel')
+    expect(result.warnings).toContain('runtime "general" is deprecated; it was imported as "vercel"')
   })
 
   it('rejects a missing file with a usage error', async () => {

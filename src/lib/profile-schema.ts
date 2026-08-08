@@ -14,8 +14,14 @@
 
 import type { AgentProfile, MCPServerSpec } from './types.js'
 
-export const RUNTIMES = ['claude', 'codex', 'general'] as const
+export const RUNTIMES = ['pi', 'vercel', 'claude', 'codex'] as const
 export type Runtime = (typeof RUNTIMES)[number]
+
+// Profiles created before the Vercel runtime rename may still use the legacy
+// "general" label. Match the platform by accepting and canonicalising it.
+export function normalizeRuntime(runtime: string): string {
+  return runtime === 'general' ? 'vercel' : runtime
+}
 
 // Top-level keys we recognise. Anything else is surfaced as a warning so a
 // user who wrote `runtimes:` or `model_name:` finds out immediately.
@@ -260,10 +266,14 @@ export function validateProfile(raw: unknown): SchemaValidation {
     errors.push('name is required and must be a non-empty string')
   }
 
-  // runtime - required enum
-  const runtime = raw.runtime
+  // runtime - required enum ("general" remains a deprecated alias for
+  // vercel so existing profile files continue to import cleanly)
+  const runtime =
+    typeof raw.runtime === 'string' ? normalizeRuntime(raw.runtime) : raw.runtime
   if (typeof runtime !== 'string' || !RUNTIMES.includes(runtime as Runtime)) {
     errors.push(`runtime is required and must be one of: ${RUNTIMES.join(', ')}`)
+  } else if (raw.runtime === 'general') {
+    warnings.push('runtime "general" is deprecated; it was imported as "vercel"')
   }
 
   if (raw.id !== undefined && typeof raw.id !== 'string') {

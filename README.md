@@ -243,7 +243,6 @@ orca stats [--window 1h|24h|7d|30d]          # summary + per-agent table + hotsp
 orca stats agents [--window W]               # per-agent breakdown alone
 orca stats hotspots [--window W]             # top token consumers, failing agents, busy runners
 orca topology                                # live conductor runner pool as an ASCII tree
-orca ping                                    # probe /healthz, report round-trip latency
 orca bundles                                 # capability bundles agents can attach (@fs, ...)
 orca apps                                    # Connected Apps providers + connections (read-only)
 orca agents changes <name> [--limit N]       # profile change history
@@ -265,10 +264,6 @@ tree: a coral `conductor` root, tree-edge connectors in gray (`├`/`└` on the
 Unicode tier, `|-`/`` `- `` on the ASCII tier), each runner's hash in coral with
 health and session/latency detail. It returns exit 4 in single-runner mode (the
 conductor is not pooled).
-
-`orca ping` resolves the context's API URL (no key required), times a request to
-`GET /healthz`, and exits `0` when healthy or `1` when the conductor is
-unhealthy or unreachable.
 
 `orca bundles` (`GET /api/capability-bundles`) and `orca apps` (`GET
 /api/connected-apps/{providers,connections}`) are read-only catalog views; `apps`
@@ -326,7 +321,7 @@ validates (`cli/src/lib/profile-schema.ts`, kept in sync with
 
 ```yaml
 name: support-bot
-runtime: claude          # claude | codex | general
+runtime: pi              # pi | vercel | claude | codex
 model: claude-sonnet-5
 systemPrompt: |
   You answer support questions.

@@ -31,11 +31,25 @@ function meta(...parts: (string | number | false | undefined)[]): string {
 // so a transcript reads as a call/result outline. Free-text fields (message,
 // tool name) are remote-controlled and stripped of terminal control bytes;
 // compactJson output is already control-safe via JSON escaping.
-export function EventLine({ event }: { event: RunEvent }) {
+function compactToolName(name?: string): string {
+  if (!name) return '?'
+  const parts = name.split('__')
+  return stripControlSequences(parts.length > 1 ? parts.at(-1) ?? name : name)
+}
+
+export function EventLine({ event, compact = false }: { event: RunEvent; compact?: boolean }) {
   switch (event.type) {
     case 'assistant':
       return <Text>{stripControlSequences(event.message ?? '')}</Text>
     case 'tool_call':
+      if (compact) {
+        return (
+          <Text color={theme.subtle}>
+            {'  '}
+            {glyphs.treeLast} {compactToolName(event.toolName)}
+          </Text>
+        )
+      }
       return (
         <Text>
           <Text color={theme.subtle}>
@@ -47,6 +61,7 @@ export function EventLine({ event }: { event: RunEvent }) {
         </Text>
       )
     case 'tool_result':
+      if (compact && !event.isError) return null
       return (
         <Text color={event.isError ? theme.destructive : theme.subtle}>
           {'    -> '}
@@ -54,6 +69,7 @@ export function EventLine({ event }: { event: RunEvent }) {
         </Text>
       )
     case 'progress':
+      if (compact) return null
       return event.message ? (
         <Text color={theme.muted}>{stripControlSequences(event.message)}</Text>
       ) : null
@@ -106,6 +122,13 @@ export function RunTail({ runId, subscribe, onDone }: RunTailProps) {
         setUsageText(formatUsage(usage.current))
         return
       }
+      // The live TTY is a conversation, not the raw worker log. Assistant
+      // events are streaming fragments repeated by the terminal result;
+      // progress events are runtime diagnostics; successful tool results can
+      // contain large payloads. Full fidelity remains available through
+      // --json, piped output, and `orca runs get`.
+      if (event.type === 'assistant' || event.type === 'progress') return
+      if (event.type === 'tool_result' && !event.isError) return
       setItems((prev) => [...prev, { kind: 'event', key: prev.length, event }])
     })
       .then((final) => {
@@ -162,7 +185,7 @@ export function RunTail({ runId, subscribe, onDone }: RunTailProps) {
         {(item) =>
           item.kind === 'event' ? (
             <Box key={item.key}>
-              <EventLine event={item.event} />
+              <EventLine event={item.event} compact />
             </Box>
           ) : (
             // Terminal summary: glyph+word colored by the status palette, the

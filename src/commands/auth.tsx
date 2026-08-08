@@ -13,7 +13,11 @@ import {
   type ContextConfig,
   type DefaultableField,
 } from '../lib/config.js'
-import { DEFAULT_API_URL, DEFAULT_DASHBOARD_URL } from '../lib/defaults.js'
+import {
+  DEFAULT_API_URL,
+  DEFAULT_DASHBOARD_URL,
+  LEGACY_DEFAULT_DASHBOARD_URL,
+} from '../lib/defaults.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { listenForKeyPaste } from '../lib/key-listener.js'
 import {
@@ -23,7 +27,7 @@ import {
   type CallbackPayload,
 } from '../lib/login-server.js'
 import { interactive, outputMode, printJson, renderStatic } from '../lib/output.js'
-import { accentVerb, hintText } from '../ui/theme.js'
+import { accentVerb, glyphs, hintText } from '../ui/theme.js'
 import { globalFlags } from './shared.js'
 
 // confirmDestructive mounts the shared Confirm component for a y/N gate in
@@ -85,18 +89,6 @@ function defaultKeyLabel(): string {
     // Keep the default hostname.
   }
   return `cli-${user}@${host}`
-}
-
-function titleCase(s: string): string {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s
-}
-
-// describeRoleOrg builds the " as Admin in acme" suffix for the success line,
-// omitting whichever piece the handoff didn't carry (the paste path has none).
-function describeRoleOrg(role?: string, orgSlug?: string | null): string {
-  const r = role ? ` as ${titleCase(role)}` : ''
-  const o = orgSlug ? ` in ${orgSlug}` : ''
-  return `${r}${o}`
 }
 
 // promptForKey masks a pasted key, reused by the --no-browser and timeout
@@ -174,7 +166,15 @@ export function registerAuth(program: Command): void {
         //     it if provided but does not require it. --------------------------
         let dashboardUrl =
           opts.dashboardUrl || process.env.ORCA_DASHBOARD_URL || existing.dashboardUrl || DEFAULT_DASHBOARD_URL || undefined
-        if (dashboardUrl) dashboardUrl = normalizeUrl(dashboardUrl, 'dashboard URL')
+        if (dashboardUrl) {
+          dashboardUrl = normalizeUrl(dashboardUrl, 'dashboard URL')
+          // Upgrade the former first-party default regardless of whether it
+          // came from a saved context, an old shell export, or an explicit
+          // invocation. Custom/self-hosted dashboard URLs are left alone.
+          if (dashboardUrl === LEGACY_DEFAULT_DASHBOARD_URL && DEFAULT_DASHBOARD_URL) {
+            dashboardUrl = DEFAULT_DASHBOARD_URL
+          }
+        }
 
         let handoff: Handoff
 
@@ -229,7 +229,6 @@ export function registerAuth(program: Command): void {
         cfg.currentContext = name
         const file = await saveConfig(cfg)
 
-        const roleOrg = describeRoleOrg(handoff.role, handoff.orgSlug)
         if (mode === 'json') {
           printJson({
             context: name,
@@ -243,14 +242,10 @@ export function registerAuth(program: Command): void {
           return
         }
         if (mode === 'plain') {
-          console.log(`Logged in${roleOrg}. Context "${name}" -> ${apiUrl} (${maskKey(token)})`)
-          console.error(`Key stored in ${file}`)
+          console.log('Logged in to Orca.')
           return
         }
-        console.log(
-          `${accentVerb('Logged in')}${roleOrg}. Context "${name}" -> ${apiUrl} (${maskKey(token)})`,
-        )
-        console.error(hintText(`Key stored in ${file}`))
+        console.log(`${accentVerb('Logged in')} to Orca.`)
       },
     )
 
@@ -381,26 +376,8 @@ async function browserLogin(args: {
   const authUrl = `${args.dashboardUrl}/cli-auth?state=${args.state}&port=${server.port}&label=${encodeURIComponent(args.label)}`
 
   openBrowser(authUrl)
-  console.error(hintText('Opening your browser to authorize Orca CLI...'))
-  console.error(hintText(`If it does not open, visit:\n  ${authUrl}`))
-  console.error(hintText('Waiting for the browser to authorize (Ctrl-C to cancel)...'))
-  console.error(hintText('If the page shows you a key instead, paste it here and press Enter.'))
-
-  // Live elapsed ticker so a stalled handshake never looks like a hang.
-  // stderr only, TTY only, erased before any subsequent output.
-  let ticker: ReturnType<typeof setInterval> | undefined
-  const startedAt = Date.now()
-  if (process.stderr.isTTY) {
-    ticker = setInterval(() => {
-      const s = Math.round((Date.now() - startedAt) / 1000)
-      process.stderr.write(`\r${hintText(`  waiting... ${s}s`)} `)
-    }, 1000)
-  }
-  const clearTicker = () => {
-    if (ticker) clearInterval(ticker)
-    ticker = undefined
-    if (process.stderr.isTTY) process.stderr.write('\r'.padEnd(24) + '\r')
-  }
+  console.error(hintText('Opening Orca in your browser...'))
+  console.error(hintText('Waiting for authorization (Ctrl-C to cancel)...'))
 
   const onSigint = () => server.close()
   process.once('SIGINT', onSigint)
@@ -417,7 +394,7 @@ async function browserLogin(args: {
     (err: unknown) => ({ kind: 'failed', err }),
   )
   const listener = listenForKeyPaste({
-    onFirstInput: clearTicker,
+    prompt: hintText(`${glyphs.pointer} Paste key if shown in browser: `),
     // Raw mode swallows Ctrl-C; closing the server routes it through the
     // same cancelled path as a real SIGINT.
     onCancel: () => server.close(),
@@ -430,13 +407,10 @@ async function browserLogin(args: {
   try {
     const outcome = await Promise.race(races)
     listener?.stop()
-    clearTicker()
     if (outcome.kind === 'pasted') {
-      console.error(hintText('Key received.'))
       return { token: outcome.token }
     }
     if (outcome.kind === 'callback') {
-      console.error(hintText('Browser authorization received.'))
       return {
         token: outcome.payload.key,
         keyId: outcome.payload.keyId,
@@ -447,7 +421,6 @@ async function browserLogin(args: {
     throw outcome.err
   } catch (err) {
     listener?.stop()
-    clearTicker()
     if (err instanceof LoginTimeoutError) {
       console.error(
         hintText('Timed out waiting for the browser. Paste the key shown in the dashboard instead.'),
@@ -458,7 +431,6 @@ async function browserLogin(args: {
     throw new CliError('login cancelled', ExitCode.Interrupt)
   } finally {
     listener?.stop()
-    clearTicker()
     process.off('SIGINT', onSigint)
     server.close()
   }
