@@ -4,7 +4,7 @@ import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { registerAuth } from '../../src/commands/auth.js'
-import { loadConfig, saveConfig } from '../../src/lib/config.js'
+import { loadConfig, maskKey, saveConfig } from '../../src/lib/config.js'
 import { DEFAULT_DASHBOARD_URL } from '../../src/lib/defaults.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import { setBrowserOpener } from '../../src/lib/login-server.js'
@@ -274,6 +274,15 @@ describe('auth login (browser flow)', () => {
     expect(res.status).toBe(200)
 
     await runPromise
+    const output = [
+      ...vi.mocked(console.log).mock.calls.flat(),
+      ...vi.mocked(console.error).mock.calls.flat(),
+    ].join('\n')
+    expect(output).toContain('Logged in')
+    expect(output).not.toContain('http://test:8080')
+    expect(output).not.toContain(maskKey(KEY))
+    expect(output).not.toContain('/cli-auth?')
+    expect(output).not.toContain('config.json')
     const cfg = await loadConfig()
     expect(cfg.currentContext).toBe('default')
     expect(cfg.contexts.default.apiKey).toBe(KEY)
@@ -283,6 +292,7 @@ describe('auth login (browser flow)', () => {
   })
 
   it('falls back to the baked-in production dashboard URL when none is configured', async () => {
+    expect(DEFAULT_DASHBOARD_URL).toBe('https://app.orcapods.ai')
     stubFetch({ 'GET /api/profiles?limit=1': jsonResponse([]) })
     const errors: string[] = []
     vi.mocked(console.error).mockImplementation((...a: unknown[]) => {
@@ -294,6 +304,40 @@ describe('auth login (browser flow)', () => {
     const printed = errors.find((l) => l.includes('/cli-auth?'))
     expect(printed).toBeTruthy()
     expect(printed).toContain(String(DEFAULT_DASHBOARD_URL))
+  })
+
+  it('upgrades the former baked-in dashboard URL saved in a context', async () => {
+    await saveConfig({
+      currentContext: 'default',
+      contexts: {
+        default: { dashboardUrl: 'https://agent-orc-dashboard.vercel.app' },
+      },
+    })
+    stubFetch({ 'GET /api/profiles?limit=1': jsonResponse([]) })
+    const errors: string[] = []
+    vi.mocked(console.error).mockImplementation((...a: unknown[]) => {
+      errors.push(a.join(' '))
+    })
+
+    await run(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
+
+    const printed = errors.find((l) => l.includes('/cli-auth?'))
+    expect(printed).toContain('https://app.orcapods.ai/cli-auth?')
+    expect((await loadConfig()).contexts.default.dashboardUrl).toBe('https://app.orcapods.ai')
+  })
+
+  it('upgrades the former dashboard URL from an existing shell override', async () => {
+    process.env.ORCA_DASHBOARD_URL = 'https://agent-orc-dashboard.vercel.app/'
+    stubFetch({ 'GET /api/profiles?limit=1': jsonResponse([]) })
+    const errors: string[] = []
+    vi.mocked(console.error).mockImplementation((...a: unknown[]) => {
+      errors.push(a.join(' '))
+    })
+
+    await run(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
+
+    const printed = errors.find((l) => l.includes('/cli-auth?'))
+    expect(printed).toContain('https://app.orcapods.ai/cli-auth?')
   })
 
   it('accepts a key pasted into the terminal while the browser wait is pending', async () => {

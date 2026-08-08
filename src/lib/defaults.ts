@@ -11,10 +11,14 @@
 // older docs are stale and must not be used.)
 export const DEFAULT_API_URL: string | null = 'https://conductor-production-0859.up.railway.app'
 
-// Orca dashboard base URL for the browser login flow. CONFIRMED via
-// `vercel project ls` (project agent-orc-dashboard, latest production URL)
-// and a live 200 probe.
-export const DEFAULT_DASHBOARD_URL: string | null = 'https://agent-orc-dashboard.vercel.app'
+// Orca dashboard base URL for the browser login flow. CONFIRMED 2026-08-08
+// from the agent-orc-dashboard Vercel project's production domains and a
+// live 200 probe of /cli-auth.
+export const DEFAULT_DASHBOARD_URL: string | null = 'https://app.orcapods.ai'
+
+// Former baked-in default. Auth login upgrades this exact saved value to the
+// current production domain; user-supplied custom dashboard URLs are untouched.
+export const LEGACY_DEFAULT_DASHBOARD_URL = 'https://agent-orc-dashboard.vercel.app'
 
 // Public chat gateway base URL. CONFIRMED 2026-07-05: taken from the
 // conductor's own publicUrl on GET /api/published and verified live

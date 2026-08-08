@@ -1,8 +1,6 @@
 import type { Command } from 'commander'
 
 import { ApiError, mapApiError } from '../lib/api.js'
-import { requireApiUrl, resolveContext } from '../lib/config.js'
-import { CliError, ExitCode } from '../lib/errors.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import { ansi, colorEnabled, glyphs, hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
@@ -131,81 +129,6 @@ function registerTopology(program: Command): void {
           </Box>
         </Panel>,
       )
-    })
-}
-
-// -- ping --------------------------------------------------------------------
-
-type PingResult = {
-  apiUrl: string
-  ok: boolean
-  status: number | null
-  latencyMs: number | null
-  error?: string
-}
-
-function registerPing(program: Command): void {
-  program
-    .command('ping')
-    .description('probe the conductor /healthz endpoint and report round-trip latency')
-    .action(async (_opts: Record<string, never>, cmd: Command) => {
-      const flags = globalFlags(cmd)
-      // /healthz needs no auth, so resolve the URL without requiring a key.
-      const ctx = await resolveContext(flags)
-      const apiUrl = requireApiUrl(ctx)
-      const mode = outputMode(flags)
-
-      const started = performance.now()
-      let result: PingResult
-      try {
-        const res = await fetch(`${apiUrl}/healthz`, { signal: AbortSignal.timeout(10_000) })
-        const latencyMs = Math.round(performance.now() - started)
-        result = { apiUrl, ok: res.ok, status: res.status, latencyMs }
-      } catch (err) {
-        result = {
-          apiUrl,
-          ok: false,
-          status: null,
-          latencyMs: null,
-          error: err instanceof Error ? err.message : String(err),
-        }
-      }
-
-      if (mode === 'json') {
-        printJson(result)
-      } else if (mode === 'plain') {
-        printPlainRows([
-          [result.ok ? 'ok' : 'unreachable', result.status ?? '', result.latencyMs ?? ''],
-        ])
-      } else {
-        const { Panel, Field } = await import('../ui/Panel.js')
-        const { theme } = await import('../ui/theme.js')
-        await renderStatic(
-          <Panel title="Ping" subtitle={ctx.name}>
-            <Field label="api url" value={apiUrl} />
-            <Field
-              label="status"
-              value={result.ok ? 'healthy' : 'unhealthy'}
-              valueColor={result.ok ? theme.accent : theme.destructive}
-            />
-            {result.status != null ? <Field label="http" value={String(result.status)} /> : null}
-            {result.latencyMs != null ? (
-              <Field label="latency" value={`${result.latencyMs}ms`} />
-            ) : null}
-            {result.error ? <Field label="error" value={result.error} valueColor={theme.subtle} /> : null}
-          </Panel>,
-        )
-      }
-
-      // Exit-code contract: 0 healthy, 1 unhealthy/unreachable. Output above is
-      // already on the wire; the throw only sets the exit code (message to
-      // stderr, stdout stays clean).
-      if (!result.ok) {
-        throw new CliError(
-          result.error ? `conductor unreachable: ${result.error}` : `conductor unhealthy (HTTP ${result.status})`,
-          ExitCode.Failure,
-        )
-      }
     })
 }
 
@@ -349,7 +272,6 @@ function registerApps(program: Command): void {
 
 export function registerPlatform(program: Command): void {
   registerTopology(program)
-  registerPing(program)
   registerBundles(program)
   registerApps(program)
 }

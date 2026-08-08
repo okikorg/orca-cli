@@ -82,6 +82,18 @@ function stdout(): string {
     .join('')
 }
 
+describe('platform command registration', () => {
+  it('does not expose the removed ping command', () => {
+    const program = new Command()
+    registerPlatform(program)
+    expect(program.commands.map((command) => command.name())).toEqual([
+      'topology',
+      'bundles',
+      'apps',
+    ])
+  })
+})
+
 describe('renderTopologyTree', () => {
   it('draws a conductor root, tree-branch connectors, and per-runner health', () => {
     const s = renderTopologyTree(TOPOLOGY, { color: false })
@@ -138,36 +150,6 @@ describe('topology', () => {
       ),
     })
     await expect(run(['topology'])).rejects.toMatchObject({ exitCode: ExitCode.NotFound })
-  })
-})
-
-describe('ping', () => {
-  it('reports healthy and exits 0 when /healthz returns 200', async () => {
-    stubFetch({ 'GET /healthz': jsonResponse('ok') })
-    await run(['--json', 'ping'])
-    const out = JSON.parse(stdout())
-    expect(out.ok).toBe(true)
-    expect(out.status).toBe(200)
-    expect(out.apiUrl).toBe('http://test:8080')
-    expect(out.latencyMs).toBeGreaterThanOrEqual(0)
-  })
-
-  it('exits 1 (Failure) when /healthz returns a non-2xx status', async () => {
-    stubFetch({ 'GET /healthz': jsonResponse({ error: 'down' }, { status: 503 }) })
-    await expect(run(['ping'])).rejects.toMatchObject({ exitCode: ExitCode.Failure })
-  })
-
-  it('exits 1 (Failure) and reports unreachable when the host cannot be reached', async () => {
-    // No /healthz route registered: the fetch mock throws TypeError, which the
-    // command treats as unreachable.
-    stubFetch({})
-    await expect(run(['ping'])).rejects.toMatchObject({ exitCode: ExitCode.Failure })
-  })
-
-  it('prints ok + latency columns in plain mode', async () => {
-    stubFetch({ 'GET /healthz': jsonResponse('ok') })
-    await run(['ping'])
-    expect(stdout()).toMatch(/^ok\t200\t\d+\n$/)
   })
 })
 
