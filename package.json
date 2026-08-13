@@ -14,7 +14,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx src/cli.ts",
+    "dev": "ORCA_API_URL=${ORCA_API_URL:-http://localhost:8080} ORCA_DASHBOARD_URL=${ORCA_DASHBOARD_URL:-http://localhost:5173} tsx src/cli.ts",
+    "dev:prod": "tsx src/cli.ts",
     "build": "tsup",
     "build:binary": "bun scripts/build-binary.ts",
     "package:binaries": "bun scripts/build-binary.ts && bash scripts/package-binaries.sh",

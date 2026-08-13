@@ -79,6 +79,11 @@ npm run dev -- --help        # dev loop (tsx)
 npm run build && npm link    # global `orca`
 ```
 
+`npm run dev` / `bun run dev` point at the local stack (conductor
+`http://localhost:8080`, dashboard `http://localhost:5173`) so a dev loop never
+talks to production by accident. An explicit `ORCA_API_URL` still wins, and
+`npm run dev:prod` uses the baked-in production defaults.
+
 ## Authentication
 
 The CLI authenticates with a tenant API key (`ao_...`). `orca auth login`
@@ -352,11 +357,67 @@ template: invoice-harness        # tracks whatever version is active
 model: anthropic:claude-sonnet-4-5
 ```
 
+## Harnesses
+
+A **harness** is your own agent, packaged as a container image, that Orca boots
+per session and drives over Orca Harness Protocol v1. Bring any framework, any
+language, any model.
+
+```
+orca harness init [dir]                                  # scaffold a working harness
+orca harness build [dir] --image <repo> [--tag t]        # build for the platform arch
+orca harness deploy <name> [dir] --image <repo>          # build, push, import, activate
+```
+
+The whole loop:
+
+```bash
+orca harness init my-harness && cd my-harness
+# your agent goes in runAgent() in server.js
+orca harness deploy my-harness . --image ghcr.io/<org>/my-harness
+```
+
+`deploy` does the five manual steps in one: builds for `linux/amd64`, pushes,
+resolves the repository digest, imports it as a new template version, waits for
+the import to finish, and activates it. It creates the template on first use
+and takes `--no-activate` if you want the version imported but not live.
+
+Three things worth knowing:
+
+- **`--platform` defaults to `linux/amd64`**, not your machine's architecture.
+  The platform's import policy checks for amd64 and sessions boot on amd64, so
+  an arm64 build from an Apple Silicon Mac imports fine and then fails at first
+  run. The platform built for is printed on every build.
+- **Your image must be pullable without credentials.** Orca mirrors it into its
+  own registry and has no way to authenticate to a private source registry yet,
+  so a private image fails the import with the registry's own 401. A new GitHub
+  Container Registry package is private by default.
+- **`build` alone cannot feed `import`.** A repository digest only exists after
+  a push, and a template version is always a digest. Use `deploy`, or push
+  yourself and pass the digest to `orca templates import`.
+
+The CLI never handles registry credentials: `docker login` is yours, and a
+refused push surfaces docker's own error.
+
+To check a harness against the protocol before shipping it, run the conformance
+script from the platform repo against your running harness:
+
+```bash
+./conformance.sh http://localhost:7099
+```
+
+It checks everything the platform does to a harness, including the two rules
+that are easy to miss: a disconnect mid-run must not take the process down, and
+`GET /state` must answer 404 rather than erroring when nothing is stored.
+
 ## Harness templates
 
 A template is a named series of immutable, digest-pinned container images plus
 one active pointer. An agent with `runtime: custom` points at a template, so a
 rollback is one `activate` rather than an edit to every agent using it.
+
+`orca harness deploy` drives these commands for you. Reach for them directly to
+inspect what is deployed, roll back, or import an image you built elsewhere.
 
 ```
 orca templates list

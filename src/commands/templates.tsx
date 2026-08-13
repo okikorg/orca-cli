@@ -98,7 +98,7 @@ function extractError(body: unknown): string | undefined {
 // waitForVersion polls until the version leaves the in-flight states or the
 // deadline passes. The server has no long-poll and no event stream for the
 // import, so this is a poll by necessity; the interval matches the dashboard's.
-async function waitForVersion(
+export async function waitForVersion(
   api: ApiContext,
   name: string,
   version: number,

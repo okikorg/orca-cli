@@ -8,6 +8,7 @@ import { registerBilling } from './commands/billing.js'
 import { registerChat } from './commands/chat.js'
 import { registerContext } from './commands/context.js'
 import { registerDoctor } from './commands/doctor.js'
+import { registerHarness } from './commands/harness.js'
 import { registerKeys } from './commands/keys.js'
 import { registerMcp } from './commands/mcp.js'
 import { registerMemory } from './commands/memory.js'
@@ -72,6 +73,7 @@ const COMMAND_GROUP: Record<string, string> = {
   workflows: GROUP.MANAGE,
   pools: GROUP.MANAGE,
   skills: GROUP.MANAGE,
+  harness: GROUP.MANAGE,
   templates: GROUP.MANAGE,
   mcp: GROUP.MANAGE,
   secrets: GROUP.MANAGE,
@@ -102,6 +104,7 @@ registerPlatform(program)
 registerWorkflows(program)
 registerPools(program)
 registerSkills(program)
+registerHarness(program)
 registerTemplates(program)
 registerMcp(program)
 registerSecrets(program)
