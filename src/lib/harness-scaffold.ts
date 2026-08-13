@@ -78,8 +78,16 @@ const AGENT_NONE = `// Your harness.
 import { createHarnessServer, type RunContext } from '@agent-orc/harness-protocol'
 
 const harness = createHarnessServer({
-  // Names this implementation in /health. Not the protocol, not the template.
+  // What this worker calls itself, reported as \`runtime\` in /health, the same
+  // way Orca's built-in sidecar reports its MODE there. Not an agent name:
+  // agents are profiles you configure in Orca, and this one worker serves all
+  // of them.
   harness: '__HARNESS_NAME__',
+
+  // Uncomment to publish a model catalog at GET /models, which is what fills
+  // the model picker in the Orca dashboard. Declaring none leaves the route
+  // absent, which is what Orca's own sidecar does.
+  // models: ['anthropic:claude-sonnet-4-5', 'openai:gpt-4o'],
 
   async run(ctx: RunContext) {
     ctx.emit.progress('thinking')
