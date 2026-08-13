@@ -113,7 +113,7 @@ describe('harness init', () => {
     const dir = path.join(workdir, 'new')
     await run(['harness', 'init', dir])
     const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'))
-    expect(pkg.dependencies['@agent-orc/harness-protocol']).toBe('^1.0.0')
+    expect(pkg.dependencies['@agent-orc/harness-protocol']).toBe('^2.0.0')
 
     // A local checkout or a packed tarball, for building against a version
     // that is not on the registry yet.
@@ -121,6 +121,41 @@ describe('harness init', () => {
     await run(['harness', 'init', linked, '--protocol', 'file:../harness-protocol'])
     const pinned = JSON.parse(await readFile(path.join(linked, 'package.json'), 'utf8'))
     expect(pinned.dependencies['@agent-orc/harness-protocol']).toBe('file:../harness-protocol')
+  })
+
+  it('names the harness after the directory, baked into the source', async () => {
+    // The name used to come from HARNESS_NAME at runtime, and nothing ever
+    // set it: not the Dockerfile, not deploy. Every harness in the fleet
+    // reported "my-harness", which makes /health useless for telling them
+    // apart. It is written into the file now.
+    const dir = path.join(workdir, 'ledger-harness')
+    await run(['harness', 'init', dir])
+
+    const index = await readFile(path.join(dir, 'index.ts'), 'utf8')
+    expect(index).toContain("harness: 'ledger-harness'")
+    expect(index).not.toContain('HARNESS_NAME')
+    expect(index).not.toContain('runtime:')
+
+    const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'))
+    expect(pkg.name).toBe('ledger-harness')
+  })
+
+  it('takes --name when the directory is not what you want to be called', async () => {
+    const dir = path.join(workdir, 'tmp-checkout')
+    await run(['harness', 'init', dir, '--name', 'ledger-harness'])
+    expect(await readFile(path.join(dir, 'index.ts'), 'utf8')).toContain(
+      "harness: 'ledger-harness'",
+    )
+  })
+
+  it('rejects a name that could not be deployed as a template', async () => {
+    // A directory called "My Harness" would otherwise produce a harness whose
+    // name is rejected later, at deploy, after the project already exists.
+    const dir = path.join(workdir, 'My Harness')
+    await expect(run(['harness', 'init', dir])).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+    })
+    await expect(readFile(path.join(dir, 'index.ts'), 'utf8')).rejects.toThrow()
   })
 
   it('pins a Node that can strip types, and forbids syntax that cannot be erased', async () => {

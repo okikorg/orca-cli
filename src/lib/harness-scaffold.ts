@@ -25,11 +25,23 @@ export const HARNESS_SDKS = ['none', 'claude', 'codex', 'pi', 'vercel', 'opencod
 export type HarnessSdk = (typeof HARNESS_SDKS)[number]
 
 /** The protocol library version a fresh harness is pinned to. */
-export const DEFAULT_PROTOCOL_SPEC = '^1.0.0'
+export const DEFAULT_PROTOCOL_SPEC = '^2.0.0'
 
 export const PROTOCOL_PACKAGE = '@agent-orc/harness-protocol'
 
+/** Harness names share the template naming rule, so one can be deployed as the other. */
+export const HARNESS_NAME_RE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/
+
+export const DEFAULT_HARNESS_NAME = 'my-harness'
+
 export type ScaffoldOptions = {
+  /**
+   * What the harness calls itself in /health. Written into the source rather
+   * than read from an env var: nothing in the image or in `harness deploy`
+   * sets one, so an env default would mean every deployed harness in the fleet
+   * reporting the same name.
+   */
+  name?: string
   /**
    * Dependency specifier for the protocol library. Overridable so a harness
    * can be built against a local checkout or a packed tarball before the
@@ -67,7 +79,7 @@ import { createHarnessServer, type RunContext } from '@agent-orc/harness-protoco
 
 const harness = createHarnessServer({
   // Names this implementation in /health. Not the protocol, not the template.
-  runtime: process.env.HARNESS_NAME || 'my-harness',
+  harness: '__HARNESS_NAME__',
 
   async run(ctx: RunContext) {
     ctx.emit.progress('thinking')
@@ -97,7 +109,7 @@ import { createHarnessServer, type RunContext } from '@agent-orc/harness-protoco
 import { query } from '@anthropic-ai/claude-agent-sdk'
 
 const harness = createHarnessServer({
-  runtime: process.env.HARNESS_NAME || 'my-harness',
+  harness: '__HARNESS_NAME__',
 
   // The Claude SDK speaks MCP directly, so it connects to the session endpoint
   // itself. Letting the library connect as well would open the same tools
@@ -168,7 +180,7 @@ import { createHarnessServer, type RunContext } from '@agent-orc/harness-protoco
 import { Codex } from '@openai/codex-sdk'
 
 const harness = createHarnessServer({
-  runtime: process.env.HARNESS_NAME || 'my-harness',
+  harness: '__HARNESS_NAME__',
 
   // Codex takes MCP servers in its own config, so it connects for itself.
   tools: false,
@@ -226,7 +238,7 @@ import {
 } from '@earendil-works/pi-coding-agent'
 
 const harness = createHarnessServer({
-  runtime: process.env.HARNESS_NAME || 'my-harness',
+  harness: '__HARNESS_NAME__',
 
   async run(ctx: RunContext) {
     // The platform's tools arrive generic. This is where a Pi harness makes
@@ -308,16 +320,8 @@ import { createHarnessServer, type RunContext } from '@agent-orc/harness-protoco
 import { anthropic } from '@ai-sdk/anthropic'
 import { jsonSchema, stepCountIs, streamText, tool, type ToolSet } from 'ai'
 
-// Model ids arrive provider-prefixed ("anthropic:claude-sonnet-4-5"); the
-// provider factory wants the bare id.
-function bareModelId(model: string | undefined, fallback: string): string {
-  if (!model) return fallback
-  const colon = model.indexOf(':')
-  return colon === -1 ? model : model.slice(colon + 1)
-}
-
 const harness = createHarnessServer({
-  runtime: process.env.HARNESS_NAME || 'my-harness',
+  harness: '__HARNESS_NAME__',
 
   async run(ctx: RunContext) {
     // The platform's tools arrive generic, with JSON Schema for arguments,
@@ -334,7 +338,8 @@ const harness = createHarnessServer({
     )
 
     const result = streamText({
-      model: anthropic(bareModelId(ctx.profile.model, 'claude-sonnet-4-5')),
+      // ctx.model is already split; the provider factory wants the bare id.
+      model: anthropic(ctx.model.modelId || 'claude-sonnet-4-5'),
       ...(ctx.profile.systemPrompt ? { system: ctx.profile.systemPrompt } : {}),
       prompt: ctx.subtask.prompt,
       abortSignal: ctx.signal,
@@ -375,23 +380,18 @@ const AGENT_OPENCODE = `// Your harness, on the OpenCode SDK.
 import { createHarnessServer, type RunContext } from '@agent-orc/harness-protocol'
 import { createOpencode } from '@opencode-ai/sdk'
 
-// "anthropic/claude-sonnet-4-5" and "anthropic:claude-sonnet-4-5" both appear
-// in the wild; OpenCode wants the two halves separately.
-function splitModel(model: string | undefined): { providerID: string; modelID: string } {
-  const raw = model ?? 'anthropic/claude-sonnet-4-5'
-  const at = raw.search(/[/:]/)
-  if (at === -1) return { providerID: 'anthropic', modelID: raw }
-  return { providerID: raw.slice(0, at), modelID: raw.slice(at + 1) }
-}
-
 const harness = createHarnessServer({
-  runtime: process.env.HARNESS_NAME || 'my-harness',
+  harness: '__HARNESS_NAME__',
 
   // OpenCode manages its own MCP configuration.
   tools: false,
 
   async run(ctx: RunContext) {
-    const model = splitModel(ctx.profile.model)
+    // OpenCode wants the two halves separately, which is what ctx.model is.
+    const model = {
+      providerID: ctx.model.provider ?? 'anthropic',
+      modelID: ctx.model.modelId || 'claude-sonnet-4-5',
+    }
 
     // Port 0 lets the OS pick a free port, so two sessions on one host cannot
     // collide.
@@ -547,7 +547,7 @@ function packageJson(sdk: HarnessSdk, opts: ScaffoldOptions): string {
   return (
     JSON.stringify(
       {
-        name: 'my-harness',
+        name: opts.name?.trim() || DEFAULT_HARNESS_NAME,
         version: '0.1.0',
         private: true,
         type: 'module',
@@ -625,7 +625,7 @@ to the Orca transcript.`
 directly and sets \`tools: false\` on the harness. Letting the library connect
 as well would open the same tools twice per run.`
 
-  return `# my-harness
+  return `# __HARNESS_NAME__
 
 An Orca harness: a service Orca boots per session and drives over Orca Harness
 Protocol v1. This one is built on the **${meta.label}**.
@@ -676,14 +676,14 @@ return { message: 'the answer', state: { messages } }
 ## Ship it
 
 \`\`\`bash
-orca harness deploy my-harness .
+orca harness deploy __HARNESS_NAME__ .
 \`\`\`
 
 That builds for linux/amd64, pushes to Orca's registry, imports the resulting
 digest as a new template version, waits for it to be ready, and activates it.
 No registry account of your own required.
 
-To push somewhere else, pass \`--image ghcr.io/<org>/my-harness\`. Your image
+To push somewhere else, pass \`--image ghcr.io/<org>/__HARNESS_NAME__\`. Your image
 then has to be pullable without credentials, because the platform mirrors it
 into its own registry and cannot authenticate to a private source registry
 yet. On GitHub Container Registry a new package is private by default.
@@ -694,13 +694,14 @@ export function scaffoldFiles(
   sdk: HarnessSdk = 'none',
   opts: ScaffoldOptions = {},
 ): ScaffoldFile[] {
+  const name = opts.name?.trim() || DEFAULT_HARNESS_NAME
   return [
-    { path: 'index.ts', content: SDKS[sdk].agent },
+    { path: 'index.ts', content: SDKS[sdk].agent.replaceAll('__HARNESS_NAME__', name) },
     { path: 'package.json', content: packageJson(sdk, opts) },
     { path: 'tsconfig.json', content: TSCONFIG_JSON },
     { path: 'Dockerfile', content: DOCKERFILE },
     { path: '.dockerignore', content: DOCKERIGNORE },
-    { path: 'README.md', content: readme(sdk) },
+    { path: 'README.md', content: readme(sdk).replaceAll('__HARNESS_NAME__', name) },
   ]
 }
 

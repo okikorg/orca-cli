@@ -27,6 +27,7 @@ import {
 import { CliError, ExitCode } from '../lib/errors.js'
 import {
   DEFAULT_PROTOCOL_SPEC,
+  HARNESS_NAME_RE,
   HARNESS_SDKS,
   type HarnessSdk,
   PROTOCOL_PACKAGE,
@@ -174,6 +175,10 @@ export function registerHarness(program: Command): void {
     )
     .option('--force', 'overwrite files that already exist')
     .option(
+      '--name <name>',
+      'what the harness calls itself in /health; defaults to the directory name',
+    )
+    .option(
       '--protocol <spec>',
       `version of ${PROTOCOL_PACKAGE} to depend on, or a local path or tarball`,
       DEFAULT_PROTOCOL_SPEC,
@@ -181,7 +186,7 @@ export function registerHarness(program: Command): void {
     .action(
       async (
         dirArg: string | undefined,
-        opts: { sdk: string; force?: boolean; protocol: string },
+        opts: { sdk: string; force?: boolean; protocol: string; name?: string },
         cmd: Command,
       ) => {
       const flags = globalFlags(cmd)
@@ -193,8 +198,17 @@ export function registerHarness(program: Command): void {
         ])
       }
       const sdk = opts.sdk as HarnessSdk
-      const files = scaffoldFiles(sdk, { protocol: opts.protocol })
       const dir = path.resolve(dirArg ?? '.')
+      // The directory name is what the author already chose, so it is a better
+      // default than a placeholder every harness in the fleet would share.
+      const name = opts.name?.trim() || path.basename(dir)
+      if (!HARNESS_NAME_RE.test(name)) {
+        throw new CliError(`"${name}" is not a usable harness name`, ExitCode.Usage, [
+          'Lower-case letters, digits, and single . _ - between them.',
+          'Pass --name to set one that does not match the directory.',
+        ])
+      }
+      const files = scaffoldFiles(sdk, { protocol: opts.protocol, name })
       await fs.mkdir(dir, { recursive: true })
 
       // Refuse as a set rather than half-writing: a scaffold that overwrote
@@ -222,16 +236,16 @@ export function registerHarness(program: Command): void {
       }
 
       if (outputMode(flags) === 'json') {
-        printJson({ dir, sdk, files: files.map((f) => f.path) })
+        printJson({ dir, sdk, name, files: files.map((f) => f.path) })
         return
       }
-      console.log(`${accentVerb('Created')} a harness in ${dir} (${sdkLabel(sdk)}).`)
+      console.log(`${accentVerb('Created')} ${name} in ${dir} (${sdkLabel(sdk)}).`)
       console.error(hintText('  your agent goes in run() in index.ts'))
       if (sdkUsesCtxTools(sdk)) {
         console.error(hintText('  platform tools arrive already connected as ctx.tools'))
       }
       console.error(hintText('  run it:    npm install && npm start'))
-      console.error(hintText('  ship it:   orca harness deploy <name> .'))
+      console.error(hintText(`  ship it:   orca harness deploy ${name} .`))
       },
     )
 
