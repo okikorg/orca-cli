@@ -25,7 +25,12 @@ import {
   resolveDigest,
 } from '../lib/docker.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { SCAFFOLD_FILES } from '../lib/harness-scaffold.js'
+import {
+  HARNESS_SDKS,
+  type HarnessSdk,
+  scaffoldFiles,
+  sdkLabel,
+} from '../lib/harness-scaffold.js'
 import { outputMode, printJson } from '../lib/output.js'
 import type { TemplateVersion } from '../lib/types.js'
 import { accentVerb, hintText } from '../ui/theme.js'
@@ -95,9 +100,23 @@ export function registerHarness(program: Command): void {
   harness
     .command('init [dir]')
     .description('write a working Harness Protocol v1 harness into a directory')
+    .option(
+      '--sdk <name>',
+      `agent SDK to build on: ${HARNESS_SDKS.join(', ')}`,
+      'none',
+    )
     .option('--force', 'overwrite files that already exist')
-    .action(async (dirArg: string | undefined, opts: { force?: boolean }, cmd: Command) => {
+    .action(async (dirArg: string | undefined, opts: { sdk: string; force?: boolean }, cmd: Command) => {
       const flags = globalFlags(cmd)
+      // Validate before creating the directory: a typo should not leave an
+      // empty folder behind.
+      if (!HARNESS_SDKS.includes(opts.sdk as HarnessSdk)) {
+        throw new CliError(`unknown --sdk "${opts.sdk}"`, ExitCode.Usage, [
+          `Known SDKs: ${HARNESS_SDKS.join(', ')}`,
+        ])
+      }
+      const sdk = opts.sdk as HarnessSdk
+      const files = scaffoldFiles(sdk)
       const dir = path.resolve(dirArg ?? '.')
       await fs.mkdir(dir, { recursive: true })
 
@@ -105,7 +124,7 @@ export function registerHarness(program: Command): void {
       // server.ts and stopped at the Dockerfile leaves no good next move.
       if (!opts.force) {
         const clashes: string[] = []
-        for (const f of SCAFFOLD_FILES) {
+        for (const f of files) {
           const exists = await fs
             .stat(path.join(dir, f.path))
             .then(() => true)
@@ -121,17 +140,17 @@ export function registerHarness(program: Command): void {
         }
       }
 
-      for (const f of SCAFFOLD_FILES) {
+      for (const f of files) {
         await fs.writeFile(path.join(dir, f.path), f.content, { mode: f.mode })
       }
 
       if (outputMode(flags) === 'json') {
-        printJson({ dir, files: SCAFFOLD_FILES.map((f) => f.path) })
+        printJson({ dir, sdk, files: files.map((f) => f.path) })
         return
       }
-      console.log(`${accentVerb('Created')} a harness in ${dir}.`)
-      console.error(hintText('  your agent goes in runAgent() in server.ts'))
-      console.error(hintText('  run it:    npm start'))
+      console.log(`${accentVerb('Created')} a harness in ${dir} (${sdkLabel(sdk)}).`)
+      console.error(hintText('  your agent goes in runAgent() in agent.ts'))
+      console.error(hintText('  run it:    npm install && npm start'))
       console.error(hintText('  ship it:   orca harness deploy <name> . --image <registry>/<repo>'))
     })
 

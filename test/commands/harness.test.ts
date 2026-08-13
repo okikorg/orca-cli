@@ -88,6 +88,7 @@ describe('harness init', () => {
     await run(['harness', 'init', dir])
 
     const server = await readFile(path.join(dir, 'server.ts'), 'utf8')
+    const protocol = await readFile(path.join(dir, 'protocol.ts'), 'utf8')
     // The three rules a hand-written harness gets wrong. If the scaffold
     // stops carrying them it stops being a working starting point.
     expect(server).toContain("'/health'")
@@ -95,8 +96,8 @@ describe('harness init', () => {
     expect(server).toContain('AbortController')
     expect(server).toMatch(/sessionId.*profile.*subtask/s)
     // The wire contract expressed as types is the reason for TypeScript here.
-    expect(server).toContain('export type RunRequest')
-    expect(server).toContain('export type HarnessEvent')
+    expect(protocol).toContain('export type RunRequest')
+    expect(protocol).toContain('export type HarnessEvent')
 
     const dockerfile = await readFile(path.join(dir, 'Dockerfile'), 'utf8')
     // Node strips types and runs the file: no build stage, nothing installed.
@@ -120,6 +121,25 @@ describe('harness init', () => {
     // The compiler is a dev tool only; it must never be a runtime dependency.
     expect(pkg.dependencies).toBeUndefined()
     expect(pkg.devDependencies).toHaveProperty('typescript')
+  })
+
+  it('scaffolds the chosen SDK into agent.ts and declares its dependency', async () => {
+    const dir = path.join(workdir, 'claude')
+    await run(['harness', 'init', dir, '--sdk', 'claude'])
+
+    const agent = await readFile(path.join(dir, 'agent.ts'), 'utf8')
+    expect(agent).toContain('@anthropic-ai/claude-agent-sdk')
+
+    const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'))
+    expect(pkg.dependencies).toHaveProperty('@anthropic-ai/claude-agent-sdk')
+  })
+
+  it('rejects an unknown --sdk without creating anything', async () => {
+    const dir = path.join(workdir, 'bogus')
+    await expect(run(['harness', 'init', dir, '--sdk', 'langchain'])).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+    })
+    await expect(readFile(path.join(dir, 'server.ts'), 'utf8')).rejects.toThrow()
   })
 
   it('refuses as a set rather than half-writing over an existing harness', async () => {

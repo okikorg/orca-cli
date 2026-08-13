@@ -364,16 +364,34 @@ per session and drives over Orca Harness Protocol v1. Bring any framework, any
 language, any model.
 
 ```
-orca harness init [dir]                                  # scaffold a working harness
+orca harness init [dir] [--sdk <name>]                   # scaffold a working harness
 orca harness build [dir] --image <repo> [--tag t]        # build for the platform arch
 orca harness deploy <name> [dir] --image <repo>          # build, push, import, activate
 ```
 
+`--sdk` picks what your agent is built on. Every template is the same harness
+with a different `agent.ts`:
+
+| `--sdk` | Package |
+|---|---|
+| `none` (default) | no dependencies; an echo stub you replace |
+| `claude` | `@anthropic-ai/claude-agent-sdk` |
+| `codex` | `@openai/codex-sdk` |
+| `pi` | `@earendil-works/pi-coding-agent` |
+| `vercel` | `ai` + `@ai-sdk/anthropic` |
+| `opencode` | `@opencode-ai/sdk` |
+
+Versions match the ranges the platform's own sidecar runs. `protocol.ts` and
+`server.ts` are byte-identical in every template, so switching SDKs means
+rewriting one file. Provider credentials are yours: each template reads its own
+key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) from the environment, and Orca never
+sends its credentials to a harness.
+
 The whole loop:
 
 ```bash
-orca harness init my-harness && cd my-harness
-# your agent goes in runAgent() in server.ts
+orca harness init my-harness --sdk claude && cd my-harness
+# your agent goes in runAgent() in agent.ts
 orca harness deploy my-harness . --image ghcr.io/<org>/my-harness
 ```
 
