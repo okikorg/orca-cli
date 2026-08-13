@@ -30,7 +30,7 @@ import { outputMode, printJson } from '../lib/output.js'
 import type { TemplateVersion } from '../lib/types.js'
 import { accentVerb, hintText } from '../ui/theme.js'
 import { apiContext, type ApiContext, globalFlags, withApi } from './shared.js'
-import { waitForVersion } from './templates.js'
+import { mapTemplateError, waitForVersion } from './templates.js'
 
 // A tag for a build that is about to be pushed and then referenced by digest.
 // The tag itself is never what the platform records, so its only job is to
@@ -38,6 +38,13 @@ import { waitForVersion } from './templates.js'
 // stays readable.
 function defaultTag(): string {
   return `build-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`
+}
+
+// digestOf takes the sha256:... half of a repo@digest reference, which is what
+// the server stores in TemplateVersion.digest.
+function digestOf(ref: string): string {
+  const at = ref.indexOf('@')
+  return at === -1 ? ref : ref.slice(at + 1)
 }
 
 async function ensureBuildContext(dir: string): Promise<void> {
@@ -67,7 +74,12 @@ async function requireDocker(): Promise<void> {
 
 // Everything docker tells us is already the user's own error text; wrap it in
 // the exit-code contract without editorialising.
-function asCliError(err: unknown): CliError {
+//
+// Docker failures only. API failures must not come through here: an ApiError
+// is an Error, so it would collapse a revoked key into exit 1 with "401
+// Unauthorized" instead of exit 3 and "Run: orca auth login". Those go through
+// mapTemplateError, which keeps the documented exit codes.
+function asDockerCliError(err: unknown): CliError {
   if (err instanceof CliError) return err
   if (err instanceof DockerError) return new CliError(err.message, ExitCode.Failure)
   return err instanceof Error
@@ -152,7 +164,7 @@ export function registerHarness(program: Command): void {
             noCache: !opts.cache,
           })
         } catch (err) {
-          throw asCliError(err)
+          throw asDockerCliError(err)
         }
 
         if (outputMode(flags) === 'json') {
@@ -205,6 +217,16 @@ export function registerHarness(program: Command): void {
           throw new CliError('--timeout must be a positive number of seconds', ExitCode.Usage)
         }
 
+        // The default tag is dated, so --skip-build would only ever find an
+        // image built today and tagged by default too. Anything else fails at
+        // the push with a confusing "tag does not exist"; ask for it instead.
+        if (opts.skipBuild && !opts.tag) {
+          throw new CliError('--skip-build needs --tag naming the image to push', ExitCode.Usage, [
+            'Without a build there is nothing to infer the tag from, and the',
+            `default tag is dated (${defaultTag()}).`,
+          ])
+        }
+
         const dir = path.resolve(dirArg ?? '.')
         const tag = `${opts.image}:${opts.tag ?? defaultTag()}`
 
@@ -234,17 +256,31 @@ export function registerHarness(program: Command): void {
           step(json, 'Resolving the digest')
           digestRef = await resolveDigest(tag)
         } catch (err) {
-          throw asCliError(err)
+          throw asDockerCliError(err)
         }
 
-        step(json, `Importing ${digestRef}`)
         await ensureTemplate(api, name)
 
+        // Deploying twice with nothing changed produces the same digest. The
+        // server has no uniqueness on digest (the key is template+version), so
+        // importing again would mint a second version over identical bytes and
+        // re-mirror them. Reuse the existing one instead. A failed version is
+        // not reused: re-running deploy is the natural way to retry it.
+        const existing = (await withApi(api, (c) => c.listTemplateVersions(name))).items.find(
+          (v) => v.digest === digestOf(digestRef) && v.status !== 'failed',
+        )
+
         let version: TemplateVersion
-        try {
-          version = await api.client.importTemplateVersion(name, digestRef)
-        } catch (err) {
-          throw asCliError(err)
+        if (existing) {
+          step(json, `v${existing.version} already has this digest, reusing it`)
+          version = existing
+        } else {
+          step(json, `Importing ${digestRef}`)
+          try {
+            version = await api.client.importTemplateVersion(name, digestRef)
+          } catch (err) {
+            throw mapTemplateError(err, api, name)
+          }
         }
 
         const final = await waitForVersion(api, name, version.version, opts.timeout * 1000)
@@ -274,7 +310,7 @@ export function registerHarness(program: Command): void {
             await api.client.activateTemplateVersion(name, final.version)
             activated = true
           } catch (err) {
-            throw asCliError(err)
+            throw mapTemplateError(err, api, name)
           }
         }
 
@@ -312,7 +348,7 @@ async function ensureTemplate(api: ApiContext, name: string): Promise<void> {
     await api.client.getTemplate(name)
     return
   } catch (err) {
-    if (!(err instanceof ApiError) || err.status !== 404) throw asCliError(err)
+    if (!(err instanceof ApiError) || err.status !== 404) throw mapTemplateError(err, api, name)
   }
   try {
     await withApi(api, (c) => c.createTemplate({ name }))
@@ -320,6 +356,6 @@ async function ensureTemplate(api: ApiContext, name: string): Promise<void> {
     // A concurrent deploy of the same name is a race we can simply lose:
     // the template exists either way, which is all this needed.
     if (err instanceof ApiError && err.status === 409) return
-    throw asCliError(err)
+    throw mapTemplateError(err, api, name)
   }
 }

@@ -16,7 +16,7 @@ const docker = vi.hoisted(() => ({
   dockerAvailable: vi.fn(async () => true),
   build: vi.fn(async () => undefined),
   push: vi.fn(async () => undefined),
-  resolveDigest: vi.fn(async () => `ghcr.io/acme/h@${'a'.repeat(64)}`),
+  resolveDigest: vi.fn(async () => `ghcr.io/acme/h@sha256:${'a'.repeat(64)}`),
 }))
 
 vi.mock('../../src/lib/docker.js', async (importOriginal) => {
@@ -28,7 +28,7 @@ const { registerHarness } = await import('../../src/commands/harness.js')
 
 const KEY = 'ao_dev_abcdefghijklmnopqrstuv'
 const DIGEST = 'sha256:' + 'a'.repeat(64)
-const DIGEST_REF = `ghcr.io/acme/h@${'a'.repeat(64)}`
+const DIGEST_REF = `ghcr.io/acme/h@${DIGEST}`
 
 let cleanup: () => Promise<void>
 let workdir: string
@@ -157,12 +157,21 @@ describe('harness deploy', () => {
   })
 
   it('runs the whole chain and activates', async () => {
+    // Empty before the import, holding v1 after it, so the reuse check sees a
+    // genuinely new digest.
+    let listed = 0
     const calls = stubFetch({
       'GET /api/templates/h': jsonResponse({ name: 'h' }),
       'POST /api/templates/h/versions': jsonResponse(version({ status: 'pending' }), {
         status: 202,
       }),
-      'GET /api/templates/h/versions': jsonResponse({ total: 1, versions: [version()] }),
+      'GET /api/templates/h/versions': () => {
+        listed += 1
+        const versions = listed === 1 ? [] : [version()]
+        return new Response(JSON.stringify({ total: versions.length, versions }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      },
       'POST /api/templates/h/versions/1/activate': jsonResponse({ name: 'h', activeVersion: 1 }),
     })
     await run(['harness', 'deploy', 'h', workdir, '--image', 'ghcr.io/acme/h', '--tag', 'v1'])
@@ -170,7 +179,9 @@ describe('harness deploy', () => {
     expect(docker.build).toHaveBeenCalled()
     expect(docker.push).toHaveBeenCalledWith('ghcr.io/acme/h:v1')
     // The digest, never the tag, is what gets imported.
-    const importCall = calls.find((c) => c.path === '/api/templates/h/versions')
+    const importCall = calls.find(
+      (c) => c.method === 'POST' && c.path === '/api/templates/h/versions',
+    )
     expect(JSON.parse(importCall?.body as string)).toEqual({ image: DIGEST_REF })
     expect(calls.some((c) => c.path === '/api/templates/h/versions/1/activate')).toBe(true)
     expect(logged()).toContain('Deployed')
@@ -243,6 +254,69 @@ describe('harness deploy', () => {
       exitCode: ExitCode.Failure,
       detail: expect.arrayContaining([expect.stringContaining('pullable without credentials')]),
     })
+  })
+
+  it('reuses an existing version with the same digest instead of minting another', async () => {
+    // Deploying twice unchanged yields the same digest, and the server has no
+    // uniqueness on it, so a second import would be a duplicate version over
+    // identical bytes plus a pointless re-mirror.
+    const calls = stubFetch({
+      'GET /api/templates/h': jsonResponse({ name: 'h' }),
+      'GET /api/templates/h/versions': jsonResponse({ total: 1, versions: [version()] }),
+      'POST /api/templates/h/versions/1/activate': jsonResponse({ name: 'h', activeVersion: 1 }),
+    })
+    await run(['harness', 'deploy', 'h', workdir, '--image', 'ghcr.io/acme/h', '--tag', 'v1'])
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/templates/h/versions')).toBe(
+      false,
+    )
+    expect(calls.some((c) => c.path.endsWith('/activate'))).toBe(true)
+  })
+
+  it('re-imports when the only version with that digest failed', async () => {
+    // Before the import the template holds just the failed v1; afterwards the
+    // poll sees the new v2. A single fixed body cannot express that, so the
+    // versions route answers from call order.
+    let listed = 0
+    const calls = stubFetch({
+      'GET /api/templates/h': jsonResponse({ name: 'h' }),
+      'POST /api/templates/h/versions': jsonResponse(version({ version: 2, status: 'pending' }), {
+        status: 202,
+      }),
+      'GET /api/templates/h/versions': () => {
+        listed += 1
+        const versions =
+          listed === 1
+            ? [version({ status: 'failed', failureReason: 'blip' })]
+            : [version({ status: 'failed', failureReason: 'blip' }), version({ version: 2 })]
+        return new Response(JSON.stringify({ total: versions.length, versions }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      },
+      'POST /api/templates/h/versions/2/activate': jsonResponse({ name: 'h', activeVersion: 2 }),
+    })
+    await run(['harness', 'deploy', 'h', workdir, '--image', 'ghcr.io/acme/h', '--tag', 'v1'])
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/templates/h/versions')).toBe(
+      true,
+    )
+    expect(calls.some((c) => c.path === '/api/templates/h/versions/2/activate')).toBe(true)
+  })
+
+  it('keeps the auth exit code when the key is present but rejected', async () => {
+    // An ApiError is an Error, so a catch-all mapper would collapse this to
+    // exit 1 with "401 Unauthorized" instead of exit 3 and the login hint.
+    stubFetch({
+      'GET /api/templates/h': jsonResponse({ error: 'unauthorized' }, { status: 401 }),
+    })
+    await expect(
+      run(['harness', 'deploy', 'h', workdir, '--image', 'ghcr.io/acme/h', '--tag', 'v1']),
+    ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
+  })
+
+  it('requires --tag with --skip-build, since the default tag is dated', async () => {
+    await expect(
+      run(['harness', 'deploy', 'h', workdir, '--image', 'ghcr.io/acme/h', '--skip-build']),
+    ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    expect(docker.push).not.toHaveBeenCalled()
   })
 
   it('does not build when the API key is missing', async () => {

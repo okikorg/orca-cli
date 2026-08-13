@@ -399,16 +399,10 @@ Three things worth knowing:
 The CLI never handles registry credentials: `docker login` is yours, and a
 refused push surfaces docker's own error.
 
-To check a harness against the protocol before shipping it, run the conformance
-script from the platform repo against your running harness:
-
-```bash
-./conformance.sh http://localhost:7099
-```
-
-It checks everything the platform does to a harness, including the two rules
-that are easy to miss: a disconnect mid-run must not take the process down, and
-`GET /state` must answer 404 rather than erroring when nothing is stored.
+Orca Harness Protocol v1 is specified in the platform documentation, which also
+ships an executable conformance checker you point at a running harness. The
+scaffold from `orca harness init` passes it as written, so it is a working
+starting point rather than a sketch.
 
 ## Harness templates
 

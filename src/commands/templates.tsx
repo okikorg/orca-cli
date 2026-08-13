@@ -70,7 +70,7 @@ function shortDigest(digest: string): string {
 // mapTemplateError narrows this surface's 409s, which are the only statuses a
 // user can act on and the ones a generic "409: ..." dump explains worst. Every
 // other status falls through to the shared mapping.
-function mapTemplateError(err: unknown, api: ApiContext, name: string): CliError {
+export function mapTemplateError(err: unknown, api: ApiContext, name: string): CliError {
   if (err instanceof ApiError) {
     if (err.status === 503) {
       return new CliError(

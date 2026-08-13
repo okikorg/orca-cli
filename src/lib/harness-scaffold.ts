@@ -216,29 +216,29 @@ npm-debug.log
 
 const README_MD = `# my-harness
 
-An Orca harness: a service Orca boots per session and drives over
-[Orca Harness Protocol v1](https://github.com/okikorg/orca-cli#harness-templates).
-Bring any framework, any language, any model.
+An Orca harness: a service Orca boots per session and drives over Orca Harness
+Protocol v1. Bring any framework, any language, any model.
 
 Your agent goes in \`runAgent()\` in \`server.js\`. Everything else in that file
-is the protocol.
+is the protocol, and the comments there say what each rule is for.
 
 ## Run it locally
 
 \`\`\`bash
 PORT=7099 node server.js
+curl localhost:7099/health
+
+curl -sN localhost:7099/run -H 'content-type: application/json' -d '{
+  "sessionId":"s1",
+  "profile":{"name":"dev","runtime":"custom"},
+  "subtask":{"id":"r1","sessionId":"s1","prompt":"hello"}
+}'
 \`\`\`
 
-Then check it against the protocol. The conformance script lives in the
-platform repo under \`examples/brains/conformance.sh\`:
-
-\`\`\`bash
-./conformance.sh http://localhost:7099
-\`\`\`
-
-It checks everything the platform does to a harness, including the two rules
-that are easy to miss: a disconnect mid-run must not take the process down,
-and \`GET /state\` must answer 404 rather than erroring when nothing is stored.
+The second command should stream newline-delimited JSON ending in a single
+\`result\` event. Two rules are easy to get wrong once you start editing:
+a client disconnecting mid-run must not take the process down, and
+\`GET /state/<id>\` must answer 404 rather than erroring when nothing is stored.
 
 ## Ship it
 
