@@ -1,12 +1,12 @@
 import { execFile } from 'node:child_process'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import {
+  DEFAULT_PROTOCOL_SPEC,
   HARNESS_SDKS,
   PROTOCOL_PACKAGE,
   scaffoldFiles,
@@ -21,14 +21,6 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 // user gets those types from their own npm install; here we borrow ours.
 const checkDir = path.join(repoRoot, 'node_modules', '.scaffold-typecheck')
 
-// The protocol library lives in its own repository. Until it is on the
-// registry there is nothing to install, so the compile test resolves it from a
-// sibling checkout when one is present and says so loudly when it is not,
-// rather than quietly passing while checking nothing.
-const siblingProtocol = path.resolve(repoRoot, '..', 'harness-protocol')
-const protocolTypes = path.join(siblingProtocol, 'dist', 'index.d.ts')
-const haveProtocol = existsSync(protocolTypes)
-
 afterAll(async () => {
   await rm(checkDir, { recursive: true, force: true })
 })
@@ -38,36 +30,40 @@ describe('the scaffold compiles', () => {
   // the TypeScript is valid. It once shipped with a noUncheckedIndexedAccess
   // error, so `npm run typecheck` failed on a freshly initialised project.
   // This runs the compiler the scaffold tells the user to run.
-  it.skipIf(!haveProtocol)('passes tsc under its own tsconfig', async () => {
+  it('passes tsc under its own tsconfig', async () => {
     await rm(checkDir, { recursive: true, force: true })
     await mkdir(checkDir, { recursive: true })
     for (const f of SCAFFOLD_FILES) {
       await writeFile(path.join(checkDir, f.path), f.content)
     }
 
-    // Extends the scaffold's real tsconfig and adds only the resolution the
-    // sibling checkout needs, so what is under test stays the shipped file.
-    await writeFile(
-      path.join(checkDir, 'tsconfig.check.json'),
-      JSON.stringify({
-        extends: './tsconfig.json',
-        // No baseUrl: it is deprecated in TypeScript 6, and an absolute path
-        // entry does not need one.
-        compilerOptions: { paths: { [PROTOCOL_PACKAGE]: [protocolTypes] } },
+    // @agent-orc/harness-protocol is a devDependency here purely so this
+    // compiles against the real published types, the same way it resolves
+    // @types/node: by walking up to the repo's node_modules. Nothing in src
+    // imports it.
+    const tsc = path.join(repoRoot, 'node_modules', '.bin', 'tsc')
+    const { stdout, stderr } = await execFileP(tsc, ['--noEmit', '--project', checkDir]).catch(
+      (err: { stdout?: string; stderr?: string }) => ({
+        stdout: err.stdout ?? '',
+        stderr: err.stderr ?? String(err),
       }),
     )
-
-    const tsc = path.join(repoRoot, 'node_modules', '.bin', 'tsc')
-    const { stdout, stderr } = await execFileP(tsc, [
-      '--noEmit',
-      '--project',
-      path.join(checkDir, 'tsconfig.check.json'),
-    ]).catch((err: { stdout?: string; stderr?: string }) => ({
-      stdout: err.stdout ?? '',
-      stderr: err.stderr ?? String(err),
-    }))
     expect(`${stdout}${stderr}`.trim()).toBe('')
   }, 60_000)
+
+  it('typechecks against the version the scaffold actually pins', async () => {
+    // The compile above proves the scaffold matches whatever is installed
+    // here. This proves that is the same range a user would get, so the two
+    // cannot drift into checking a version nobody installs.
+    const installed = JSON.parse(
+      await readFile(
+        path.join(repoRoot, 'node_modules', PROTOCOL_PACKAGE, 'package.json'),
+        'utf8',
+      ),
+    ) as { version: string }
+    const [major] = installed.version.split('.')
+    expect(DEFAULT_PROTOCOL_SPEC).toBe(`^${major}.0.0`)
+  })
 
   // The whole design rests on this: only index.ts knows which SDK you chose.
   // If a template quietly forks anything else, a fix applied once stops
