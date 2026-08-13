@@ -193,6 +193,36 @@ describe('harness build', () => {
     expect(docker.build).not.toHaveBeenCalled()
   })
 
+  it('refuses a dependency on a local path before touching docker', async () => {
+    // `harness init --protocol file:...` is the right thing for npm start and
+    // typecheck, and impossible for a build: docker only sends the context, so
+    // the path does not exist to the builder. Failing here beats failing two
+    // minutes into a layer with an npm error that names a path and no reason.
+    await writeFile(path.join(workdir, 'Dockerfile'), 'FROM scratch')
+    await writeFile(
+      path.join(workdir, 'package.json'),
+      JSON.stringify({
+        dependencies: { '@agent-orc/harness-protocol': 'file:../harness-protocol' },
+      }),
+    )
+
+    await expect(
+      run(['harness', 'build', workdir, '--image', 'ghcr.io/acme/h']),
+    ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    expect(docker.build).not.toHaveBeenCalled()
+  })
+
+  it('allows a dependency on a published version', async () => {
+    await writeFile(path.join(workdir, 'Dockerfile'), 'FROM scratch')
+    await writeFile(
+      path.join(workdir, 'package.json'),
+      JSON.stringify({ dependencies: { '@agent-orc/harness-protocol': '^1.0.0' } }),
+    )
+
+    await run(['harness', 'build', workdir, '--image', 'ghcr.io/acme/h'])
+    expect(docker.build).toHaveBeenCalled()
+  })
+
   it('builds and reports that a local build has no digest yet', async () => {
     await writeFile(path.join(workdir, 'Dockerfile'), 'FROM scratch')
     await run(['harness', 'build', workdir, '--image', 'ghcr.io/acme/h', '--tag', 'v1'])

@@ -70,6 +70,43 @@ async function ensureBuildContext(dir: string): Promise<void> {
       'a Dockerfile. Scaffold one with: orca harness init',
     ])
   }
+  await refuseLocalDependencies(dir)
+}
+
+/**
+ * A dependency on a path outside the build context cannot be installed inside
+ * the image: docker only sends the context, so `npm ci` resolves the path
+ * against a directory the builder cannot see.
+ *
+ * This is reachable through `orca harness init --protocol file:...`, which is
+ * the right thing for `npm start` and typecheck and impossible for a build.
+ * Caught here rather than as a docker error two minutes into a layer, because
+ * npm's message names a path and never says why it is missing.
+ */
+async function refuseLocalDependencies(dir: string): Promise<void> {
+  const raw = await fs.readFile(path.join(dir, 'package.json'), 'utf8').catch(() => null)
+  if (!raw) return
+  let pkg: { dependencies?: Record<string, string> }
+  try {
+    pkg = JSON.parse(raw)
+  } catch {
+    // A package.json this broken is npm's problem to report, not ours.
+    return
+  }
+  const local = Object.entries(pkg.dependencies ?? {}).filter(([, spec]) =>
+    /^(file:|link:|\.{1,2}\/)/.test(spec),
+  )
+  if (local.length === 0) return
+
+  throw new CliError(
+    `${local.map(([name]) => name).join(', ')} resolve${local.length === 1 ? 's' : ''} to a local path, which cannot be installed inside the image`,
+    ExitCode.Usage,
+    [
+      ...local.map(([name, spec]) => `  "${name}": "${spec}"`),
+      'Docker only sends the build context, so a path outside it does not exist',
+      'to the builder. Point these at published versions before deploying.',
+    ],
+  )
 }
 
 // resolveImage decides where the image goes. An explicit --image wins; with
