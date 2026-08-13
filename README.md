@@ -369,31 +369,52 @@ orca harness build [dir] [--tag t]                       # build for the platfor
 orca harness deploy <name> [dir]                         # build, push, import, activate
 ```
 
-`--sdk` picks what your agent is built on. Every template is the same harness
-with a different `agent.ts`:
+A scaffolded harness is **one file**. `index.ts` hands a `run` function to
+`@agent-orc/harness-protocol`, and that function is the whole harness. The
+library owns HTTP routing, NDJSON framing, event ordering, cancellation,
+request limits, state transfer, and connecting the session's MCP tools, so no
+wire code lives in your project and a fix there reaches your harness on
+upgrade.
 
-| `--sdk` | Package |
-|---|---|
-| `none` (default) | no dependencies; an echo stub you replace |
-| `claude` | `@anthropic-ai/claude-agent-sdk` |
-| `codex` | `@openai/codex-sdk` |
-| `pi` | `@earendil-works/pi-coding-agent` |
-| `vercel` | `ai` + `@ai-sdk/anthropic` |
-| `opencode` | `@opencode-ai/sdk` |
+```ts
+const harness = createHarnessServer({
+  runtime: 'invoice-agent',
+  async run(ctx) {
+    ctx.emit.progress('reading the ledger')
+    return 'Reconciled 3 of 3.'
+  },
+})
+```
 
-Versions match the ranges the platform's own sidecar runs. `protocol.ts` and
-`server.ts` are byte-identical in every template, so switching SDKs means
-rewriting one file. Provider credentials are yours: each template reads its own
-key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) from the environment, and Orca never
+`--sdk` picks what goes inside `run`. It is the only thing that changes:
+
+| `--sdk` | Package | Platform tools reach it via |
+|---|---|---|
+| `none` (default) | just the protocol library; an echo stub you replace | `ctx.tools` |
+| `claude` | `@anthropic-ai/claude-agent-sdk` | its own MCP client |
+| `codex` | `@openai/codex-sdk` | its own MCP client |
+| `pi` | `@earendil-works/pi-coding-agent` | `ctx.tools` |
+| `vercel` | `ai` + `@ai-sdk/anthropic` | `ctx.tools` |
+| `opencode` | `@opencode-ai/sdk` | its own MCP client |
+
+Versions match the ranges the platform's own sidecar runs. The SDKs that speak
+MCP themselves are handed the session endpoint directly and set `tools: false`,
+so a run never opens the same tools twice.
+
+Provider credentials are yours: each template reads its own key
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) from the environment, and Orca never
 sends its credentials to a harness.
 
 The whole loop:
 
 ```bash
 orca harness init my-harness --sdk claude && cd my-harness
-# your agent goes in runAgent() in agent.ts
+# your agent goes in run() in index.ts
 orca harness deploy my-harness .
 ```
+
+`--protocol <spec>` points that dependency at a local checkout or a packed
+tarball, for building against a version that is not on the registry yet.
 
 `deploy` does the five manual steps in one: builds for `linux/amd64`, pushes,
 resolves the repository digest, imports it as a new template version, waits for

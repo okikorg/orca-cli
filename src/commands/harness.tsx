@@ -26,10 +26,13 @@ import {
 } from '../lib/docker.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import {
+  DEFAULT_PROTOCOL_SPEC,
   HARNESS_SDKS,
   type HarnessSdk,
+  PROTOCOL_PACKAGE,
   scaffoldFiles,
   sdkLabel,
+  sdkUsesCtxTools,
 } from '../lib/harness-scaffold.js'
 import { outputMode, printJson } from '../lib/output.js'
 import type { TemplateVersion } from '../lib/types.js'
@@ -133,7 +136,17 @@ export function registerHarness(program: Command): void {
       'none',
     )
     .option('--force', 'overwrite files that already exist')
-    .action(async (dirArg: string | undefined, opts: { sdk: string; force?: boolean }, cmd: Command) => {
+    .option(
+      '--protocol <spec>',
+      `version of ${PROTOCOL_PACKAGE} to depend on, or a local path or tarball`,
+      DEFAULT_PROTOCOL_SPEC,
+    )
+    .action(
+      async (
+        dirArg: string | undefined,
+        opts: { sdk: string; force?: boolean; protocol: string },
+        cmd: Command,
+      ) => {
       const flags = globalFlags(cmd)
       // Validate before creating the directory: a typo should not leave an
       // empty folder behind.
@@ -143,12 +156,12 @@ export function registerHarness(program: Command): void {
         ])
       }
       const sdk = opts.sdk as HarnessSdk
-      const files = scaffoldFiles(sdk)
+      const files = scaffoldFiles(sdk, { protocol: opts.protocol })
       const dir = path.resolve(dirArg ?? '.')
       await fs.mkdir(dir, { recursive: true })
 
       // Refuse as a set rather than half-writing: a scaffold that overwrote
-      // server.ts and stopped at the Dockerfile leaves no good next move.
+      // index.ts and stopped at the Dockerfile leaves no good next move.
       if (!opts.force) {
         const clashes: string[] = []
         for (const f of files) {
@@ -176,10 +189,14 @@ export function registerHarness(program: Command): void {
         return
       }
       console.log(`${accentVerb('Created')} a harness in ${dir} (${sdkLabel(sdk)}).`)
-      console.error(hintText('  your agent goes in runAgent() in agent.ts'))
+      console.error(hintText('  your agent goes in run() in index.ts'))
+      if (sdkUsesCtxTools(sdk)) {
+        console.error(hintText('  platform tools arrive already connected as ctx.tools'))
+      }
       console.error(hintText('  run it:    npm install && npm start'))
       console.error(hintText('  ship it:   orca harness deploy <name> .'))
-    })
+      },
+    )
 
   harness
     .command('build [dir]')

@@ -83,27 +83,44 @@ function logged(): string {
 }
 
 describe('harness init', () => {
-  it('writes a TypeScript harness that implements the protocol', async () => {
+  it('writes one file of agent code and no protocol code at all', async () => {
     const dir = path.join(workdir, 'new')
     await run(['harness', 'init', dir])
 
-    const server = await readFile(path.join(dir, 'server.ts'), 'utf8')
-    const protocol = await readFile(path.join(dir, 'protocol.ts'), 'utf8')
-    // The three rules a hand-written harness gets wrong. If the scaffold
-    // stops carrying them it stops being a working starting point.
-    expect(server).toContain("'/health'")
-    expect(server).toContain('application/x-ndjson')
-    expect(server).toContain('AbortController')
-    expect(server).toMatch(/sessionId.*profile.*subtask/s)
-    // The wire contract expressed as types is the reason for TypeScript here.
-    expect(protocol).toContain('export type RunRequest')
-    expect(protocol).toContain('export type HarnessEvent')
+    const index = await readFile(path.join(dir, 'index.ts'), 'utf8')
+    // The whole harness is a run function handed to the library.
+    expect(index).toContain("from '@agent-orc/harness-protocol'")
+    expect(index).toContain('createHarnessServer')
+    expect(index).toContain('async run(ctx: RunContext)')
+
+    // The point of the library: none of the wire lives in the project any
+    // more. If any of it comes back, a protocol fix stops reaching the
+    // harnesses that carry their own copy.
+    expect(index).not.toContain('application/x-ndjson')
+    expect(index).not.toContain('createServer')
+    for (const gone of ['server.ts', 'protocol.ts', 'agent.ts']) {
+      await expect(readFile(path.join(dir, gone), 'utf8')).rejects.toThrow()
+    }
 
     const dockerfile = await readFile(path.join(dir, 'Dockerfile'), 'utf8')
-    // Node strips types and runs the file: no build stage, nothing installed.
-    expect(dockerfile).toContain('CMD ["node", "server.ts"]')
-    expect(dockerfile).not.toContain('npm install')
+    // Dependencies are installed now, but nothing is compiled: Node strips
+    // the types and runs the source.
+    expect(dockerfile).toContain('CMD ["node", "index.ts"]')
     expect(dockerfile).not.toContain('tsc')
+  })
+
+  it('depends on the protocol library, overridably', async () => {
+    const dir = path.join(workdir, 'new')
+    await run(['harness', 'init', dir])
+    const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'))
+    expect(pkg.dependencies['@agent-orc/harness-protocol']).toBe('^1.0.0')
+
+    // A local checkout or a packed tarball, for building against a version
+    // that is not on the registry yet.
+    const linked = path.join(workdir, 'linked')
+    await run(['harness', 'init', linked, '--protocol', 'file:../harness-protocol'])
+    const pinned = JSON.parse(await readFile(path.join(linked, 'package.json'), 'utf8'))
+    expect(pinned.dependencies['@agent-orc/harness-protocol']).toBe('file:../harness-protocol')
   })
 
   it('pins a Node that can strip types, and forbids syntax that cannot be erased', async () => {
@@ -119,19 +136,22 @@ describe('harness init', () => {
     const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'))
     expect(pkg.engines.node).toBe('>=22.18')
     // The compiler is a dev tool only; it must never be a runtime dependency.
-    expect(pkg.dependencies).toBeUndefined()
     expect(pkg.devDependencies).toHaveProperty('typescript')
+    expect(pkg.dependencies).not.toHaveProperty('typescript')
   })
 
-  it('scaffolds the chosen SDK into agent.ts and declares its dependency', async () => {
+  it('scaffolds the chosen SDK into index.ts and declares its dependency', async () => {
     const dir = path.join(workdir, 'claude')
     await run(['harness', 'init', dir, '--sdk', 'claude'])
 
-    const agent = await readFile(path.join(dir, 'agent.ts'), 'utf8')
-    expect(agent).toContain('@anthropic-ai/claude-agent-sdk')
+    const index = await readFile(path.join(dir, 'index.ts'), 'utf8')
+    expect(index).toContain('@anthropic-ai/claude-agent-sdk')
+    // Still the library's server, whichever SDK is inside it.
+    expect(index).toContain('createHarnessServer')
 
     const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'))
     expect(pkg.dependencies).toHaveProperty('@anthropic-ai/claude-agent-sdk')
+    expect(pkg.dependencies).toHaveProperty('@agent-orc/harness-protocol')
   })
 
   it('rejects an unknown --sdk without creating anything', async () => {
@@ -139,29 +159,29 @@ describe('harness init', () => {
     await expect(run(['harness', 'init', dir, '--sdk', 'langchain'])).rejects.toMatchObject({
       exitCode: ExitCode.Usage,
     })
-    await expect(readFile(path.join(dir, 'server.ts'), 'utf8')).rejects.toThrow()
+    await expect(readFile(path.join(dir, 'index.ts'), 'utf8')).rejects.toThrow()
   })
 
   it('refuses as a set rather than half-writing over an existing harness', async () => {
     const dir = path.join(workdir, 'existing')
     await mkdir(dir, { recursive: true })
-    await writeFile(path.join(dir, 'server.ts'), 'mine')
+    await writeFile(path.join(dir, 'index.ts'), 'mine')
 
     await expect(run(['harness', 'init', dir])).rejects.toMatchObject({
       exitCode: ExitCode.Usage,
     })
     // The Dockerfile must not have been written either.
     await expect(readFile(path.join(dir, 'Dockerfile'), 'utf8')).rejects.toThrow()
-    expect(await readFile(path.join(dir, 'server.ts'), 'utf8')).toBe('mine')
+    expect(await readFile(path.join(dir, 'index.ts'), 'utf8')).toBe('mine')
   })
 
   it('overwrites with --force', async () => {
     const dir = path.join(workdir, 'existing')
     await mkdir(dir, { recursive: true })
-    await writeFile(path.join(dir, 'server.ts'), 'mine')
+    await writeFile(path.join(dir, 'index.ts'), 'mine')
 
     await run(['harness', 'init', dir, '--force'])
-    expect(await readFile(path.join(dir, 'server.ts'), 'utf8')).not.toBe('mine')
+    expect(await readFile(path.join(dir, 'index.ts'), 'utf8')).not.toBe('mine')
   })
 })
 
