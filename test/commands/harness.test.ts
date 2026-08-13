@@ -83,42 +83,65 @@ function logged(): string {
 }
 
 describe('harness init', () => {
-  it('writes a harness that implements the protocol', async () => {
+  it('writes a TypeScript harness that implements the protocol', async () => {
     const dir = path.join(workdir, 'new')
     await run(['harness', 'init', dir])
 
-    const server = await readFile(path.join(dir, 'server.js'), 'utf8')
+    const server = await readFile(path.join(dir, 'server.ts'), 'utf8')
     // The three rules a hand-written harness gets wrong. If the scaffold
     // stops carrying them it stops being a working starting point.
     expect(server).toContain("'/health'")
     expect(server).toContain('application/x-ndjson')
     expect(server).toContain('AbortController')
     expect(server).toMatch(/sessionId.*profile.*subtask/s)
+    // The wire contract expressed as types is the reason for TypeScript here.
+    expect(server).toContain('export type RunRequest')
+    expect(server).toContain('export type HarnessEvent')
 
     const dockerfile = await readFile(path.join(dir, 'Dockerfile'), 'utf8')
-    expect(dockerfile).toContain('CMD ["node", "server.js"]')
+    // Node strips types and runs the file: no build stage, nothing installed.
+    expect(dockerfile).toContain('CMD ["node", "server.ts"]')
+    expect(dockerfile).not.toContain('npm install')
+    expect(dockerfile).not.toContain('tsc')
+  })
+
+  it('pins a Node that can strip types, and forbids syntax that cannot be erased', async () => {
+    // Enums and namespaces type-check and then fail at runtime under type
+    // stripping. erasableSyntaxOnly turns that into an error up front, and the
+    // engines floor stops the file being run by a Node that cannot strip.
+    const dir = path.join(workdir, 'new')
+    await run(['harness', 'init', dir])
+
+    const tsconfig = await readFile(path.join(dir, 'tsconfig.json'), 'utf8')
+    expect(tsconfig).toContain('"erasableSyntaxOnly": true')
+
+    const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'))
+    expect(pkg.engines.node).toBe('>=22.18')
+    // The compiler is a dev tool only; it must never be a runtime dependency.
+    expect(pkg.dependencies).toBeUndefined()
+    expect(pkg.devDependencies).toHaveProperty('typescript')
   })
 
   it('refuses as a set rather than half-writing over an existing harness', async () => {
     const dir = path.join(workdir, 'existing')
     await mkdir(dir, { recursive: true })
-    await writeFile(path.join(dir, 'server.js'), 'mine')
+    await writeFile(path.join(dir, 'server.ts'), 'mine')
 
     await expect(run(['harness', 'init', dir])).rejects.toMatchObject({
       exitCode: ExitCode.Usage,
     })
     // The Dockerfile must not have been written either.
     await expect(readFile(path.join(dir, 'Dockerfile'), 'utf8')).rejects.toThrow()
-    expect(await readFile(path.join(dir, 'server.js'), 'utf8')).toBe('mine')
+    expect(await readFile(path.join(dir, 'server.ts'), 'utf8')).toBe('mine')
   })
 
   it('overwrites with --force', async () => {
     const dir = path.join(workdir, 'existing')
     await mkdir(dir, { recursive: true })
-    await writeFile(path.join(dir, 'server.js'), 'mine')
+    await writeFile(path.join(dir, 'server.ts'), 'mine')
 
     await run(['harness', 'init', dir, '--force'])
-    expect(await readFile(path.join(dir, 'server.js'), 'utf8')).not.toBe('mine')
+    expect(await readFile(path.join(dir, 'server.ts'), 'utf8')).not.toBe('mine')
   })
 })
 

@@ -373,7 +373,7 @@ The whole loop:
 
 ```bash
 orca harness init my-harness && cd my-harness
-# your agent goes in runAgent() in server.js
+# your agent goes in runAgent() in server.ts
 orca harness deploy my-harness . --image ghcr.io/<org>/my-harness
 ```
 

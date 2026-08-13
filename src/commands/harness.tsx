@@ -102,7 +102,7 @@ export function registerHarness(program: Command): void {
       await fs.mkdir(dir, { recursive: true })
 
       // Refuse as a set rather than half-writing: a scaffold that overwrote
-      // server.js and stopped at the Dockerfile leaves no good next move.
+      // server.ts and stopped at the Dockerfile leaves no good next move.
       if (!opts.force) {
         const clashes: string[] = []
         for (const f of SCAFFOLD_FILES) {
@@ -130,8 +130,8 @@ export function registerHarness(program: Command): void {
         return
       }
       console.log(`${accentVerb('Created')} a harness in ${dir}.`)
-      console.error(hintText('  your agent goes in runAgent() in server.js'))
-      console.error(hintText('  run it:    PORT=7099 node server.js'))
+      console.error(hintText('  your agent goes in runAgent() in server.ts'))
+      console.error(hintText('  run it:    npm start'))
       console.error(hintText('  ship it:   orca harness deploy <name> . --image <registry>/<repo>'))
     })
 
