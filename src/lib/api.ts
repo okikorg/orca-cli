@@ -17,6 +17,8 @@ import type {
   RunDetail,
   RunSummary,
   SubTask,
+  Template,
+  TemplateVersion,
 } from './types.js'
 
 export class ApiError extends Error {
@@ -242,6 +244,59 @@ export class ApiClient {
 
   listSecrets<T = unknown>(params?: PageParams): Promise<Paged<T>> {
     return this.requestPagedField<T>(`/api/secrets${pageQuery({ ...params })}`, 'secrets')
+  }
+
+  // -- Templates --------------------------------------------------------------
+  // Harness templates. The list is paginated and enveloped; the per-template
+  // version list is not paginated server-side (a template holds a handful of
+  // versions), so it is read whole.
+
+  listTemplates(params?: PageParams): Promise<Paged<Template>> {
+    return this.requestPagedField<Template>(
+      `/api/templates${pageQuery({ ...params })}`,
+      'templates',
+    )
+  }
+
+  getTemplate(name: string): Promise<Template> {
+    return this.request<Template>(`/api/templates/${encodeURIComponent(name)}`)
+  }
+
+  createTemplate(body: { name: string; description?: string }): Promise<Template> {
+    return this.request<Template>('/api/templates', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  }
+
+  deleteTemplate(name: string): Promise<void> {
+    return this.request<void>(`/api/templates/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    })
+  }
+
+  listTemplateVersions(name: string): Promise<Paged<TemplateVersion>> {
+    return this.requestPagedField<TemplateVersion>(
+      `/api/templates/${encodeURIComponent(name)}/versions`,
+      'versions',
+    )
+  }
+
+  // Answers 202 with a pending version: the image is mirrored into the
+  // platform registry by a separate service, so the returned row is a receipt
+  // rather than a finished import.
+  importTemplateVersion(name: string, image: string): Promise<TemplateVersion> {
+    return this.request<TemplateVersion>(
+      `/api/templates/${encodeURIComponent(name)}/versions`,
+      { method: 'POST', body: JSON.stringify({ image }) },
+    )
+  }
+
+  activateTemplateVersion(name: string, version: number): Promise<Template> {
+    return this.request<Template>(
+      `/api/templates/${encodeURIComponent(name)}/versions/${version}/activate`,
+      { method: 'POST' },
+    )
   }
 
   getProfile(name: string): Promise<AgentProfile> {

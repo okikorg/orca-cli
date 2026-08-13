@@ -19,6 +19,7 @@ import { registerSessions } from './commands/sessions.js'
 import { registerSkills } from './commands/skills.js'
 import { registerStats } from './commands/stats.js'
 import { registerStorage } from './commands/storage.js'
+import { registerTemplates } from './commands/templates.js'
 import { registerUpdate } from './commands/update.js'
 import { registerUsage } from './commands/usage.js'
 import { registerWorkflows } from './commands/workflows.js'
@@ -71,6 +72,7 @@ const COMMAND_GROUP: Record<string, string> = {
   workflows: GROUP.MANAGE,
   pools: GROUP.MANAGE,
   skills: GROUP.MANAGE,
+  templates: GROUP.MANAGE,
   mcp: GROUP.MANAGE,
   secrets: GROUP.MANAGE,
   storage: GROUP.MANAGE,
@@ -100,6 +102,7 @@ registerPlatform(program)
 registerWorkflows(program)
 registerPools(program)
 registerSkills(program)
+registerTemplates(program)
 registerMcp(program)
 registerSecrets(program)
 registerStorage(program)

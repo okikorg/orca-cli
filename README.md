@@ -321,7 +321,7 @@ validates (`cli/src/lib/profile-schema.ts`, kept in sync with
 
 ```yaml
 name: support-bot
-runtime: pi              # pi | vercel | claude | codex
+runtime: pi              # pi | vercel | claude | codex | custom
 model: claude-sonnet-5
 systemPrompt: |
   You answer support questions.
@@ -339,6 +339,56 @@ sandbox:
 ```
 
 Unknown keys warn but do not block; `--strict` promotes warnings to errors.
+
+`runtime: custom` runs your own harness image instead of a platform sidecar,
+and takes a `template` naming which harness. It is required there and rejected
+on every other runtime:
+
+```yaml
+name: invoice-agent
+runtime: custom
+template: invoice-harness        # tracks whatever version is active
+# template: { name: invoice-harness, version: 3 }   # or pin one
+model: anthropic:claude-sonnet-4-5
+```
+
+## Harness templates
+
+A template is a named series of immutable, digest-pinned container images plus
+one active pointer. An agent with `runtime: custom` points at a template, so a
+rollback is one `activate` rather than an edit to every agent using it.
+
+```
+orca templates list
+orca templates get <name>
+orca templates create <name> [--description text]
+orca templates delete <name> [--yes]
+orca templates versions <name>
+orca templates import <name> <image@sha256:...> [--wait] [--timeout secs]
+orca templates activate <name> <version>
+```
+
+Images are imported by digest, never by tag: a tag can be moved, and a template
+version has to always mean the same bytes. Get the digest with
+`docker inspect --format='{{index .RepoDigests 0}}' <image>`.
+
+Import is asynchronous. It returns as soon as the version is recorded, and a
+separate service copies the image into the platform registry, so a new version
+starts at `pending` and reaches `ready` a few seconds later. `--wait` polls
+until it settles, and exits non-zero if the import failed or the timeout passed.
+
+```
+orca templates create invoice-harness
+orca templates import invoice-harness ghcr.io/acme/harness@sha256:abc... --wait
+orca templates activate invoice-harness 1
+```
+
+Only a `ready` version can be activated; anything else answers 409. Deleting a
+template is refused while any agent still references it.
+
+`templates get --json` is the one exception to the raw-payload rule above: it
+emits the template with its `versions` array merged in, matching what the
+non-JSON view shows. `templates versions --json` gives the bare array.
 
 ## MCP
 

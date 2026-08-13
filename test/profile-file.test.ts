@@ -67,4 +67,95 @@ describe('loadProfileFile', () => {
       exitCode: ExitCode.Usage,
     })
   })
+
+  // The custom runtime and its harness template. The pairing is enforced in
+  // both directions here so a profile that cannot boot is caught before the
+  // POST, matching the server's validateProfileTemplate.
+  describe('custom runtime', () => {
+    it('accepts a custom agent with a template object', () => {
+      const result = validateProfile({
+        name: 'invoice-agent',
+        runtime: 'custom',
+        template: { name: 'invoice-harness', version: 3 },
+      })
+      expect(result).toMatchObject({
+        ok: true,
+        warnings: [],
+        profile: {
+          name: 'invoice-agent',
+          runtime: 'custom',
+          template: { name: 'invoice-harness', version: 3 },
+        },
+      })
+    })
+
+    it('accepts the bare string form and reads it as tracking the active version', () => {
+      const result = validateProfile({
+        name: 'invoice-agent',
+        runtime: 'custom',
+        template: 'invoice-harness',
+      })
+      expect(result.ok).toBe(true)
+      expect(result.profile?.template).toEqual({ name: 'invoice-harness' })
+    })
+
+    it('drops version 0 rather than pinning to it', () => {
+      // Zero means "track the active pointer", which is the same thing as
+      // omitting the field. Sending 0 would read as a pin to a version that
+      // cannot exist.
+      const result = validateProfile({
+        name: 'invoice-agent',
+        runtime: 'custom',
+        template: { name: 'invoice-harness', version: 0 },
+      })
+      expect(result.ok).toBe(true)
+      expect(result.profile?.template).toEqual({ name: 'invoice-harness' })
+    })
+
+    it('rejects a custom agent with no template', () => {
+      const result = validateProfile({ name: 'invoice-agent', runtime: 'custom' })
+      expect(result.ok).toBe(false)
+      expect(result.errors.some((e) => e.includes('requires a template'))).toBe(true)
+    })
+
+    it('rejects a template on a platform runtime', () => {
+      const result = validateProfile({
+        name: 'support-bot',
+        runtime: 'claude',
+        template: { name: 'invoice-harness' },
+      })
+      expect(result.ok).toBe(false)
+      expect(result.errors.some((e) => e.includes('only valid with runtime "custom"'))).toBe(true)
+    })
+
+    it('rejects a template name that could escape the registry path', () => {
+      const result = validateProfile({
+        name: 'invoice-agent',
+        runtime: 'custom',
+        template: { name: '../other-tenant' },
+      })
+      expect(result.ok).toBe(false)
+      expect(result.errors.some((e) => e.includes('lowercase alphanumeric'))).toBe(true)
+    })
+
+    it('rejects a negative version', () => {
+      const result = validateProfile({
+        name: 'invoice-agent',
+        runtime: 'custom',
+        template: { name: 'invoice-harness', version: -1 },
+      })
+      expect(result.ok).toBe(false)
+      expect(result.errors.some((e) => e.includes('template.version'))).toBe(true)
+    })
+
+    it('warns on an unknown key inside template without blocking', () => {
+      const result = validateProfile({
+        name: 'invoice-agent',
+        runtime: 'custom',
+        template: { name: 'invoice-harness', digest: 'sha256:...' },
+      })
+      expect(result.ok).toBe(true)
+      expect(result.warnings.some((w) => w.includes('digest'))).toBe(true)
+    })
+  })
 })

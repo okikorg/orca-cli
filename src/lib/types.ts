@@ -34,12 +34,24 @@ export type SandboxSpec = {
   idleTimeout?: number // nanoseconds, matches Go time.Duration
 }
 
+// TemplateRef points an agent at a harness template. Version 0 (or absent)
+// means "track whatever the active pointer says", which is what makes a
+// rollback one activate call instead of an edit to every agent using it.
+export type TemplateRef = {
+  name: string
+  version?: number
+}
+
 export type AgentProfile = {
   id?: string
   name: string
   // "general" is the deprecated pre-rename label for "vercel" and may still
-  // be returned for older stored profiles.
-  runtime: 'pi' | 'vercel' | 'claude' | 'codex' | 'general'
+  // be returned for older stored profiles. "custom" means the agent runs a
+  // tenant-supplied harness image rather than a platform sidecar.
+  runtime: 'pi' | 'vercel' | 'claude' | 'codex' | 'general' | 'custom'
+  // Required when runtime is "custom" and rejected on every other runtime:
+  // the template names which harness drives the agent.
+  template?: TemplateRef
   systemPrompt?: string
   skills?: string[]
   mcpServers?: MCPServerSpec[]
@@ -47,6 +59,42 @@ export type AgentProfile = {
   tools?: string[]
   fs?: FSPolicy
   sandbox?: SandboxSpec
+}
+
+// A template version moves pending -> mirroring -> preparing -> ready, or
+// stops at failed. Only "ready" can be activated: the platform mirrors the
+// image into its own registry first, so the rest are in-flight states.
+export type TemplateVersionStatus =
+  | 'pending'
+  | 'mirroring'
+  | 'preparing'
+  | 'ready'
+  | 'failed'
+
+// Template is a named series of immutable, digest-pinned versions plus one
+// active pointer.
+export type Template = {
+  name: string
+  description?: string
+  activeVersion?: number
+  createdAt: string
+  updatedAt: string
+}
+
+// TemplateVersion is one entry in that series. sourceRef is the reference the
+// tenant supplied; platformRef is where sessions actually pull from, and stays
+// empty until the mirror finishes.
+export type TemplateVersion = {
+  template: string
+  version: number
+  sourceRef: string
+  platformRef?: string
+  digest: string
+  status: TemplateVersionStatus
+  failureReason?: string
+  attempts?: number
+  createdAt: string
+  updatedAt: string
 }
 
 export type SubTask = {

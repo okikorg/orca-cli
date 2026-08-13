@@ -69,6 +69,20 @@ async function resolveAgentName(
   return pickOne('Select an agent', page.items.map((p) => p.name))
 }
 
+// runtimeCell is what the runtime column and subtitle show. For the platform
+// runtimes that is the runtime name, which identifies what runs the agent.
+// "custom" does not: it is the same word for every tenant and every harness.
+// Those profiles carry a harness name already (the template is required on
+// them), so show it, keeping "custom" as the qualifier.
+function runtimeCell(p: AgentProfile): string {
+  if (p.runtime !== 'custom') return p.runtime
+  const harness = p.template?.name?.trim()
+  if (!harness) return p.runtime
+  return p.template?.version
+    ? `${harness} v${p.template.version} (custom)`
+    : `${harness} (custom)`
+}
+
 // AgentDetail renders one profile as a coral-titled panel of label/value
 // fields, plus the system prompt if present.
 async function renderAgentDetail(p: AgentProfile): Promise<void> {
@@ -76,8 +90,18 @@ async function renderAgentDetail(p: AgentProfile): Promise<void> {
   const { Box, Text } = await import('ink')
   const { theme } = await import('../ui/theme.js')
   await renderStatic(
-    <Panel title={p.name} subtitle={p.runtime}>
+    <Panel title={p.name} subtitle={runtimeCell(p)}>
       {p.model ? <Field label="model" value={p.model} /> : null}
+      {p.template ? (
+        <Field
+          label="harness"
+          value={
+            p.template.version
+              ? `${p.template.name} (pinned to v${p.template.version})`
+              : `${p.template.name} (tracks active version)`
+          }
+        />
+      ) : null}
       {p.skills?.length ? <Field label="skills" value={p.skills.join(', ')} /> : null}
       {p.tools?.length ? <Field label="tools" value={p.tools.join(', ')} /> : null}
       {p.mcpServers?.length ? (
@@ -137,6 +161,9 @@ export function registerAgents(program: Command): void {
       }
 
       if (mode === 'plain') {
+        // Plain mode keeps the raw runtime: it is the scripting surface, and
+        // widening a column would break whatever is cutting fields out of it.
+        // The harness name is in --json, on the profile's template.
         printPlainRows(page.items.map((p) => [p.name, p.runtime, p.model ?? '-', pubCell(p)]))
         printPageHint(page.items.length, page.total)
         return
@@ -151,7 +178,7 @@ export function registerAgents(program: Command): void {
           hint='orca agents get <name> · orca run <name> "prompt"'
           columns={[
             { header: 'name', get: (p: AgentProfile) => p.name, color: () => theme.accent, bold: true },
-            { header: 'runtime', get: (p: AgentProfile) => p.runtime },
+            { header: 'runtime', get: runtimeCell },
             { header: 'model', get: (p: AgentProfile) => p.model ?? '-' },
             {
               header: 'published',
@@ -256,7 +283,7 @@ export function registerAgents(program: Command): void {
       printWarnings(warnings)
       const created = await withApi(api, (c) => c.createProfile(profile))
       if (outputMode(flags) === 'json') printJson(created)
-      else console.log(`${accentVerb('Created')} agent "${created.name}" (${created.runtime}).`)
+      else console.log(`${accentVerb('Created')} agent "${created.name}" (${runtimeCell(created)}).`)
     })
 
   agents

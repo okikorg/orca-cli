@@ -14,8 +14,12 @@
 
 import type { AgentProfile, MCPServerSpec } from './types.js'
 
-export const RUNTIMES = ['pi', 'vercel', 'claude', 'codex'] as const
+export const RUNTIMES = ['pi', 'vercel', 'claude', 'codex', 'custom'] as const
 export type Runtime = (typeof RUNTIMES)[number]
+
+// The runtime whose agent is a tenant-supplied harness image rather than a
+// platform sidecar. It is the only one that takes (and requires) a template.
+const CUSTOM_RUNTIME = 'custom'
 
 // Profiles created before the Vercel runtime rename may still use the legacy
 // "general" label. Match the platform by accepting and canonicalising it.
@@ -29,6 +33,9 @@ const KNOWN_KEYS = new Set([
   'id',
   'name',
   'runtime',
+  // Top-level `template` binds a custom agent to a harness template. Not to be
+  // confused with `sandbox.template`, which names a sandbox image.
+  'template',
   'systemPrompt',
   'skills',
   'mcpServers',
@@ -37,6 +44,13 @@ const KNOWN_KEYS = new Set([
   'fs',
   'sandbox',
 ])
+
+const KNOWN_TEMPLATE_KEYS = new Set(['name', 'version'])
+
+// Mirrors types.ValidateTemplateName on the server: a template name becomes a
+// path component in the platform registry reference, so anything outside this
+// set could escape the tenant's own repository prefix.
+const TEMPLATE_NAME_RE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/
 
 const KNOWN_MCP_KEYS = new Set(['name', 'transport', 'url', 'headers'])
 const KNOWN_FS_KEYS = new Set(['read', 'write', 'delete', 'deny', 'allow_mounts'])
@@ -181,6 +195,62 @@ function validateFs(
   return Object.keys(fs).length > 0 ? fs : undefined
 }
 
+// validateTemplate checks the harness binding on a custom agent. It accepts
+// either the object form ({name, version}) or a bare string, which is the
+// shape a person writes by hand when they are not pinning a version.
+function validateTemplate(
+  v: unknown,
+  errors: string[],
+  warnings: string[],
+): AgentProfile['template'] {
+  if (v === undefined || v === null) return undefined
+
+  if (typeof v === 'string') {
+    if (!v.trim()) {
+      errors.push('template must be a non-empty string')
+      return undefined
+    }
+    if (!TEMPLATE_NAME_RE.test(v.trim())) {
+      errors.push(
+        `template "${v.trim()}" must be lowercase alphanumeric with . _ - separators`,
+      )
+      return undefined
+    }
+    return { name: v.trim() }
+  }
+
+  if (!isPlainObject(v)) {
+    errors.push('template must be a string or an object with a name')
+    return undefined
+  }
+  for (const k of Object.keys(v)) {
+    if (!KNOWN_TEMPLATE_KEYS.has(k)) warnings.push(`template: unknown key "${k}"`)
+  }
+  const name = v.name
+  if (typeof name !== 'string' || !name.trim()) {
+    errors.push('template.name is required when template is set')
+    return undefined
+  }
+  if (!TEMPLATE_NAME_RE.test(name.trim())) {
+    errors.push(
+      `template.name "${name.trim()}" must be lowercase alphanumeric with . _ - separators`,
+    )
+    return undefined
+  }
+  // Version 0 and an absent version both mean "track the active pointer", so
+  // only a negative or non-integer value is wrong.
+  if (v.version !== undefined) {
+    if (typeof v.version !== 'number' || !Number.isInteger(v.version) || v.version < 0) {
+      errors.push('template.version must be zero (track active) or a positive integer')
+      return undefined
+    }
+  }
+  return {
+    name: name.trim(),
+    ...(typeof v.version === 'number' && v.version > 0 ? { version: v.version } : {}),
+  }
+}
+
 function validateSandbox(
   v: unknown,
   errors: string[],
@@ -295,6 +365,18 @@ export function validateProfile(raw: unknown): SchemaValidation {
   const mcpServers = validateMcpServers(raw.mcpServers, errors, warnings)
   const fs = validateFs(raw.fs, errors, warnings)
   const sandbox = validateSandbox(raw.sandbox, errors, warnings)
+  const template = validateTemplate(raw.template, errors, warnings)
+
+  // The pairing rule, mirroring the server's validateProfileTemplate. Both
+  // directions matter: a custom agent with no template cannot boot, and a
+  // template on any other runtime is silently ignored at dispatch, which
+  // would tell the author their harness is wired up when it is not.
+  if (runtime === CUSTOM_RUNTIME && raw.template === undefined) {
+    errors.push('runtime "custom" requires a template naming the harness to run')
+  }
+  if (runtime !== CUSTOM_RUNTIME && raw.template !== undefined) {
+    errors.push(`template is only valid with runtime "custom", not "${String(runtime)}"`)
+  }
 
   if (errors.length > 0) {
     return { ok: false, errors, warnings }
@@ -304,6 +386,7 @@ export function validateProfile(raw: unknown): SchemaValidation {
     ...(typeof raw.id === 'string' ? { id: raw.id } : {}),
     name: (name as string).trim(),
     runtime: runtime as Runtime,
+    ...(template ? { template } : {}),
     ...(typeof raw.model === 'string' && raw.model.trim()
       ? { model: raw.model.trim() }
       : {}),
