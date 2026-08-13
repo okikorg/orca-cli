@@ -61,6 +61,14 @@ export type AgentProfile = {
   sandbox?: SandboxSpec
 }
 
+// Where to push a harness image. Append "/{template}" to `repository` to get
+// the image reference for one template.
+export type RegistryInfo = {
+  host: string
+  repository: string
+  insecure?: boolean
+}
+
 // A template version moves pending -> mirroring -> preparing -> ready, or
 // stops at failed. Only "ready" can be activated: the platform mirrors the
 // image into its own registry first, so the rest are in-flight states.

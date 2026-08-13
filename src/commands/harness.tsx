@@ -69,6 +69,33 @@ async function ensureBuildContext(dir: string): Promise<void> {
   }
 }
 
+// resolveImage decides where the image goes. An explicit --image wins; with
+// none, the platform's own registry is used, which is the whole point of not
+// making every tenant create a registry account before their first deploy.
+//
+// The repository is per tenant and comes from the server, never assembled
+// here: the path encodes a hash of the tenant id, and a client guessing at it
+// would either break or, worse, name someone else's repository.
+async function resolveImage(
+  api: ApiContext,
+  explicit: string | undefined,
+  template: string,
+): Promise<string> {
+  if (explicit) return explicit
+  let registry
+  try {
+    registry = await api.client.getRegistry()
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 503) {
+      throw new CliError('this deployment has no platform registry configured', ExitCode.Failure, [
+        'Pass --image <registry>/<repo> to push to your own registry instead.',
+      ])
+    }
+    throw mapTemplateError(err, api, template)
+  }
+  return `${registry.repository}/${template}`
+}
+
 async function requireDocker(): Promise<void> {
   if (!(await dockerAvailable())) {
     throw new CliError('docker is not installed or not running', ExitCode.Failure, [
@@ -151,13 +178,17 @@ export function registerHarness(program: Command): void {
       console.log(`${accentVerb('Created')} a harness in ${dir} (${sdkLabel(sdk)}).`)
       console.error(hintText('  your agent goes in runAgent() in agent.ts'))
       console.error(hintText('  run it:    npm install && npm start'))
-      console.error(hintText('  ship it:   orca harness deploy <name> . --image <registry>/<repo>'))
+      console.error(hintText('  ship it:   orca harness deploy <name> .'))
     })
 
   harness
     .command('build [dir]')
     .description('build the harness image for the platform architecture')
-    .requiredOption('--image <repo>', 'target repository, e.g. ghcr.io/acme/my-harness')
+    .option(
+      '--image <repo>',
+      'push to your own repository instead of the platform registry, e.g. ghcr.io/acme/my-harness',
+    )
+    .option('--name <template>', 'template name, when resolving the platform registry')
     .option('--tag <tag>', 'image tag (default: build-YYYYMMDD)')
     .option('--platform <platform>', 'build platform', DEFAULT_PLATFORM)
     .option('--file <path>', 'Dockerfile path (default: <dir>/Dockerfile)')
@@ -165,7 +196,14 @@ export function registerHarness(program: Command): void {
     .action(
       async (
         dirArg: string | undefined,
-        opts: { image: string; tag?: string; platform: string; file?: string; cache: boolean },
+        opts: {
+          image?: string
+          name?: string
+          tag?: string
+          platform: string
+          file?: string
+          cache: boolean
+        },
         cmd: Command,
       ) => {
         const flags = globalFlags(cmd)
@@ -173,7 +211,11 @@ export function registerHarness(program: Command): void {
         await ensureBuildContext(dir)
         await requireDocker()
 
-        const tag = `${opts.image}:${opts.tag ?? defaultTag()}`
+        // build has no template argument, so the name comes from --name or
+        // the directory, which is what a person would have called it anyway.
+        const template = opts.name ?? path.basename(dir)
+        const repo = opts.image ?? (await resolveImage(await apiContext(cmd), undefined, template))
+        const tag = `${repo}:${opts.tag ?? defaultTag()}`
         try {
           await dockerBuild({
             context: dir,
@@ -196,7 +238,9 @@ export function registerHarness(program: Command): void {
         console.error(
           hintText('  a local build has no repository digest, so it cannot be imported yet'),
         )
-        console.error(hintText(`  push and import in one step: orca harness deploy <name> ${dirArg ?? '.'} --image ${opts.image}`))
+        console.error(
+          hintText(`  push and import in one step: orca harness deploy ${template} ${dirArg ?? '.'}`),
+        )
       },
     )
 
@@ -204,9 +248,13 @@ export function registerHarness(program: Command): void {
     .command('deploy <name> [dir]')
     .description(
       'build, push, import, and activate a harness in one step ' +
-        '(creates the template if it does not exist; the image must be pullable without credentials)',
+        "(pushes to Orca's registry unless --image says otherwise, " +
+        'and creates the template if it does not exist)',
     )
-    .requiredOption('--image <repo>', 'target repository, e.g. ghcr.io/acme/my-harness')
+    .option(
+      '--image <repo>',
+      'push to your own repository instead of the platform registry, e.g. ghcr.io/acme/my-harness',
+    )
     .option('--tag <tag>', 'image tag (default: build-YYYYMMDD)')
     .option('--platform <platform>', 'build platform', DEFAULT_PLATFORM)
     .option('--file <path>', 'Dockerfile path (default: <dir>/Dockerfile)')
@@ -219,7 +267,7 @@ export function registerHarness(program: Command): void {
         name: string,
         dirArg: string | undefined,
         opts: {
-          image: string
+          image?: string
           tag?: string
           platform: string
           file?: string
@@ -247,7 +295,6 @@ export function registerHarness(program: Command): void {
         }
 
         const dir = path.resolve(dirArg ?? '.')
-        const tag = `${opts.image}:${opts.tag ?? defaultTag()}`
 
         if (!opts.skipBuild) await ensureBuildContext(dir)
         await requireDocker()
@@ -255,6 +302,8 @@ export function registerHarness(program: Command): void {
         // Resolve the API context before the build: a missing key should fail
         // in a second, not after a five-minute image build.
         const api = await apiContext(cmd)
+        const repo = await resolveImage(api, opts.image, name)
+        const tag = `${repo}:${opts.tag ?? defaultTag()}`
 
         let digestRef: string
         try {

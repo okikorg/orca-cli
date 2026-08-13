@@ -15,6 +15,7 @@ import type {
   PublishRequest,
   PublishedAgentWithURL,
   RunDetail,
+  RegistryInfo,
   RunSummary,
   SubTask,
   Template,
@@ -250,6 +251,12 @@ export class ApiClient {
   // Harness templates. The list is paginated and enveloped; the per-template
   // version list is not paginated server-side (a template holds a handful of
   // versions), so it is read whole.
+
+  // Where this tenant pushes harness images, so a deploy does not need the
+  // caller to bring a registry.
+  getRegistry(): Promise<RegistryInfo> {
+    return this.request<RegistryInfo>('/api/registry')
+  }
 
   listTemplates(params?: PageParams): Promise<Paged<Template>> {
     return this.requestPagedField<Template>(

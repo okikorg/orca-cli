@@ -344,6 +344,72 @@ describe('harness deploy', () => {
     expect(calls.some((c) => c.path === '/api/templates/h/versions/2/activate')).toBe(true)
   })
 
+  it('pushes to the platform registry when --image is omitted', async () => {
+    // The point of the endpoint: no registry account before a first deploy.
+    // The repository is per tenant and hashed, so it must come from the
+    // server rather than being assembled here.
+    let listed = 0
+    const calls = stubFetch({
+      'GET /api/registry': jsonResponse({
+        host: '127.0.0.1:5001',
+        repository: '127.0.0.1:5001/orca-brains/t-acme-1f2e3d4c5b',
+        insecure: true,
+      }),
+      'GET /api/templates/h': jsonResponse({ name: 'h' }),
+      'POST /api/templates/h/versions': jsonResponse(version({ status: 'pending' }), {
+        status: 202,
+      }),
+      'GET /api/templates/h/versions': () => {
+        listed += 1
+        const versions = listed === 1 ? [] : [version()]
+        return new Response(JSON.stringify({ total: versions.length, versions }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      },
+      'POST /api/templates/h/versions/1/activate': jsonResponse({ name: 'h', activeVersion: 1 }),
+    })
+    await run(['harness', 'deploy', 'h', workdir, '--tag', 'v1'])
+
+    expect(calls.some((c) => c.path === '/api/registry')).toBe(true)
+    // Repository from the server, template name appended.
+    expect(docker.push).toHaveBeenCalledWith('127.0.0.1:5001/orca-brains/t-acme-1f2e3d4c5b/h:v1')
+  })
+
+  it('does not consult the registry when --image is given', async () => {
+    // No stub for /api/registry: calling it would throw "no route".
+    let listed = 0
+    stubFetch({
+      'GET /api/templates/h': jsonResponse({ name: 'h' }),
+      'POST /api/templates/h/versions': jsonResponse(version({ status: 'pending' }), {
+        status: 202,
+      }),
+      'GET /api/templates/h/versions': () => {
+        listed += 1
+        const versions = listed === 1 ? [] : [version()]
+        return new Response(JSON.stringify({ total: versions.length, versions }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      },
+      'POST /api/templates/h/versions/1/activate': jsonResponse({ name: 'h', activeVersion: 1 }),
+    })
+    await run(['harness', 'deploy', 'h', workdir, '--image', 'ghcr.io/acme/h', '--tag', 'v1'])
+    expect(docker.push).toHaveBeenCalledWith('ghcr.io/acme/h:v1')
+  })
+
+  it('points at --image when the deployment has no platform registry', async () => {
+    stubFetch({
+      'GET /api/registry': jsonResponse(
+        { error: 'platform registry not configured' },
+        { status: 503 },
+      ),
+    })
+    await expect(run(['harness', 'deploy', 'h', workdir, '--tag', 'v1'])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+      detail: expect.arrayContaining([expect.stringContaining('--image')]),
+    })
+    expect(docker.push).not.toHaveBeenCalled()
+  })
+
   it('keeps the auth exit code when the key is present but rejected', async () => {
     // An ApiError is an Error, so a catch-all mapper would collapse this to
     // exit 1 with "401 Unauthorized" instead of exit 3 and the login hint.

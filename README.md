@@ -365,8 +365,8 @@ language, any model.
 
 ```
 orca harness init [dir] [--sdk <name>]                   # scaffold a working harness
-orca harness build [dir] --image <repo> [--tag t]        # build for the platform arch
-orca harness deploy <name> [dir] --image <repo>          # build, push, import, activate
+orca harness build [dir] [--tag t]                       # build for the platform arch
+orca harness deploy <name> [dir]                         # build, push, import, activate
 ```
 
 `--sdk` picks what your agent is built on. Every template is the same harness
@@ -392,7 +392,7 @@ The whole loop:
 ```bash
 orca harness init my-harness --sdk claude && cd my-harness
 # your agent goes in runAgent() in agent.ts
-orca harness deploy my-harness . --image ghcr.io/<org>/my-harness
+orca harness deploy my-harness .
 ```
 
 `deploy` does the five manual steps in one: builds for `linux/amd64`, pushes,
@@ -400,16 +400,23 @@ resolves the repository digest, imports it as a new template version, waits for
 the import to finish, and activates it. It creates the template on first use
 and takes `--no-activate` if you want the version imported but not live.
 
+**No registry of your own required.** With no `--image`, the CLI asks the
+platform where to push (`GET /api/registry`) and uses the repository Orca owns
+for your tenant. Pass `--image ghcr.io/<org>/<repo>` to push somewhere else
+instead; that image then has to be pullable without credentials, because the
+mirror carries no tenant registry credentials.
+
 Three things worth knowing:
 
 - **`--platform` defaults to `linux/amd64`**, not your machine's architecture.
   The platform's import policy checks for amd64 and sessions boot on amd64, so
   an arm64 build from an Apple Silicon Mac imports fine and then fails at first
   run. The platform built for is printed on every build.
-- **Your image must be pullable without credentials.** Orca mirrors it into its
-  own registry and has no way to authenticate to a private source registry yet,
-  so a private image fails the import with the registry's own 401. A new GitHub
-  Container Registry package is private by default.
+- **Only if you pass `--image`: your image must be pullable without
+  credentials.** Orca mirrors it into its own registry and has no way to
+  authenticate to a private source registry, so a private image fails the
+  import with the registry's own 401. A new GitHub Container Registry package
+  is private by default. Pushing to Orca's registry avoids this entirely.
 - **`build` alone cannot feed `import`.** A repository digest only exists after
   a push, and a template version is always a digest. Use `deploy`, or push
   yourself and pass the digest to `orca templates import`.

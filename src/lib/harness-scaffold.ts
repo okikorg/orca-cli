@@ -779,15 +779,17 @@ ${keySection}
 ## Ship it
 
 \`\`\`bash
-orca harness deploy my-harness . --image ghcr.io/<org>/my-harness
+orca harness deploy my-harness .
 \`\`\`
 
-That builds for linux/amd64, pushes, imports the resulting digest as a new
-template version, waits for it to be ready, and activates it.
+That builds for linux/amd64, pushes to Orca's registry, imports the resulting
+digest as a new template version, waits for it to be ready, and activates it.
+No registry account of your own required.
 
-Your image must be pullable without credentials: the platform mirrors it into
-its own registry and cannot authenticate to a private source registry yet. On
-GitHub Container Registry a new package is private by default.
+To push somewhere else, pass \`--image ghcr.io/<org>/my-harness\`. Your image
+then has to be pullable without credentials, because the platform mirrors it
+into its own registry and cannot authenticate to a private source registry
+yet. On GitHub Container Registry a new package is private by default.
 
 ## Two rules that are easy to break
 
