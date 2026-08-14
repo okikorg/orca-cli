@@ -228,7 +228,7 @@ describe('harness build', () => {
     expect(docker.build).not.toHaveBeenCalled()
   })
 
-  it('refuses a dependency on a local path before touching docker', async () => {
+  it('refuses a dependency on a path outside the context before touching docker', async () => {
     // `harness init --protocol file:...` is the right thing for npm start and
     // typecheck, and impossible for a build: docker only sends the context, so
     // the path does not exist to the builder. Failing here beats failing two
@@ -245,6 +245,56 @@ describe('harness build', () => {
       run(['harness', 'build', workdir, '--image', 'ghcr.io/acme/h']),
     ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
     expect(docker.build).not.toHaveBeenCalled()
+  })
+
+  it('refuses an absolute path outside the context', async () => {
+    await writeFile(path.join(workdir, 'Dockerfile'), 'FROM scratch')
+    await writeFile(
+      path.join(workdir, 'package.json'),
+      JSON.stringify({
+        dependencies: { '@agent-orc/harness-protocol': 'file:/opt/harness-protocol' },
+      }),
+    )
+
+    await expect(
+      run(['harness', 'build', workdir, '--image', 'ghcr.io/acme/h']),
+    ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    expect(docker.build).not.toHaveBeenCalled()
+  })
+
+  it('allows a tarball vendored inside the context', async () => {
+    // `npm pack`ing an unpublished library into the context and depending on
+    // the tarball is the supported way to build against it. Docker sends the
+    // whole context, so this installs; refusing it would leave no way to build
+    // a harness against a library that is not on npm yet.
+    await writeFile(path.join(workdir, 'Dockerfile'), 'FROM scratch')
+    await mkdir(path.join(workdir, 'vendor'), { recursive: true })
+    await writeFile(path.join(workdir, 'vendor', 'protocol-2.0.0.tgz'), 'tarball')
+    await writeFile(
+      path.join(workdir, 'package.json'),
+      JSON.stringify({
+        dependencies: {
+          '@agent-orc/harness-protocol': 'file:./vendor/protocol-2.0.0.tgz',
+        },
+      }),
+    )
+
+    await run(['harness', 'build', workdir, '--image', 'ghcr.io/acme/h'])
+    expect(docker.build).toHaveBeenCalled()
+  })
+
+  it('allows a directory dependency inside the context', async () => {
+    await writeFile(path.join(workdir, 'Dockerfile'), 'FROM scratch')
+    await mkdir(path.join(workdir, 'packages', 'protocol'), { recursive: true })
+    await writeFile(
+      path.join(workdir, 'package.json'),
+      JSON.stringify({
+        dependencies: { '@agent-orc/harness-protocol': 'file:packages/protocol' },
+      }),
+    )
+
+    await run(['harness', 'build', workdir, '--image', 'ghcr.io/acme/h'])
+    expect(docker.build).toHaveBeenCalled()
   })
 
   it('allows a dependency on a published version', async () => {

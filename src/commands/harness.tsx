@@ -74,6 +74,26 @@ async function ensureBuildContext(dir: string): Promise<void> {
   await refuseLocalDependencies(dir)
 }
 
+// A dependency spec that names a path rather than a registry version.
+const LOCAL_SPEC_RE = /^(file:|link:|\.{1,2}\/)/
+
+/**
+ * escapesContext reports whether a local dependency points outside dir.
+ *
+ * The question is not whether a spec is local, it is whether docker will send
+ * the bytes. A tarball or directory inside the context is part of the build
+ * and installs normally; only a path that escapes is unreachable to the
+ * builder. Refusing every `file:` spec would reject the standard way to build
+ * against an unpublished protocol library: `npm pack` it into the context and
+ * depend on the tarball.
+ */
+export function escapesContext(dir: string, spec: string): boolean {
+  const target = spec.replace(/^(file:|link:)/, '')
+  const rel = path.relative(dir, path.resolve(dir, target))
+  // An empty rel is the context root itself, which docker does send.
+  return rel.startsWith('..') || path.isAbsolute(rel)
+}
+
 /**
  * A dependency on a path outside the build context cannot be installed inside
  * the image: docker only sends the context, so `npm ci` resolves the path
@@ -83,6 +103,10 @@ async function ensureBuildContext(dir: string): Promise<void> {
  * the right thing for `npm start` and typecheck and impossible for a build.
  * Caught here rather than as a docker error two minutes into a layer, because
  * npm's message names a path and never says why it is missing.
+ *
+ * Not checked: whether .dockerignore excludes a path that is otherwise inside
+ * the context. That fails the same way and docker's ignore grammar is not
+ * re-implemented here.
  */
 async function refuseLocalDependencies(dir: string): Promise<void> {
   const raw = await fs.readFile(path.join(dir, 'package.json'), 'utf8').catch(() => null)
@@ -94,18 +118,19 @@ async function refuseLocalDependencies(dir: string): Promise<void> {
     // A package.json this broken is npm's problem to report, not ours.
     return
   }
-  const local = Object.entries(pkg.dependencies ?? {}).filter(([, spec]) =>
-    /^(file:|link:|\.{1,2}\/)/.test(spec),
+  const outside = Object.entries(pkg.dependencies ?? {}).filter(
+    ([, spec]) => LOCAL_SPEC_RE.test(spec) && escapesContext(dir, spec),
   )
-  if (local.length === 0) return
+  if (outside.length === 0) return
 
   throw new CliError(
-    `${local.map(([name]) => name).join(', ')} resolve${local.length === 1 ? 's' : ''} to a local path, which cannot be installed inside the image`,
+    `${outside.map(([name]) => name).join(', ')} resolve${outside.length === 1 ? 's' : ''} to a path outside the build context, which cannot be installed inside the image`,
     ExitCode.Usage,
     [
-      ...local.map(([name, spec]) => `  "${name}": "${spec}"`),
+      ...outside.map(([name, spec]) => `  "${name}": "${spec}"`),
       'Docker only sends the build context, so a path outside it does not exist',
-      'to the builder. Point these at published versions before deploying.',
+      'to the builder. Point these at a published version, or npm pack the',
+      'package into the context and depend on the tarball.',
     ],
   )
 }
