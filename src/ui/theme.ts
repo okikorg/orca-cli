@@ -21,10 +21,10 @@
 import type { RunStatus } from '../lib/types.js'
 
 export const theme = {
-  // Brand coral, --accent hsl(10 100% 68%) = #FE785D.
-  accent: '#FE785D',
-  // --accent-strong hsl(10 90% 58%).
-  accentStrong: '#F0543C',
+  // Dim terminal coral: warm enough for the brand, muted for sustained use.
+  accent: '#B85C4A',
+  // Strong coral stays darker than the primary accent for inline emphasis.
+  accentStrong: '#9E4938',
   // --text-muted (66%): secondary text, table body.
   muted: '#A8A8A8',
   // --text-subtle (46%): hints, timestamps, dividers.
@@ -38,8 +38,8 @@ export const theme = {
 // The coral wordmark and subtle grays as raw 24-bit ANSI, for the banner and
 // any output that renders outside Ink. Mirrors the hex tokens above.
 export const ansi = {
-  accent: '\x1b[38;2;254;120;93m',
-  accentStrong: '\x1b[38;2;240;84;60m',
+  accent: '\x1b[38;2;184;92;74m',
+  accentStrong: '\x1b[38;2;158;73;56m',
   muted: '\x1b[38;2;168;168;168m',
   subtle: '\x1b[38;2;117;117;117m',
   destructive: '\x1b[38;2;220;60;60m',

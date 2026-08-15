@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { registerPlatform, renderTopologyTree } from '../../src/commands/platform.js'
 import { saveConfig } from '../../src/lib/config.js'
 import { ExitCode } from '../../src/lib/errors.js'
-import { glyphs } from '../../src/ui/theme.js'
+import { ansi, glyphs } from '../../src/ui/theme.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
 import { useTmpConfigDir } from '../helpers/tmp-config.js'
 
@@ -116,7 +116,7 @@ describe('renderTopologyTree', () => {
   })
 
   it('emits coral ANSI on the conductor node when color is enabled', () => {
-    expect(renderTopologyTree(TOPOLOGY, { color: true })).toContain('38;2;254;120;93')
+    expect(renderTopologyTree(TOPOLOGY, { color: true })).toContain(ansi.accent)
   })
 
   it('handles an empty pool without throwing', () => {
