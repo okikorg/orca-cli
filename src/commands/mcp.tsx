@@ -170,6 +170,32 @@ export function registerMcp(program: Command): void {
     .command('mcp')
     .description('manage MCP servers in the tenant catalog and on agent profiles')
 
+  // -- serve: Orca's own MCP server on stdio -----------------------------------
+  // The inverse of everything else in this group: not Orca consuming MCP
+  // servers, but Orca AS an MCP server for the coding agent driving this
+  // CLI. Wired up with: claude mcp add orca -- orca mcp serve
+  mcp
+    .command('serve')
+    .description('run the Orca control-plane MCP server on stdio (for coding agents)')
+    .action(async (_opts: Record<string, never>, cmd: Command) => {
+      const flags = globalFlags(cmd)
+      // stdio discipline: stdout belongs to JSON-RPC from here on. Ink is
+      // never mounted on this path; diagnostics go to stderr only.
+      const [{ buildMcpServer, makeClientSource }, { StdioServerTransport }] = await Promise.all([
+        import('../mcp/server.js'),
+        import('@modelcontextprotocol/sdk/server/stdio.js'),
+      ])
+      const server = buildMcpServer(makeClientSource(flags))
+      const transport = new StdioServerTransport()
+      await server.connect(transport)
+      console.error(hintText('orca mcp server listening on stdio'))
+      // Stay alive until the client hangs up (stdin EOF), then exit cleanly.
+      await new Promise<void>((resolve) => {
+        process.stdin.on('end', resolve)
+        process.stdin.on('close', resolve)
+      })
+    })
+
   // -- Catalog: list ----------------------------------------------------------
   const mcpList = mcp.command('list').description('list MCP catalog entries')
   addPageFlags(mcpList)
