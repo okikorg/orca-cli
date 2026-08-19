@@ -78,6 +78,8 @@ const COMMAND_GROUP: Record<string, string> = {
   keys: GROUP.MANAGE,
   billing: GROUP.MANAGE,
   auth: GROUP.SETUP,
+  login: GROUP.SETUP,
+  whoami: GROUP.SETUP,
   context: GROUP.SETUP,
   update: GROUP.SETUP,
 }

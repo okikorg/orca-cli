@@ -366,4 +366,22 @@ export class ApiClient {
   revokeControlPlaneKey(id: string): Promise<void> {
     return this.request<void>(`/api/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' })
   }
+
+  // whoami identifies the caller: tenant, role, credential kind, key id.
+  // 404 on conductors that predate the endpoint; callers degrade to local
+  // context info.
+  whoami(): Promise<WhoamiResponse> {
+    return this.request<WhoamiResponse>('/api/whoami')
+  }
+}
+
+// WhoamiResponse mirrors GET /api/whoami. tenantName is best-effort;
+// exactly one of keyId/userId is set depending on authKind.
+export type WhoamiResponse = {
+  tenantId: string
+  tenantName?: string
+  role?: string
+  authKind: 'api_key' | 'session' | 'run_token' | string
+  keyId?: string
+  userId?: string
 }

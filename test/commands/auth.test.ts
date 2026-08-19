@@ -55,6 +55,50 @@ function httpPostJson(port: number, body: unknown): Promise<{ status: number }> 
 
 let cleanup: () => Promise<void>
 
+// Agent/headless environment markers auto-select the device flow, so tests
+// must pin them: cleared here for deterministic runs (the vitest process
+// itself may run under CI or a coding agent), set explicitly by the tests
+// that exercise the detection.
+const AGENT_ENV_VARS = [
+  'CLAUDECODE',
+  'CLAUDE_CODE',
+  'CURSOR_TRACE_ID',
+  'CI',
+  'SSH_CONNECTION',
+  'SSH_TTY',
+] as const
+let savedAgentEnv: Record<string, string | undefined>
+
+// stubDeviceFlow wires the three endpoints a full device login touches:
+// code mint, token poll (pending once, then success), and the verify probe.
+// interval 0 clamps to 1s in the poller, so a test costs ~2s of real sleep.
+function stubDeviceFlow() {
+  let polls = 0
+  return stubFetch({
+    'POST /api/device/code': jsonResponse({
+      device_code: 'dc_test_secret',
+      user_code: 'BCDF-GHJK',
+      verification_uri: 'https://app.orcapods.ai/cli-auth',
+      verification_uri_complete: 'https://app.orcapods.ai/cli-auth?code=BCDF-GHJK',
+      expires_in: 60,
+      interval: 0,
+    }),
+    'POST /api/device/token': (call) => {
+      polls++
+      if (polls === 1) return jsonResponse({ error: 'authorization_pending' }, { status: 400 })(call)
+      return jsonResponse({
+        access_token: KEY,
+        token_type: 'bearer',
+        key_id: 'key_dev',
+        role: 'member',
+        org_slug: 'acme',
+        tenant_id: 'org_1',
+      })(call)
+    },
+    'GET /api/profiles?limit=1': jsonResponse([]),
+  })
+}
+
 function makeProgram(): Command {
   const program = new Command()
   program
@@ -75,12 +119,21 @@ beforeEach(async () => {
   cleanup = tmp.cleanup
   delete process.env.ORCA_API_KEY
   delete process.env.ORCA_API_URL
+  savedAgentEnv = {}
+  for (const key of AGENT_ENV_VARS) {
+    savedAgentEnv[key] = process.env[key]
+    delete process.env[key]
+  }
   vi.spyOn(console, 'log').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 
 afterEach(async () => {
   await cleanup()
+  for (const key of AGENT_ENV_VARS) {
+    if (savedAgentEnv[key] === undefined) delete process.env[key]
+    else process.env[key] = savedAgentEnv[key]
+  }
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -117,10 +170,77 @@ describe('auth login', () => {
     expect(cfg.contexts.prod.apiUrl).toBe('https://prod.example')
   })
 
-  it('errors without a token in non-interactive mode', async () => {
+  it('runs the device flow end-to-end in non-interactive mode', async () => {
+    // The old contract errored here ("browser login needs an interactive
+    // terminal"); headless logins now self-serve via the device flow. This
+    // is the path a coding agent takes when it runs `orca login`.
+    stubDeviceFlow()
+    const errors: string[] = []
+    vi.mocked(console.error).mockImplementation((...a: unknown[]) => {
+      errors.push(a.join(' '))
+    })
+
+    await run(['auth', 'login', '--api-url', 'http://test:8080'])
+
+    // The human-relayable lines: code first, then the URL to open.
+    const out = errors.join('\n')
+    expect(out).toContain('BCDF-GHJK')
+    expect(out).toContain('https://app.orcapods.ai/cli-auth?code=BCDF-GHJK')
+    // The poll secret must never be printed.
+    expect(out).not.toContain('dc_test_secret')
+
+    const cfg = await loadConfig()
+    expect(cfg.contexts.default.apiKey).toBe(KEY)
+    expect(cfg.contexts.default.keyId).toBe('key_dev')
+  }, 15_000)
+
+  it('an agent environment marker selects the device flow even with a TTY', async () => {
+    const savedStdin = process.stdin.isTTY
+    const savedStdout = process.stdout.isTTY
+    process.stdin.isTTY = true
+    process.stdout.isTTY = true
+    process.env.CLAUDECODE = '1'
+    try {
+      const calls = stubDeviceFlow()
+      await run(['auth', 'login', '--api-url', 'http://test:8080'])
+      expect(calls.some((c) => c.path === '/api/device/code')).toBe(true)
+      // The minted key label says which agent drove the login.
+      const codeCall = calls.find((c) => c.path === '/api/device/code')
+      expect(codeCall?.body).toContain('claude-code-')
+      const cfg = await loadConfig()
+      expect(cfg.contexts.default.apiKey).toBe(KEY)
+    } finally {
+      process.stdin.isTTY = savedStdin
+      process.stdout.isTTY = savedStdout
+    }
+  }, 15_000)
+
+  it('maps a dashboard denial to the auth exit code', async () => {
+    stubFetch({
+      'POST /api/device/code': jsonResponse({
+        device_code: 'dc',
+        user_code: 'BCDF-GHJK',
+        verification_uri: 'https://app.orcapods.ai/cli-auth',
+        verification_uri_complete: 'https://app.orcapods.ai/cli-auth?code=BCDF-GHJK',
+        expires_in: 60,
+        interval: 0,
+      }),
+      'POST /api/device/token': jsonResponse({ error: 'access_denied' }, { status: 400 }),
+    })
     await expect(
       run(['auth', 'login', '--api-url', 'http://test:8080']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
+  }, 15_000)
+
+  it('explains when the conductor predates device login', async () => {
+    stubFetch({
+      'POST /api/device/code': jsonResponse({ error: 'not found' }, { status: 404 }),
+    })
+    await expect(
+      run(['auth', 'login', '--api-url', 'http://test:8080']),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('does not support headless login'),
+    })
   })
 })
 
@@ -291,19 +411,31 @@ describe('auth login (browser flow)', () => {
     expect(cfg.contexts.default.apiUrl).toBe('http://test:8080')
   })
 
+  // completeBrowserLogin captures the URL handed to the (stubbed) browser
+  // opener, POSTs the callback like the dashboard page would, and returns
+  // the captured URL. Shared by the dashboard-URL resolution tests, which
+  // used to observe the URL via --no-browser before that flag was repointed
+  // at the device flow.
+  async function completeBrowserLogin(runPromise: Promise<void>, captured: Promise<string>): Promise<URL> {
+    const authUrl = new URL(await captured)
+    const state = authUrl.searchParams.get('state') ?? ''
+    const port = Number(authUrl.searchParams.get('port'))
+    await httpPostJson(port, { state, key: KEY, keyId: 'key_42', role: 'admin', orgSlug: 'acme' })
+    await runPromise
+    return authUrl
+  }
+
   it('falls back to the baked-in production dashboard URL when none is configured', async () => {
     expect(DEFAULT_DASHBOARD_URL).toBe('https://app.orcapods.ai')
     stubFetch({ 'GET /api/profiles?limit=1': jsonResponse([]) })
-    const errors: string[] = []
-    vi.mocked(console.error).mockImplementation((...a: unknown[]) => {
-      errors.push(a.join(' '))
-    })
+    const captured = deferred<string>()
+    setBrowserOpener((url) => captured.resolve(url))
 
-    await run(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
-
-    const printed = errors.find((l) => l.includes('/cli-auth?'))
-    expect(printed).toBeTruthy()
-    expect(printed).toContain(String(DEFAULT_DASHBOARD_URL))
+    const authUrl = await completeBrowserLogin(
+      run(['auth', 'login', '--api-url', 'http://test:8080']),
+      captured.promise,
+    )
+    expect(authUrl.origin + authUrl.pathname).toBe('https://app.orcapods.ai/cli-auth')
   })
 
   it('upgrades the former baked-in dashboard URL saved in a context', async () => {
@@ -314,30 +446,32 @@ describe('auth login (browser flow)', () => {
       },
     })
     stubFetch({ 'GET /api/profiles?limit=1': jsonResponse([]) })
-    const errors: string[] = []
-    vi.mocked(console.error).mockImplementation((...a: unknown[]) => {
-      errors.push(a.join(' '))
-    })
+    const captured = deferred<string>()
+    setBrowserOpener((url) => captured.resolve(url))
 
-    await run(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
-
-    const printed = errors.find((l) => l.includes('/cli-auth?'))
-    expect(printed).toContain('https://app.orcapods.ai/cli-auth?')
+    const authUrl = await completeBrowserLogin(
+      run(['auth', 'login', '--api-url', 'http://test:8080']),
+      captured.promise,
+    )
+    expect(authUrl.origin).toBe('https://app.orcapods.ai')
     expect((await loadConfig()).contexts.default.dashboardUrl).toBe('https://app.orcapods.ai')
   })
 
   it('upgrades the former dashboard URL from an existing shell override', async () => {
     process.env.ORCA_DASHBOARD_URL = 'https://agent-orc-dashboard.vercel.app/'
-    stubFetch({ 'GET /api/profiles?limit=1': jsonResponse([]) })
-    const errors: string[] = []
-    vi.mocked(console.error).mockImplementation((...a: unknown[]) => {
-      errors.push(a.join(' '))
-    })
+    try {
+      stubFetch({ 'GET /api/profiles?limit=1': jsonResponse([]) })
+      const captured = deferred<string>()
+      setBrowserOpener((url) => captured.resolve(url))
 
-    await run(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
-
-    const printed = errors.find((l) => l.includes('/cli-auth?'))
-    expect(printed).toContain('https://app.orcapods.ai/cli-auth?')
+      const authUrl = await completeBrowserLogin(
+        run(['auth', 'login', '--api-url', 'http://test:8080']),
+        captured.promise,
+      )
+      expect(authUrl.origin).toBe('https://app.orcapods.ai')
+    } finally {
+      delete process.env.ORCA_DASHBOARD_URL
+    }
   })
 
   it('accepts a key pasted into the terminal while the browser wait is pending', async () => {
@@ -377,31 +511,76 @@ describe('auth login (browser flow)', () => {
     expect(cfg.contexts.default.keyId).toBeUndefined()
   })
 
-  it('--no-browser falls back to a masked paste prompt and stores the key', async () => {
-    stubFetch({ 'GET /api/profiles?limit=1': jsonResponse([]) })
-    const errors: string[] = []
-    vi.mocked(console.error).mockImplementation((...a: unknown[]) => {
-      errors.push(a.join(' '))
-    })
-
+  it('--no-browser and --headless run the device flow despite the TTY', async () => {
+    // --no-browser used to print a reveal-and-paste URL; it now aliases the
+    // device flow (strictly better: no key ever crosses a paste buffer).
+    const calls = stubDeviceFlow()
     await run([
       'auth',
       'login',
       '--api-url',
       'http://test:8080',
-      '--dashboard-url',
-      'https://dash.example.com',
       '--no-browser',
     ])
-
-    // The printed URL must omit the loopback port (reveal-and-paste flow).
-    const printed = errors.find((l) => l.includes('/cli-auth?'))
-    expect(printed).toBeTruthy()
-    expect(printed).not.toContain('port=')
-
+    expect(calls.some((c) => c.path === '/api/device/code')).toBe(true)
     const cfg = await loadConfig()
     expect(cfg.contexts.default.apiKey).toBe(KEY)
-    expect(cfg.contexts.default.dashboardUrl).toBe('https://dash.example.com')
-    expect(cfg.contexts.default.keyId).toBeUndefined()
+    expect(cfg.contexts.default.keyId).toBe('key_dev')
+  }, 15_000)
+
+  it('the top-level `orca login --headless` alias works end-to-end', async () => {
+    const calls = stubDeviceFlow()
+    await run(['login', '--api-url', 'http://test:8080', '--headless'])
+    expect(calls.some((c) => c.path === '/api/device/code')).toBe(true)
+    expect((await loadConfig()).contexts.default.apiKey).toBe(KEY)
+  }, 15_000)
+})
+
+describe('whoami', () => {
+  it('reports tenant, role, and key id from the server', async () => {
+    await saveConfig({
+      currentContext: 'default',
+      contexts: { default: { apiUrl: 'http://test:8080', apiKey: KEY } },
+    })
+    stubFetch({
+      'GET /api/whoami': jsonResponse({
+        tenantId: 'org_1',
+        tenantName: 'Acme',
+        role: 'member',
+        authKind: 'api_key',
+        keyId: 'key_dev',
+      }),
+    })
+    const logs: string[] = []
+    vi.mocked(console.log).mockImplementation((...a: unknown[]) => {
+      logs.push(a.join(' '))
+    })
+    await run(['whoami'])
+    const out = logs.join('\n')
+    expect(out).toContain('Acme')
+    expect(out).toContain('org_1')
+    expect(out).toContain('member')
+    expect(out).toContain('key_dev')
+  })
+
+  it('degrades to a local summary against conductors without /api/whoami', async () => {
+    await saveConfig({
+      currentContext: 'default',
+      contexts: { default: { apiUrl: 'http://test:8080', apiKey: KEY } },
+    })
+    stubFetch({
+      'GET /api/whoami': jsonResponse({ error: 'not found' }, { status: 404 }),
+      'GET /api/profiles?limit=1': jsonResponse([]),
+    })
+    const logs: string[] = []
+    vi.mocked(console.log).mockImplementation((...a: unknown[]) => {
+      logs.push(a.join(' '))
+    })
+    await run(['whoami'])
+    expect(logs.join('\n')).toContain('predates /api/whoami')
+  })
+
+  it('fails with the auth exit code when no key is stored', async () => {
+    await expect(run(['whoami'])).rejects.toMatchObject({ exitCode: ExitCode.Auth })
   })
 })
