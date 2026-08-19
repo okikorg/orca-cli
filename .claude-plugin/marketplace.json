@@ -1,0 +1,14 @@
+{
+  "name": "orca",
+  "owner": {
+    "name": "Orca",
+    "url": "https://orcapods.ai"
+  },
+  "plugins": [
+    {
+      "name": "orca",
+      "source": "./plugins/orca",
+      "description": "Run AI agents in the cloud with Orca: install and sign in the orca CLI, create and run agents, follow output, and drive the whole control plane over MCP."
+    }
+  ]
+}
