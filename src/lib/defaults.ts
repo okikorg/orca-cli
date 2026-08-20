@@ -6,10 +6,17 @@
 // exits with a "set --dashboard-url or ORCA_DASHBOARD_URL" hint until a real
 // value is filled in here).
 
-// Conductor control-plane API. CONFIRMED: dashboard/vercel.json rewrites
-// /api/* to this host. (The conductor-production.up.railway.app strings in
-// older docs are stale and must not be used.)
-export const DEFAULT_API_URL: string | null = 'https://conductor-production-0859.up.railway.app'
+// Conductor control-plane API. CONFIRMED 2026-08-20: api.orcapods.ai fronts
+// the production conductor (live probes: /healthz 200, /api/openapi.yaml 200,
+// device-code flow end to end). Always prefer the first-party domain over raw
+// host URLs so installed CLIs survive infrastructure moves.
+export const DEFAULT_API_URL: string | null = 'https://api.orcapods.ai'
+
+// Former baked-in default (raw Railway hostname, leaked into login banners
+// and whoami output up to cli-v0.4.0). Context resolution and auth login
+// upgrade this exact saved value to the current domain; user-supplied custom
+// API URLs are untouched.
+export const LEGACY_DEFAULT_API_URL = 'https://conductor-production-0859.up.railway.app'
 
 // Orca dashboard base URL for the browser login flow. CONFIRMED 2026-08-08
 // from the agent-orc-dashboard Vercel project's production domains and a
