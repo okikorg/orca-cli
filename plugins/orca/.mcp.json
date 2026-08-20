@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "orca": {
+      "command": "orca",
+      "args": ["mcp", "serve"]
+    }
+  }
+}

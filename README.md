@@ -340,6 +340,29 @@ sandbox:
 
 Unknown keys warn but do not block; `--strict` promotes warnings to errors.
 
+## Use from Claude Code (plugin, skill, MCP)
+
+The repo doubles as a Claude Code plugin marketplace. The `orca` plugin ships
+the `use-orca` skill (install, login, golden-path commands) and auto-registers
+the Orca MCP server:
+
+```
+claude plugin marketplace add okikorg/orca-cli
+claude plugin install orca@orca
+```
+
+Or register just the MCP server against an existing install:
+
+```
+claude mcp add orca -- orca mcp serve
+```
+
+`orca mcp serve` speaks MCP over stdio and exposes the control plane as tools
+(create/run agents, follow runs via long-poll, skills, storage, publish, plus
+an `api_request` escape hatch documented by the `orca://openapi` resource).
+Other MCP clients (Cursor, Codex) use `{"command": "orca", "args": ["mcp",
+"serve"]}`. Headless login for agent contexts is `orca login` (device flow).
+
 ## MCP
 
 Manage the tenant's MCP server catalog and wire entries onto agent profiles.

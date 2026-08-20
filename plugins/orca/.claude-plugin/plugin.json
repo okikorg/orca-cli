@@ -1,0 +1,13 @@
+{
+  "name": "orca",
+  "version": "0.1.0",
+  "description": "Use Orca (orcapods.ai) from Claude Code: headless login, agent creation, cloud runs, skills, storage, and an MCP server over the full control-plane API.",
+  "author": {
+    "name": "Orca",
+    "url": "https://orcapods.ai"
+  },
+  "homepage": "https://orcapods.ai",
+  "repository": "https://github.com/okikorg/orca-cli",
+  "license": "MIT",
+  "keywords": ["orca", "orcapods", "agents", "cloud agents", "agent orchestration", "mcp"]
+}
