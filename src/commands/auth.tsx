@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_API_URL,
   DEFAULT_DASHBOARD_URL,
+  LEGACY_DEFAULT_API_URL,
   LEGACY_DEFAULT_DASHBOARD_URL,
 } from '../lib/defaults.js'
 import { CliError, ExitCode } from '../lib/errors.js'
@@ -145,6 +146,12 @@ async function runLogin(opts: LoginOpts, cmd: Command): Promise<void> {
 
   // --- conductor API URL (flag > env > file > baked-in default > prompt)
   let apiUrl = opts.apiUrl || flags.apiUrl || process.env.ORCA_API_URL || existing.apiUrl
+  // Upgrade the former baked-in default (raw Railway hostname) regardless of
+  // whether it came from a saved context, an old shell export, or an explicit
+  // invocation. Custom/self-hosted API URLs are left alone.
+  if (apiUrl === LEGACY_DEFAULT_API_URL && DEFAULT_API_URL) {
+    apiUrl = DEFAULT_API_URL
+  }
   let apiUrlDefaulted = false
   if (!apiUrl && DEFAULT_API_URL) {
     apiUrl = DEFAULT_API_URL
