@@ -3,7 +3,7 @@ import os from 'node:os'
 
 import type { Command } from 'commander'
 
-import { ApiClient, mapApiError } from '../lib/api.js'
+import { ApiClient, ApiError, mapApiError } from '../lib/api.js'
 import {
   DEFAULT_CONTEXT,
   loadConfig,
@@ -20,6 +20,11 @@ import {
 } from '../lib/defaults.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { listenForKeyPaste } from '../lib/key-listener.js'
+import {
+  pollDeviceToken,
+  requestDeviceCode,
+  type DeviceCodeResponse,
+} from '../lib/device-flow.js'
 import {
   LoginTimeoutError,
   openBrowser,
@@ -73,8 +78,21 @@ function normalizeUrl(raw: string, label: string): string {
   return url
 }
 
+// agentContext sniffs the environment for the coding agent (or headless
+// context) driving this login, so the flow auto-selects device login and the
+// key label says who minted it. Returns a label prefix, or null when this
+// looks like a human at a terminal.
+function agentContext(): string | null {
+  if (process.env.CLAUDECODE || process.env.CLAUDE_CODE) return 'claude-code'
+  if (process.env.CURSOR_TRACE_ID) return 'cursor'
+  if (process.env.CI) return 'ci'
+  if (process.env.SSH_CONNECTION || process.env.SSH_TTY) return 'ssh'
+  return null
+}
+
 // defaultKeyLabel names the key after the local user + host, gh-style, so the
-// dashboard's key list is legible ("cli-ada@laptop").
+// dashboard's key list is legible ("cli-ada@laptop"; "claude-code-ada@laptop"
+// when a coding agent is driving).
 function defaultKeyLabel(): string {
   let user = 'user'
   try {
@@ -88,7 +106,8 @@ function defaultKeyLabel(): string {
   } catch {
     // Keep the default hostname.
   }
-  return `cli-${user}@${host}`
+  const prefix = agentContext() ?? 'cli'
+  return `${prefix}-${user}@${host}`
 }
 
 // promptForKey masks a pasted key, reused by the --no-browser and timeout
@@ -107,147 +126,282 @@ type Handoff = {
   orgSlug?: string | null
 }
 
-export function registerAuth(program: Command): void {
-  const auth = program.command('auth').description('authenticate orca with the platform')
+// runLogin is the shared action behind `orca auth login` and `orca login`.
+//
+// Flow selection, in order:
+//   --with-token          no flow at all (CI/manual)
+//   --headless / --browserless / --no-browser
+//                         device-code flow, explicitly
+//   no TTY, or a coding-agent / CI / SSH environment
+//                         device-code flow, automatically (this is the
+//                         "orca login just works inside Claude Code" path)
+//   otherwise             browser + loopback (the legacy interactive flow)
+async function runLogin(opts: LoginOpts, cmd: Command): Promise<void> {
+  const flags = globalFlags(cmd)
+  const cfg = await loadConfig()
+  const name = flags.context || cfg.currentContext || DEFAULT_CONTEXT
+  const existing = cfg.contexts[name] ?? {}
+  const mode = outputMode(flags)
 
-  auth
-    .command('login')
-    .description('authorize the CLI in your browser and store the resulting key')
+  // --- conductor API URL (flag > env > file > baked-in default > prompt)
+  let apiUrl = opts.apiUrl || flags.apiUrl || process.env.ORCA_API_URL || existing.apiUrl
+  let apiUrlDefaulted = false
+  if (!apiUrl && DEFAULT_API_URL) {
+    apiUrl = DEFAULT_API_URL
+    apiUrlDefaulted = true
+  }
+  if (!apiUrl) {
+    if (!interactive()) {
+      throw new CliError('no API URL; pass --api-url or set ORCA_API_URL', ExitCode.Usage)
+    }
+    const { promptText } = await import('../ui/PromptInput.js')
+    apiUrl = await promptText({
+      label: 'Conductor API URL',
+      initial: 'http://localhost:8080',
+    })
+  }
+  apiUrl = normalizeUrl(apiUrl, 'API URL')
+  if (apiUrlDefaulted) {
+    console.error(
+      hintText(`Using the default Orca production API (${apiUrl}). Pass --api-url for self-hosted or local.`),
+    )
+  }
+
+  // --- dashboard URL (flag > env > file > baked-in default). Required only
+  //     for the browser loopback flow; the device flow gets its verification
+  //     URL from the conductor, and --with-token persists it if provided. ----
+  let dashboardUrl =
+    opts.dashboardUrl || process.env.ORCA_DASHBOARD_URL || existing.dashboardUrl || DEFAULT_DASHBOARD_URL || undefined
+  if (dashboardUrl) {
+    dashboardUrl = normalizeUrl(dashboardUrl, 'dashboard URL')
+    // Upgrade the former first-party default regardless of whether it
+    // came from a saved context, an old shell export, or an explicit
+    // invocation. Custom/self-hosted dashboard URLs are left alone.
+    if (dashboardUrl === LEGACY_DEFAULT_DASHBOARD_URL && DEFAULT_DASHBOARD_URL) {
+      dashboardUrl = DEFAULT_DASHBOARD_URL
+    }
+  }
+
+  let handoff: Handoff
+
+  if (opts.withToken) {
+    // Manual/CI path: token supplied directly, no browser, no prompt.
+    handoff = { token: opts.withToken }
+  } else {
+    const label = (opts.label && opts.label.trim()) || defaultKeyLabel()
+    const wantDevice =
+      opts.headless === true ||
+      opts.browserless === true ||
+      opts.browser === false ||
+      !interactive() ||
+      agentContext() !== null
+    if (wantDevice) {
+      handoff = await deviceLogin({ apiUrl, label, mode })
+    } else {
+      const state = randomBytes(32).toString('hex')
+      if (!dashboardUrl) {
+        throw new CliError('no dashboard URL configured', ExitCode.Usage, [
+          'Pass --dashboard-url <url> or set ORCA_DASHBOARD_URL.',
+        ])
+      }
+      handoff = await browserLogin({ dashboardUrl, state, label })
+    }
+  }
+
+  // --- shared tail: validate, probe, persist, report -------------------
+  const token = handoff.token.trim()
+  if (!token) throw new CliError('empty API key', ExitCode.Usage)
+  if (!token.startsWith('ao_')) {
+    console.error(hintText('warning: key does not look like a tenant API key (expected ao_ prefix)'))
+  }
+
+  await verifyKey(apiUrl, token, name)
+
+  const ctxOut: ContextConfig = { ...existing, apiUrl, apiKey: token }
+  if (dashboardUrl) ctxOut.dashboardUrl = dashboardUrl
+  if (opts.gatewayUrl) ctxOut.gatewayUrl = opts.gatewayUrl.trim().replace(/\/+$/, '')
+  if (handoff.keyId) ctxOut.keyId = handoff.keyId
+  else delete ctxOut.keyId
+  cfg.contexts[name] = ctxOut
+  cfg.currentContext = name
+  const file = await saveConfig(cfg)
+
+  if (mode === 'json') {
+    printJson({
+      context: name,
+      apiUrl,
+      apiKey: maskKey(token),
+      role: handoff.role ?? null,
+      org: handoff.orgSlug ?? null,
+      keyId: handoff.keyId ?? null,
+      stored: file,
+    })
+    return
+  }
+  if (mode === 'plain') {
+    console.log('Logged in to Orca.')
+    return
+  }
+  console.log(`${accentVerb('Logged in')} to Orca.`)
+}
+
+// deviceLogin runs the RFC 8628 device-code flow against the conductor.
+// Output is deliberately plain and agent-relayable: a coding agent driving
+// this command copies the code and URL to its user verbatim. Human-facing
+// lines go to stderr; in --json mode a single NDJSON event with the code and
+// URLs goes to stdout first (the final login object follows from the shared
+// tail, matching the loopback flow's JSON contract).
+async function deviceLogin(args: {
+  apiUrl: string
+  label: string
+  mode: 'json' | 'plain' | 'ink'
+}): Promise<Handoff> {
+  const grant = await requestDeviceCode(args.apiUrl, args.label)
+  announceDeviceCode(grant, args.mode)
+  const tok = await pollDeviceToken(args.apiUrl, grant)
+  return {
+    token: tok.access_token,
+    keyId: tok.key_id,
+    role: tok.role,
+    orgSlug: tok.org_slug ?? null,
+  }
+}
+
+function announceDeviceCode(grant: DeviceCodeResponse, mode: 'json' | 'plain' | 'ink'): void {
+  if (mode === 'json') {
+    // One NDJSON line so scripted callers can surface the code immediately
+    // while the process keeps polling.
+    process.stdout.write(
+      JSON.stringify({
+        event: 'device_code',
+        userCode: grant.user_code,
+        verificationUri: grant.verification_uri,
+        verificationUriComplete: grant.verification_uri_complete,
+        expiresIn: grant.expires_in,
+        interval: grant.interval,
+      }) + '\n',
+    )
+  }
+  const minutes = Math.round((grant.expires_in || 900) / 60)
+  console.error(`First, copy your one-time code: ${grant.user_code}`)
+  console.error(`Then open: ${grant.verification_uri_complete}`)
+  console.error(hintText(`Waiting for approval... (expires in ${minutes} minutes, Ctrl-C to cancel)`))
+}
+
+// LoginOpts is shared by `orca auth login` and the `orca login` alias.
+type LoginOpts = {
+  apiUrl?: string
+  dashboardUrl?: string
+  gatewayUrl?: string
+  label?: string
+  withToken?: string
+  browser?: boolean
+  headless?: boolean
+  browserless?: boolean
+}
+
+// addLoginOptions keeps the two registrations of the login command
+// byte-identical in their option surface.
+function addLoginOptions(cmd: Command): Command {
+  return cmd
     .option('--api-url <url>', 'conductor API base URL')
     .option('--dashboard-url <url>', 'Orca dashboard base URL (or set ORCA_DASHBOARD_URL)')
     .option('--gateway-url <url>', 'public chat gateway base URL')
     .option('--label <label>', 'label for the minted key, shown in the dashboard')
-    .option('--with-token <token>', 'API key; skips the browser flow (for CI)')
-    .option('--no-browser', 'print the authorize URL instead of opening a browser')
-    .action(
-      async (
-        opts: {
-          apiUrl?: string
-          dashboardUrl?: string
-          gatewayUrl?: string
-          label?: string
-          withToken?: string
-          browser?: boolean
-        },
-        cmd: Command,
-      ) => {
-        const flags = globalFlags(cmd)
-        const cfg = await loadConfig()
-        const name = flags.context || cfg.currentContext || DEFAULT_CONTEXT
-        const existing = cfg.contexts[name] ?? {}
-        const mode = outputMode(flags)
+    .option('--with-token <token>', 'API key; skips the login flow entirely (for CI)')
+    .option('--headless', 'device-code flow: print a code + URL, approve on any device')
+    .option('--browserless', 'alias for --headless')
+    .option('--no-browser', 'same as --headless (kept for compatibility)')
+}
 
-        // --- conductor API URL (flag > env > file > baked-in default > prompt)
-        let apiUrl = opts.apiUrl || flags.apiUrl || process.env.ORCA_API_URL || existing.apiUrl
-        let apiUrlDefaulted = false
-        if (!apiUrl && DEFAULT_API_URL) {
-          apiUrl = DEFAULT_API_URL
-          apiUrlDefaulted = true
-        }
-        if (!apiUrl) {
-          if (!interactive()) {
-            throw new CliError('no API URL; pass --api-url or set ORCA_API_URL', ExitCode.Usage)
-          }
-          const { promptText } = await import('../ui/PromptInput.js')
-          apiUrl = await promptText({
-            label: 'Conductor API URL',
-            initial: 'http://localhost:8080',
-          })
-        }
-        apiUrl = normalizeUrl(apiUrl, 'API URL')
-        if (apiUrlDefaulted) {
-          console.error(
-            hintText(`Using the default Orca production API (${apiUrl}). Pass --api-url for self-hosted or local.`),
-          )
-        }
+export function registerAuth(program: Command): void {
+  const auth = program.command('auth').description('authenticate orca with the platform')
 
-        // --- dashboard URL (flag > env > file > baked-in default). Required
-        //     only for the browser/paste flow; the --with-token path persists
-        //     it if provided but does not require it. --------------------------
-        let dashboardUrl =
-          opts.dashboardUrl || process.env.ORCA_DASHBOARD_URL || existing.dashboardUrl || DEFAULT_DASHBOARD_URL || undefined
-        if (dashboardUrl) {
-          dashboardUrl = normalizeUrl(dashboardUrl, 'dashboard URL')
-          // Upgrade the former first-party default regardless of whether it
-          // came from a saved context, an old shell export, or an explicit
-          // invocation. Custom/self-hosted dashboard URLs are left alone.
-          if (dashboardUrl === LEGACY_DEFAULT_DASHBOARD_URL && DEFAULT_DASHBOARD_URL) {
-            dashboardUrl = DEFAULT_DASHBOARD_URL
-          }
-        }
+  addLoginOptions(
+    auth
+      .command('login')
+      .description('sign the CLI in (browser flow, or a device code when headless)'),
+  ).action(runLogin)
 
-        let handoff: Handoff
+  // Top-level alias: `orca login` is what every agent-facing doc teaches.
+  addLoginOptions(
+    program
+      .command('login')
+      .description('sign the CLI in (alias for auth login)'),
+  ).action(runLogin)
 
-        if (opts.withToken) {
-          // Manual/CI path: token supplied directly, no browser, no prompt.
-          handoff = { token: opts.withToken }
+  // `orca whoami`: who does the stored credential act as, according to the
+  // SERVER (tenant, role, credential kind, key id). Degrades to a local
+  // context summary against conductors that predate GET /api/whoami.
+  program
+    .command('whoami')
+    .description('show which tenant and role the stored key acts as')
+    .action(async (_opts: Record<string, never>, cmd: Command) => {
+      const flags = globalFlags(cmd)
+      const ctx = await resolveContext(flags)
+      const mode = outputMode(flags)
+      if (!ctx.apiUrl || !ctx.apiKey) {
+        const missing = !ctx.apiUrl ? 'API URL' : 'API key'
+        throw new CliError(`context "${ctx.name}" has no ${missing}`, ExitCode.Auth, [
+          'Run: orca login',
+        ])
+      }
+      const apiUrl = ctx.apiUrl.replace(/\/+$/, '')
+      const client = new ApiClient({ apiUrl, apiKey: ctx.apiKey, contextName: ctx.name })
+
+      let who: Awaited<ReturnType<ApiClient['whoami']>> | null = null
+      try {
+        who = await client.whoami()
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          // Old conductor: prove the key still works, then report locally.
+          await verifyKey(apiUrl, ctx.apiKey, ctx.name)
         } else {
-          // Browser/paste path is interactive-only; CI must use --with-token.
-          if (!interactive()) {
-            throw new CliError(
-              'browser login needs an interactive terminal',
-              ExitCode.Usage,
-              ['Pass --with-token <key> for non-interactive or CI use.'],
-            )
-          }
-          if (!dashboardUrl) {
-            throw new CliError('no dashboard URL configured', ExitCode.Usage, [
-              'Pass --dashboard-url <url> or set ORCA_DASHBOARD_URL.',
-            ])
-          }
-
-          const label = (opts.label && opts.label.trim()) || defaultKeyLabel()
-          const state = randomBytes(32).toString('hex')
-
-          if (opts.browser === false) {
-            // --no-browser: no port in the URL, so the dashboard reveals the
-            // key for the user to paste back here.
-            const authUrl = `${dashboardUrl}/cli-auth?state=${state}&label=${encodeURIComponent(label)}`
-            console.error(hintText('Open this URL, authorize, then paste the key below:'))
-            console.error(`  ${authUrl}`)
-            handoff = { token: await promptForKey() }
-          } else {
-            handoff = await browserLogin({ dashboardUrl, state, label })
-          }
+          throw mapApiError(err, { contextName: ctx.name, apiUrl })
         }
+      }
 
-        // --- shared tail: validate, probe, persist, report -------------------
-        const token = handoff.token.trim()
-        if (!token) throw new CliError('empty API key', ExitCode.Usage)
-        if (!token.startsWith('ao_')) {
-          console.error(hintText('warning: key does not look like a tenant API key (expected ao_ prefix)'))
+      if (mode === 'json') {
+        printJson({
+          context: ctx.name,
+          apiUrl,
+          apiKey: maskKey(ctx.apiKey),
+          tenantId: who?.tenantId ?? null,
+          tenantName: who?.tenantName ?? null,
+          role: who?.role ?? null,
+          authKind: who?.authKind ?? null,
+          keyId: who?.keyId ?? ctx.keyId ?? null,
+          serverSupportsWhoami: who !== null,
+        })
+        return
+      }
+      if (mode === 'plain') {
+        console.log(`Context:  ${ctx.name}`)
+        console.log(`API URL:  ${apiUrl}`)
+        if (who) {
+          console.log(`Tenant:   ${who.tenantName ? `${who.tenantName} (${who.tenantId})` : who.tenantId}`)
+          console.log(`Role:     ${who.role ?? '-'}`)
+          console.log(`Key:      ${who.keyId ?? '-'} (${who.authKind})`)
+        } else {
+          console.log(`API key:  ${maskKey(ctx.apiKey)} (valid; server predates /api/whoami)`)
         }
-
-        await verifyKey(apiUrl, token, name)
-
-        const ctxOut: ContextConfig = { ...existing, apiUrl, apiKey: token }
-        if (dashboardUrl) ctxOut.dashboardUrl = dashboardUrl
-        if (opts.gatewayUrl) ctxOut.gatewayUrl = opts.gatewayUrl.trim().replace(/\/+$/, '')
-        if (handoff.keyId) ctxOut.keyId = handoff.keyId
-        else delete ctxOut.keyId
-        cfg.contexts[name] = ctxOut
-        cfg.currentContext = name
-        const file = await saveConfig(cfg)
-
-        if (mode === 'json') {
-          printJson({
-            context: name,
-            apiUrl,
-            apiKey: maskKey(token),
-            role: handoff.role ?? null,
-            org: handoff.orgSlug ?? null,
-            keyId: handoff.keyId ?? null,
-            stored: file,
-          })
-          return
-        }
-        if (mode === 'plain') {
-          console.log('Logged in to Orca.')
-          return
-        }
-        console.log(`${accentVerb('Logged in')} to Orca.`)
-      },
-    )
+        return
+      }
+      const { Panel, Field } = await import('../ui/Panel.js')
+      const { theme } = await import('../ui/theme.js')
+      await renderStatic(
+        <Panel title="WHOAMI" subtitle={ctx.name}>
+          <Field label="api url" value={apiUrl} />
+          <Field
+            label="tenant"
+            value={who ? (who.tenantName ? `${who.tenantName} (${who.tenantId})` : who.tenantId) : 'unknown (server predates /api/whoami)'}
+          />
+          <Field label="role" value={who?.role ?? '-'} />
+          <Field label="key" value={who?.keyId ?? ctx.keyId ?? maskKey(ctx.apiKey)} />
+          <Field label="status" value="valid" valueColor={theme.accent} />
+        </Panel>,
+      )
+    })
 
   auth
     .command('status')
