@@ -35,6 +35,16 @@ type ToolResult = {
   isError?: boolean
 }
 
+// Prefix a result with a warning line the caller should surface. Used where
+// the CLI's file-based profile parser would warn but the raw API path (which
+// MCP uses) normalizes silently -- e.g. the deprecated "general" runtime.
+function jsonResultWithWarning(warning: string, value: unknown): ToolResult {
+  const base = jsonResult(value)
+  const first = base.content[0]
+  if (first?.type === 'text') first.text = `warning: ${warning}\n${first.text}`
+  return base
+}
+
 function jsonResult(value: unknown): ToolResult {
   let text = JSON.stringify(value, null, 1)
   if (text.length > MAX_RESULT_BYTES) {
@@ -195,8 +205,16 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     },
     async (args) => {
       const client = await getClient()
-      const profile = { ...(args.spec as Record<string, unknown>), name: args.name as string }
-      return jsonResult(await client.createProfile(profile as never))
+      const spec = (args.spec as Record<string, unknown>) ?? {}
+      const profile = { ...spec, name: args.name as string }
+      const result = await client.createProfile(profile as never)
+      if (spec.runtime === 'general') {
+        return jsonResultWithWarning(
+          'runtime "general" is deprecated; the platform imported it as "vercel". Pass runtime "vercel".',
+          result,
+        )
+      }
+      return jsonResult(result)
     },
   )
 
@@ -209,8 +227,16 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     },
     async (args) => {
       const client = await getClient()
-      const profile = { ...(args.spec as Record<string, unknown>), name: args.name as string }
-      return jsonResult(await client.updateProfile(args.name as string, profile as never))
+      const spec = args.spec as Record<string, unknown>
+      const profile = { ...spec, name: args.name as string }
+      const result = await client.updateProfile(args.name as string, profile as never)
+      if (spec.runtime === 'general') {
+        return jsonResultWithWarning(
+          'runtime "general" is deprecated; the platform imported it as "vercel". Pass runtime "vercel".',
+          result,
+        )
+      }
+      return jsonResult(result)
     },
   )
 
