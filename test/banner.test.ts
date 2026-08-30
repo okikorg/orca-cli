@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { bannerString } from '../src/ui/banner.js'
+import { ansi } from '../src/ui/theme.js'
 import { VERSION } from '../src/version.js'
 
 const realIsTTY = process.stdout.isTTY
@@ -45,7 +46,7 @@ describe('bannerString', () => {
     process.stdout.isTTY = true
     vi.stubEnv('NO_COLOR', '')
     const s = bannerString()
-    expect(s).toContain('38;2;254;120;93') // coral
+    expect(s).toContain(ansi.accent)
     expect(s).toContain('\x1b[1m') // bold ORCA
   })
 })

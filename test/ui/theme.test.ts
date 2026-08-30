@@ -1,9 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { glyphs, POINTER, unicodeEnabled } from '../../src/ui/theme.js'
+import { ansi, glyphs, POINTER, theme, unicodeEnabled } from '../../src/ui/theme.js'
 
 afterEach(() => {
   vi.unstubAllEnvs()
+})
+
+describe('coral palette', () => {
+  it('keeps the dim coral hex and ANSI values aligned', () => {
+    expect(theme.accent).toBe('#B85C4A')
+    expect(ansi.accent).toBe('\x1b[38;2;184;92;74m')
+    expect(theme.accentStrong).toBe('#9E4938')
+    expect(ansi.accentStrong).toBe('\x1b[38;2;158;73;56m')
+  })
 })
 
 // unicodeEnabled reads env live, so we exercise the tier selection through it.
