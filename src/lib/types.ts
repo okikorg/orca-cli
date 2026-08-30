@@ -39,7 +39,7 @@ export type AgentProfile = {
   name: string
   // "general" is the deprecated pre-rename label for "vercel" and may still
   // be returned for older stored profiles.
-  runtime: 'pi' | 'vercel' | 'claude' | 'codex' | 'general'
+  runtime: 'pi' | 'vercel' | 'claude' | 'codex' | 'marlin' | 'general'
   systemPrompt?: string
   skills?: string[]
   mcpServers?: MCPServerSpec[]

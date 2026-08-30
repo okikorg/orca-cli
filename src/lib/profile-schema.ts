@@ -14,7 +14,7 @@
 
 import type { AgentProfile, MCPServerSpec } from './types.js'
 
-export const RUNTIMES = ['pi', 'vercel', 'claude', 'codex'] as const
+export const RUNTIMES = ['pi', 'vercel', 'claude', 'codex', 'marlin'] as const
 export type Runtime = (typeof RUNTIMES)[number]
 
 // Profiles created before the Vercel runtime rename may still use the legacy
