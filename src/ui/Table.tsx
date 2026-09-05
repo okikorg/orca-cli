@@ -31,8 +31,8 @@ export function statusDot(status: RunStatus): string {
 }
 
 // Borderless column list. Hierarchy is whitespace and weight, not boxes.
-// - Optional header line: bold coral `title`, then subtle ` · `-joined `meta`.
-// - A subtle UPPERCASE header row by default (no coral, no rule), so every
+// - Optional header line: bold mint `title`, then subtle ` · `-joined `meta`.
+// - A subtle UPPERCASE header row by default (no mint, no rule), so every
 //   tabular command uses the same column-label grammar. Pass `headers={false}`
 //   only for a deliberately headerless presentation.
 // - Optional `hint`: a subtle `next: ...` footer teaching follow-up commands.
@@ -49,7 +49,7 @@ export function Table<T>({
 }: {
   columns: Column<T>[]
   rows: T[]
-  // Header line: bold coral title.
+  // Header line: bold mint title.
   title?: string
   // Header-line metadata, joined with the separator glyph in subtle gray.
   meta?: string | string[]

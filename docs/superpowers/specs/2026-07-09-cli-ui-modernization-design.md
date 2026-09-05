@@ -16,10 +16,10 @@ plain/JSON output shapes.
 
 | Decision | Choice |
 | --- | --- |
-| Visual direction | C — "minimal conversational": borderless, whitespace hierarchy, coral single accent, contextual next-command hints |
+| Visual direction | C — "minimal conversational": borderless, whitespace hierarchy, mint brand accent, inverse primary actions, contextual next-command hints |
 | Chat REPL | B — bare inline prompt (no framed composer) |
 | Banner | Inline brand mark + one-line brand header (figlet art retired) |
-| Brand mark | Derived from landing favicon (2x2 checkerboard, coral diagonal): `▀▄` in coral — two half-blocks drawing the logo diagonal. ASCII fallback: no mark, plain bold ORCA |
+| Brand mark | Derived from landing favicon (2x2 checkerboard, mint diagonal): `▀▄` in mint — two half-blocks drawing the logo diagonal. ASCII fallback: no mark, plain bold ORCA |
 | Glyph policy | Unicode default restricted to the CP437/Latin-1 safe tier (user's terminal font shows tofu for exotic glyphs); ASCII fallback when locale is not UTF-8 or `ORCA_ASCII=1` |
 | UX scope | Everything: interactive pickers, redesigned help + first-run, modern confirms + empty states |
 | Implementation approach | Evolve in place: restyle existing components, add small primitives, no new deps |
@@ -29,16 +29,18 @@ plain/JSON output shapes.
 - Hierarchy comes from whitespace and weight, not boxes. No panel borders
   anywhere. The border-gray token survives only for tree edges (topology,
   workflow DAG) and chart axes.
-- A view starts with a header line: bold coral title, then ` · `-separated
+- A view starts with a header line: bold mint title, then ` · `-separated
   metadata in subtle gray (`Agents · 3`, `Runs · 20 · last 24h`).
 - Content rows are indented two spaces. Blank lines separate groups.
-- Coral (`#FE785D`) is the ONLY accent: headers, prompt marker, running/active
-  state, primary emphasis. Status palette unchanged: running=accent,
+- Mint (`#12A566` light / `#5BE49B` dark) is the brand accent: headers,
+  prompt marker, running/active state, and selection. Primary actions use the
+  inverse theme foreground (`#000000` light / `#FDFDFD` dark). Status palette:
+  running=accent,
   error=destructive, cancelled/interrupted=subtle, ok=default foreground.
 - Every list view ends with a subtle `next:` hint line teaching follow-up
   commands. Every empty state names the command that creates the missing thing.
 - No emoji, ever. No rounded/double borders. No background colors.
-- Colors: keep the existing palette tokens exactly (accent, accentStrong,
+- Colors: keep the shared palette roles aligned (primary, accent, accentStrong,
   muted #A8A8A8, subtle #757575, destructive #DC3C3C, border #3D3D3D).
 
 ## Glyph system (`src/ui/theme.ts`)
@@ -72,7 +74,7 @@ TSV output must remain byte-identical to today).
 
 - Banner (bare `orca`, top-level `--help`):
   `▀▄ ORCA  agent platform CLI  v0.2.0`
-  rendered as: coral mark, bold coral ORCA, subtle tagline, muted version.
+  rendered as: mint mark, bold mint ORCA, subtle tagline, muted version.
   The long README tagline is retired from the banner.
 - `orca -v`: unchanged output contract (version string on stdout); the update
   hint line on stderr stays.
@@ -82,8 +84,9 @@ TSV output must remain byte-identical to today).
   - OBSERVE: stats, usage, sessions, doctor, topology, ping
   - MANAGE: workflows, pools, skills, mcp, secrets, storage, memory, keys, billing
   - SETUP: auth, context, update
-  Each command bold, muted one-line description, two-space indent. Footer:
-  `GET STARTED` group with `orca auth login` then `orca doctor` in coral.
+  Each command uses the bold inverse/default foreground, with a muted one-line
+  description and two-space indent. Footer: `GET STARTED` group with
+  `orca auth login` then `orca doctor` in the same primary-action treatment.
   (Note: topology/ping/bundles/apps live in platform.tsx; group whatever
   top-level commands commander actually registers.)
 - First-run touch: when no config file exists and no `ORCA_API_KEY`, the brand
@@ -97,11 +100,11 @@ TSV output must remain byte-identical to today).
 ### List views (Table.tsx)
 
 Keep the `Column<T>` API. Rendering changes:
-- No border, no coral headers. Optional subtle UPPERCASE header row, shown only
+- No border, no mint headers. Optional subtle UPPERCASE header row, shown only
   when the caller passes `headers: true` (use for runs/keys/sessions/storage
   and other >3-column or ambiguous tables; omit for agents/pools/context).
 - Two-space gutters (keep), MAX_COL cap (keep), truncation (keep).
-- New optional props: `title` (bold coral) + `meta` (subtle, joined with ` · `)
+- New optional props: `title` (bold mint) + `meta` (subtle, joined with ` · `)
   rendered as the header line, and `hint` (subtle `next: ...` footer line).
   Commands may alternatively compose Header/Hint primitives; either way every
   TTY list gets title+count and a hint.
@@ -110,7 +113,7 @@ Keep the `Column<T>` API. Rendering changes:
 
 ### Detail views (Panel.tsx -> Section)
 
-`Panel` becomes a borderless `Section`: bold coral header line (title +
+`Panel` becomes a borderless `Section`: bold mint header line (title +
 subtle ` · ` meta), children indented two spaces, no frame. Keep the exported
 names `Panel`/`Field` working (Panel renders the new Section look) so call
 sites keep compiling; `Field` keeps its 12-col subtle label but gains the
@@ -128,7 +131,7 @@ sites keep compiling; `Field` keeps its 12-col subtle label but gains the
 
 ### Run tail / workflow tail (RunTail.tsx, WorkflowTail.tsx)
 
-- Streaming footer: coral pulse spinner + bold agent/context word + subtle
+- Streaming footer: mint pulse spinner + bold agent/context word + subtle
   `run_id · 12s · 4.1k tok`.
 - Tool calls: `  └ tool <name> {compact json}` — tree glyph + "tool" subtle,
   name muted. Tool results keep `->` indented subtle/destructive.
@@ -138,15 +141,15 @@ sites keep compiling; `Field` keeps its 12-col subtle label but gains the
 
 ### Chat REPL (Chat.tsx) — bare inline prompt
 
-- Header (intro item): bold coral agent name + subtle ` · published agent`
+- Header (intro item): bold mint agent name + subtle ` · published agent`
   (+ ` · conv_<id>` once known). Hint line: subtle
   `enter send · ctrl-c cancel/exit`.
-- Prompt: coral `»` + default-foreground input (TextInput placeholder
+- Prompt: mint `»` + default-foreground input (TextInput placeholder
   `message`).
 - Assistant replies render through `lib/markdown.ts` (below). Muted body is
   wrong — assistant text stays default foreground; only metadata is muted.
 - Tool trace: same `└ tool` grammar as RunTail, one line per tool, subtle.
-- While streaming: coral pulse spinner + muted `thinking` when no tokens yet;
+- While streaming: mint pulse spinner + muted `thinking` when no tokens yet;
   live text renders as it arrives (markdown applied only on the committed
   final message; live stream stays raw to avoid re-parsing every delta).
 - Exit summary: subtle `conversation conv_… · resume: orca chat <agent> --conversation conv_…`.
@@ -173,7 +176,7 @@ Used by Chat committed messages and `runs get` / EventLine assistant text.
 
 ### Pickers (`src/ui/Picker.tsx`, generalized from AgentPicker)
 
-Generic filterable single-select: type-to-filter, arrow keys, coral `»`
+Generic filterable single-select: type-to-filter, arrow keys, mint `»`
 pointer on the active row, subtle match count, esc cancels (exit 2 semantics
 identical to today's missing-arg error path), enter selects. AgentPicker
 becomes a thin wrapper. Wire pickers ONLY where an interactive TTY is missing
@@ -188,7 +191,7 @@ Non-TTY behavior everywhere: unchanged usage error, exit 2.
 ### Confirms (`src/ui/Confirm.tsx`, new)
 
 Shared y/N prompt for destructive ops (delete/revoke/unpublish/cancel/rm):
-coral `»` + message + subtle `(y/N)`; y confirms, anything else declines;
+mint `»` + message + subtle `(y/N)`; y confirms, anything else declines;
 Enter=No. Commands currently using ad-hoc stdin prompts switch to it in TTY
 mode. `--yes` bypass and non-TTY semantics: byte-identical to today.
 Declines print the existing `Aborted.` hint.

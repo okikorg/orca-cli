@@ -33,7 +33,7 @@ type Session = {
   runCount: number
 }
 
-// sessionStatusColor tints the status cell: coral for live, destructive for
+// sessionStatusColor tints the status cell: mint for live, destructive for
 // errored, subtle for shut-down. Idle keeps the terminal default.
 function sessionStatusColor(status: string, theme: { accent: string; destructive: string; subtle: string }): string | undefined {
   switch (status) {

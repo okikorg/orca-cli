@@ -6,7 +6,7 @@ import { stripControlSequences } from '../lib/markdown.js'
 import type { RunEvent, RunStatus, Usage } from '../lib/types.js'
 import { glyphs, statusColor, theme } from './theme.js'
 
-// PulseSpinner is the coral streaming indicator: it cycles glyphs.spinner (a
+// PulseSpinner is the mint streaming indicator: it cycles glyphs.spinner (a
 // pulse ramp on the Unicode tier, an ASCII spinner otherwise) on a fixed
 // interval. Hand-rolled from the theme glyph set so the frame always comes
 // from a font-safe tier; ink-spinner's default frames are outside it.
@@ -203,7 +203,7 @@ export function RunTail({ runId, subscribe, onDone }: RunTailProps) {
         }
       </Static>
       {done ? null : (
-        // Streaming footer: coral pulse spinner + bold context word + subtle
+        // Streaming footer: mint pulse spinner + bold context word + subtle
         // run id / elapsed / usage trailer.
         <Text>
           <PulseSpinner />

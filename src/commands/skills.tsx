@@ -54,7 +54,7 @@ function mapSkillEndpointError(err: unknown, api: ApiContext, skill: string): Cl
   return mapApiError(err, { contextName: api.resolved.name, apiUrl: api.client.apiUrl })
 }
 
-// renderSkillDetail renders one skill as a coral-titled panel plus the SKILL.md
+// renderSkillDetail renders one skill as a mint-titled panel plus the SKILL.md
 // body as plain text, mirroring agents' renderAgentDetail.
 async function renderSkillDetail(skill: Skill): Promise<void> {
   const { Panel, Field } = await import('../ui/Panel.js')

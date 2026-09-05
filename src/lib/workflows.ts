@@ -54,7 +54,7 @@ export function isTerminalStatus(s: WfStatus): boolean {
 }
 
 // wfStatusColor maps a run status to a theme hex, mirroring the dashboard's
-// PLAN_BADGE intent: running is coral, failed is destructive, completed keeps
+// PLAN_BADGE intent: running is mint, failed is destructive, completed keeps
 // the default terminal foreground, everything idle is subtle.
 export function wfStatusColor(s: WfStatus): string | undefined {
   switch (s) {
@@ -71,7 +71,7 @@ export function wfStatusColor(s: WfStatus): string | undefined {
   }
 }
 
-// nodeStatusColor mirrors NODE_BADGE: running coral, error destructive, ok
+// nodeStatusColor mirrors NODE_BADGE: running mint, error destructive, ok
 // default fg, the rest subtle.
 export function nodeStatusColor(s: WfNodeStatus): string | undefined {
   switch (s) {

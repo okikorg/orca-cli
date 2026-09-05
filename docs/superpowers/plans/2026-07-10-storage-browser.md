@@ -48,7 +48,7 @@
 
 - [x] **Step 1: Write failing component tests** for initial loading, folder entry, left-arrow parent navigation, filtering, file detail selection, empty directories, error/retry state, and escape exit.
 - [x] **Step 2: Run `npm test -- test/ui/StorageBrowser.test.tsx`** and verify the missing component failure.
-- [x] **Step 3: Implement the component** with an uppercase table header, active coral pointer, at most 12 visible rows, filter input, loading/error messages, current-path header, and key guide. Enter navigates directories or opens file metadata; Backspace/left returns to the parent or directory list; Escape/q exits.
+- [x] **Step 3: Implement the component** with an uppercase table header, active mint pointer, at most 12 visible rows, filter input, loading/error messages, current-path header, and key guide. Enter navigates directories or opens file metadata; Backspace/left returns to the parent or directory list; Escape/q exits.
 - [x] **Step 4: Run the focused test** and verify it passes.
 
 ### Task 3: Command integration and TTY `ls`

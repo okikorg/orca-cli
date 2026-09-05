@@ -20,8 +20,8 @@ type PickerProps = {
 }
 
 // Generic filterable single-select per the design language: type to filter,
-// arrows to move, coral pointer on the active row, esc to cancel, enter to
-// pick. Selection state is a coral pointer plus coral text, never an accent
+// arrows to move, mint pointer on the active row, esc to cancel, enter to
+// pick. Selection state is a mint pointer plus mint text, never an accent
 // bar or inverted block. Filtering is a case-insensitive substring match on
 // the label so callers get type-ahead without wiring their own predicate.
 //

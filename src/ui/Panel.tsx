@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 
 import { glyphs, theme } from './theme.js'
 
-// A borderless Section: a bold coral header line (title, then subtle ` · `
+// A borderless Section: a bold mint header line (title, then subtle ` · `
 // metadata from `subtitle`), with children indented two spaces. No frame.
 // Hierarchy is whitespace and weight, not boxes. The name stays `Panel` and the
 // prop stays `subtitle` so every existing detail/list call site compiles

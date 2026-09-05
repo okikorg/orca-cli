@@ -52,8 +52,8 @@ function tint(text: string, code: string, color: boolean): string {
 }
 
 // renderTopologyTree draws the runner pool as an indented tree in the
-// WorkflowTail StepTree idiom: a coral "conductor" root, subtle tree-branch
-// connectors, each runner's hash in coral, health colored, details gray. The
+// WorkflowTail StepTree idiom: a mint "conductor" root, subtle tree-branch
+// connectors, each runner's hash in mint, health colored, details gray. The
 // edge glyph comes from the active theme tier (box-drawing `├` on Unicode, the
 // `|-` fallback on ASCII) - never hardcoded here. Kept pure (no Ink) so it is
 // unit-testable and embeds verbatim in a <Text> block, exactly like

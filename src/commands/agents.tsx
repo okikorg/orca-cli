@@ -69,7 +69,7 @@ async function resolveAgentName(
   return pickOne('Select an agent', page.items.map((p) => p.name))
 }
 
-// AgentDetail renders one profile as a coral-titled panel of label/value
+// AgentDetail renders one profile as a mint-titled panel of label/value
 // fields, plus the system prompt if present.
 async function renderAgentDetail(p: AgentProfile): Promise<void> {
   const { Panel, Field } = await import('../ui/Panel.js')
