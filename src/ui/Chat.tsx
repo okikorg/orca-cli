@@ -109,7 +109,7 @@ function ToolActivity({ tools }: { tools: ToolState[] }) {
 }
 
 // PulseSpinner cycles glyphs.spinner (the pulse tier: ░▒▓█▓▒, ASCII -\|/) in
-// coral. Hand-rolled rather than ink-spinner so every glyph routes through the
+// mint. Hand-rolled rather than ink-spinner so every glyph routes through the
 // theme map and the ASCII tier is honored; ink-spinner would draw its own dots.
 function PulseSpinner() {
   const [frame, setFrame] = useState(0)

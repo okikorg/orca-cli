@@ -16,7 +16,7 @@
 // Inlined ANSI, mirroring src/ui/theme.ts tokens. Kept in sync by hand; this
 // module deliberately does not import theme to stay a leaf.
 const ANSI = {
-  accentStrong: '\x1b[38;2;240;84;60m',
+  accentStrong: '\x1b[38;2;125;237;178m',
   subtle: '\x1b[38;2;117;117;117m',
   muted: '\x1b[38;2;168;168;168m',
   bold: '\x1b[1m',

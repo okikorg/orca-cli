@@ -5,10 +5,11 @@ TypeScript + commander for command routing, Ink (React) for TTY rendering.
 
 Running `orca` with no arguments shows a one-line brand banner and the command
 list. In a terminal, list and detail views are borderless: hierarchy comes from
-whitespace and weight, not boxes. Each view opens with a bold coral title and
+whitespace and weight, not boxes. Each view opens with a bold mint title and
 ` · `-separated metadata in subtle gray, content rows indent two spaces, and
-list views end with a subtle `next:` hint teaching follow-up commands. Coral is
-the only accent (`src/ui/theme.ts`); piped or `--json` output stays plain and
+list views end with a subtle `next:` hint teaching follow-up commands. Mint is
+the brand accent (`src/ui/theme.ts`); primary actions use the terminal's inverse
+foreground, while piped or `--json` output stays plain and
 machine-clean. Unicode glyphs are restricted to a CP437/Latin-1 safe tier and
 fall back to ASCII when the locale is not UTF-8 or `ORCA_ASCII=1` is set.
 `NO_COLOR` is honored, independently of the glyph tier.
@@ -203,7 +204,7 @@ orca chat support "hi" --json                # ndjson, one gateway event per lin
 ```
 
 In a terminal with no prompt, `orca chat` opens a REPL: a persistent transcript,
-a coral prompt marker, assistant text streamed live, and a coral spinner while
+a mint prompt marker, assistant text streamed live, and a mint spinner while
 the first token is pending. Tool activity is shown subtly, and only when the
 published agent sets `exposeToolEvents`. Ctrl-C cancels an in-flight turn first,
 then exits from idle. Each turn reuses the conversation id the gateway returns,
@@ -223,7 +224,7 @@ orca sessions list [--agent name] [--limit N]
 orca sessions get <id>
 ```
 
-`orca usage` charts activity over the window as a coral ASCII line graph
+`orca usage` charts activity over the window as a mint ASCII line graph
 (default series `tokens`; `--meter cost|runs` switches it) and summarises
 totals, including the tool-call and sandbox-compute meters when the conductor
 exposes `GET /api/usage`. The window is served by `GET /api/stats/timeseries`;
@@ -260,8 +261,8 @@ plain mode the top-level `orca stats` prints single-shape key/value totals, and
 `agents` / `hotspots` print their own rows.
 
 `orca topology` (`GET /api/topology`) renders the runner pool as an indented
-tree: a coral `conductor` root, tree-edge connectors in gray (`├`/`└` on the
-Unicode tier, `|-`/`` `- `` on the ASCII tier), each runner's hash in coral with
+tree: a mint `conductor` root, tree-edge connectors in gray (`├`/`└` on the
+Unicode tier, `|-`/`` `- `` on the ASCII tier), each runner's hash in mint with
 health and session/latency detail. It returns exit 4 in single-runner mode (the
 conductor is not pooled).
 
@@ -293,7 +294,7 @@ orca workflows schedules delete <id> [--yes]
 ```
 
 The definition/run views render steps in execution order as an indented
-tree: step names in the default foreground, profiles in coral, dependency
+tree: step names in the default foreground, profiles in mint, dependency
 edges (tree connector plus `<- after`, `├` on the Unicode tier and `|-` on the
 ASCII tier) in gray. `workflows tail` streams full
 run snapshots (not incremental events), diffing them into per-step

@@ -25,7 +25,7 @@ afterEach(() => {
 })
 
 describe('Confirm', () => {
-  it('renders the message with the coral pointer and a subtle (y/N)', async () => {
+  it('renders the message with the mint pointer and a subtle (y/N)', async () => {
     const { lastFrame } = render(<Confirm message="Delete agent support-bot?" onDecision={() => {}} />)
     await waitFor(() => (lastFrame() ?? '').includes('Delete agent support-bot?'))
 

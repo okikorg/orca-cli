@@ -8,7 +8,7 @@ type ConfirmProps = {
 }
 
 // Shared y/N confirm for destructive ops (delete/revoke/unpublish/cancel/rm):
-// coral pointer + message + subtle `(y/N)`. Only `y`/`Y` confirms; anything
+// mint pointer + message + subtle `(y/N)`. Only `y`/`Y` confirms; anything
 // else — including Enter — declines, so the safe answer is the default. The
 // `--yes` bypass and non-TTY semantics live in the callers and stay unchanged;
 // this component is mounted only in interactive TTY mode.

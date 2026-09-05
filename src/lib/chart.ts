@@ -16,7 +16,7 @@ export interface ChartOptions {
   // Max plot columns (data points shown). Longer series are averaged down to
   // fit. Defaults to a terminal-adaptive width, capped at 72, floored at 20.
   width?: number
-  // Emit ANSI color (coral line, subtle axis/caption). Defaults to
+  // Emit ANSI color (mint line, subtle axis/caption). Defaults to
   // colorEnabled() so NO_COLOR / non-TTY produce plain output.
   color?: boolean
   // A subtle one-line caption printed under the chart.

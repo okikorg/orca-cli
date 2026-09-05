@@ -17,7 +17,7 @@ import {
 } from '../lib/workflows.js'
 import { glyphs, theme } from './theme.js'
 
-// PulseSpinner is the coral streaming indicator, cycling glyphs.spinner (a
+// PulseSpinner is the mint streaming indicator, cycling glyphs.spinner (a
 // pulse ramp on the Unicode tier, ASCII otherwise). Hand-rolled from the theme
 // glyph set so the frame stays font-safe; mirrors RunTail.
 function PulseSpinner() {
@@ -36,7 +36,7 @@ function meta(...parts: (string | number | false | undefined)[]): string {
 }
 
 // StepTree renders a workflow's nodes in execution order as an indented list:
-// step names in the default terminal foreground, profiles in coral, and the
+// step names in the default terminal foreground, profiles in mint, and the
 // dependency edges (indent + tree connector + `<- after` note) in subtle gray.
 // Edge glyphs come from the theme tier (box-drawing on Unicode, ASCII fallback
 // otherwise) - never hardcoded here. When showStatus is set (a run, not a
@@ -237,7 +237,7 @@ export function WorkflowTail({ runId, subscribe, onDone }: WorkflowTailProps) {
         }
       </Static>
       {done ? null : (
-        // Streaming footer: coral pulse spinner + bold live status word +
+        // Streaming footer: mint pulse spinner + bold live status word +
         // subtle run id / elapsed trailer.
         <Text>
           <PulseSpinner />

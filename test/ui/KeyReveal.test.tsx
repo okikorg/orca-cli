@@ -10,7 +10,7 @@ describe('KeyReveal', () => {
     expect(frame).toContain('Chat key for "bot" (id key_1)')
     expect(frame).toContain('ao_live_secretsecret00')
     expect(frame).toContain('Shown once. Store it now; it cannot be retrieved again.')
-    // Borderless grammar: hierarchy from a coral header line and whitespace, no
+    // Borderless grammar: hierarchy from a mint header line and whitespace, no
     // box-drawing frame of any kind.
     expect(frame).not.toMatch(/[┌─┐│└┘╭╮╯╰]/)
   })

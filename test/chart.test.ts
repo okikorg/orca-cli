@@ -65,9 +65,9 @@ describe('renderChart', () => {
     expect(out).not.toMatch(/\x1b\[/)
   })
 
-  it('paints the line coral and the axis/caption subtle when color is enabled', () => {
+  it('paints the line mint and the axis/caption subtle when color is enabled', () => {
     const out = renderChart([1, 5, 2, 8], { color: true, caption: 'x' })
-    expect(out).toContain(ansi.accent) // coral plot line
+    expect(out).toContain(ansi.accent) // mint plot line
     expect(out).toContain(ansi.subtle) // subtle axis + caption
     expect(out).toContain(ansi.reset)
   })

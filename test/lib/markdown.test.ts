@@ -67,7 +67,7 @@ describe('renderMarkdown (color: false)', () => {
 describe('renderMarkdown (color: true)', () => {
   it('wraps inline code in the accentStrong code', () => {
     const out = renderMarkdown('run `x`', colored)
-    expect(out).toContain('\x1b[38;2;240;84;60m') // accentStrong
+    expect(out).toContain('\x1b[38;2;125;237;178m') // accentStrong
     expect(out).toContain('x')
   })
 

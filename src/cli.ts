@@ -144,8 +144,9 @@ program.configureHelp({
   // commander's stock titles ("Usage:", "Options:") get uppercased too for one
   // consistent grammar. Never colored when color is disabled.
   styleTitle: (title) => paint(title.toUpperCase(), ansi.subtle),
-  // The command name/term in a section: primary emphasis, bold coral.
-  styleSubcommandTerm: (term) => paint(term, ansi.bold + ansi.accent),
+  // Command names are primary actions: bold inherited foreground preserves
+  // the inverse black/light and near-white/dark role of the terminal theme.
+  styleSubcommandTerm: (term) => paint(term, ansi.bold),
   // One-line command summaries: muted secondary text.
   styleSubcommandDescription: (desc) => paint(desc, ansi.muted),
   styleOptionDescription: (desc) => paint(desc, ansi.muted),
@@ -162,13 +163,13 @@ program.addHelpText('beforeAll', (ctx) => {
 })
 
 // GET STARTED footer on the top-level help only: the two commands a new user
-// runs first, in coral. Rendered as its own subtle-uppercase section to match
-// the command groups above.
+// runs first. These are primary actions, so they use bold inherited foreground.
+// The section is rendered in the same subtle-uppercase grammar as the groups.
 program.addHelpText('afterAll', (ctx) => {
   if (ctx.command !== program) return ''
   const heading = paint('GET STARTED', ansi.subtle)
-  const login = paint('orca auth login', ansi.accent)
-  const doctor = paint('orca doctor', ansi.accent)
+  const login = paint('orca auth login', ansi.bold)
+  const doctor = paint('orca doctor', ansi.bold)
   return `\n${heading}\n  ${login}\n  ${doctor}`
 })
 

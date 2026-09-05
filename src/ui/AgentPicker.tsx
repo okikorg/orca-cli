@@ -8,7 +8,7 @@ import { Picker } from './Picker.js'
 // promptText for the same pattern); the missing-arg error path in callers maps
 // that to exit 2 / 130 as before. The former SelectInput-based picker lived
 // here; it is now a thin wrapper so every call site inherits type-to-filter,
-// the coral pointer, and a match count. `title` becomes the filter placeholder
+// the mint pointer, and a match count. `title` becomes the filter placeholder
 // since the Picker draws no separate title line. Callers must check
 // interactive() first.
 export async function pickOne(title: string, values: string[]): Promise<string> {

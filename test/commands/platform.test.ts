@@ -115,8 +115,8 @@ describe('renderTopologyTree', () => {
     expect(renderTopologyTree(TOPOLOGY, { color: false })).not.toMatch(/\x1b\[/)
   })
 
-  it('emits coral ANSI on the conductor node when color is enabled', () => {
-    expect(renderTopologyTree(TOPOLOGY, { color: true })).toContain('38;2;254;120;93')
+  it('emits mint ANSI on the conductor node when color is enabled', () => {
+    expect(renderTopologyTree(TOPOLOGY, { color: true })).toContain('38;2;91;228;155')
   })
 
   it('handles an empty pool without throwing', () => {

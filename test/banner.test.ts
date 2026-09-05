@@ -41,11 +41,11 @@ describe('bannerString', () => {
     expect(bannerString()).not.toMatch(/\x1b\[/)
   })
 
-  it('emits bold coral ANSI on a color TTY', () => {
+  it('emits bold mint ANSI on a color TTY', () => {
     process.stdout.isTTY = true
     vi.stubEnv('NO_COLOR', '')
     const s = bannerString()
-    expect(s).toContain('38;2;254;120;93') // coral
+    expect(s).toContain('38;2;91;228;155') // mint
     expect(s).toContain('\x1b[1m') // bold ORCA
   })
 })

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { glyphs, POINTER, unicodeEnabled } from '../../src/ui/theme.js'
+import { ansi, glyphs, POINTER, productTheme, theme, unicodeEnabled } from '../../src/ui/theme.js'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -83,5 +83,25 @@ describe('glyphs', () => {
       expect(glyphs.pointer).toBe('>')
       expect(glyphs.brandMark).toBe('')
     }
+  })
+})
+
+describe('color roles', () => {
+  it('keeps primary actions inverse and the brand accent mint in both modes', () => {
+    expect(productTheme.light).toMatchObject({
+      primary: '#000000',
+      accent: '#12A566',
+    })
+    expect(productTheme.dark).toMatchObject({
+      primary: '#FDFDFD',
+      accent: '#5BE49B',
+    })
+  })
+
+  it('keeps the dark-first Ink and ANSI accents aligned', () => {
+    expect(theme.accent).toBe('#5BE49B')
+    expect(theme.accentStrong).toBe('#7DEDB2')
+    expect(ansi.accent).toBe('\x1b[38;2;91;228;155m')
+    expect(ansi.accentStrong).toBe('\x1b[38;2;125;237;178m')
   })
 })

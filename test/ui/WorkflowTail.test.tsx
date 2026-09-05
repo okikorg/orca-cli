@@ -85,7 +85,7 @@ describe('WorkflowTail', () => {
 })
 
 describe('StepTree', () => {
-  it('renders step names, coral profiles, and ASCII dependency edges', async () => {
+  it('renders step names, mint profiles, and ASCII dependency edges', async () => {
     const nodes = [node('fetch', 0, [], 'Fetch'), node('draft', 0, ['fetch'], 'Draft')]
     const { frames } = render(<StepTree nodes={nodes} />)
     await waitFor(() => frames.join('').includes('Draft'))

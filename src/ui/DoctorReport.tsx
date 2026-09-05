@@ -4,7 +4,7 @@ import type { CheckResult, CheckStatus } from '../lib/doctor.js'
 import { glyphs, theme } from './theme.js'
 
 // statusCell maps a check status to its themed glyph + one-word cell, per the
-// design language: pass reads coral "ok" (the one accent), warn muted, fail
+// design language: pass reads mint "ok" (the brand accent), warn muted, fail
 // destructive, skip subtle. Filled dot for pass/warn/fail, open dot for skip;
 // both come from the glyphs map (never hardcoded) so the ASCII tier swaps them.
 export function statusCell(status: CheckStatus): {
@@ -33,7 +33,7 @@ const STATUS_WIDTH = WORD_WIDTH + 4
 const NAME_WIDTH = 20
 
 // DoctorReport renders the preflight results borderless, per the design grammar:
-// a bold coral header line (Doctor · host · N checks), one indented row per
+// a bold mint header line (Doctor · host · N checks), one indented row per
 // check (colored glyph + word, padded name, muted message), a subtle "fix:"
 // line under any row that carries a remedy, then a footer summary counting
 // ok / warn / fail colored per severity with subtle separators. Machine paths
@@ -44,7 +44,7 @@ export function DoctorReport({ results, host }: { results: CheckResult[]; host: 
 
   return (
     <Box flexDirection="column">
-      {/* Header line: bold coral title, subtle ` · `-separated metadata. */}
+      {/* Header line: bold mint title, subtle ` · `-separated metadata. */}
       <Box marginBottom={1}>
         <Text color={theme.accent} bold>
           Doctor

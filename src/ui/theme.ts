@@ -6,11 +6,13 @@
 // - Hierarchy comes from whitespace and weight, not boxes. No panel borders.
 //   The border token survives only for tree edges (topology, workflow DAG) and
 //   chart axes.
-// - A view starts with a header line: bold coral title, then ` · `-separated
+// - A view starts with a header line: bold mint title, then ` · `-separated
 //   metadata in subtle gray. Content rows indent two spaces; blank lines
 //   separate groups.
-// - Coral is the ONLY accent: headers, prompt marker, running/active state,
-//   primary emphasis. Status palette: running=accent, error=destructive,
+// - Mint is the brand accent: headers, prompt marker, running/active state,
+//   and selection. Primary actions stay in the terminal's default foreground,
+//   which preserves the product's inverse role (black on light, near-white on
+//   dark). Status palette: running=accent, error=destructive,
 //   cancelled/interrupted=subtle, ok=default foreground.
 // - Default foreground is left to the user's terminal; we only color emphasis,
 //   secondary text, tree/axis edges, and errors.
@@ -20,11 +22,26 @@
 
 import type { RunStatus } from '../lib/types.js'
 
+export const productTheme = {
+  light: {
+    primary: '#000000',
+    accent: '#12A566',
+    accentStrong: '#0A7A4A',
+  },
+  dark: {
+    primary: '#FDFDFD',
+    accent: '#5BE49B',
+    accentStrong: '#7DEDB2',
+  },
+} as const
+
+// The CLI remains dark-first, matching the dashboard default. Interactive
+// primary text deliberately inherits the terminal foreground rather than
+// forcing this value, so users with light terminals get the inverse black role.
 export const theme = {
-  // Brand coral, --accent hsl(10 100% 68%) = #FE785D.
-  accent: '#FE785D',
-  // --accent-strong hsl(10 90% 58%).
-  accentStrong: '#F0543C',
+  primary: productTheme.dark.primary,
+  accent: productTheme.dark.accent,
+  accentStrong: productTheme.dark.accentStrong,
   // --text-muted (66%): secondary text, table body.
   muted: '#A8A8A8',
   // --text-subtle (46%): hints, timestamps, dividers.
@@ -35,11 +52,12 @@ export const theme = {
   border: '#3D3D3D',
 } as const
 
-// The coral wordmark and subtle grays as raw 24-bit ANSI, for the banner and
+// The mint wordmark and subtle grays as raw 24-bit ANSI, for the banner and
 // any output that renders outside Ink. Mirrors the hex tokens above.
 export const ansi = {
-  accent: '\x1b[38;2;254;120;93m',
-  accentStrong: '\x1b[38;2;240;84;60m',
+  primary: '\x1b[38;2;253;253;253m',
+  accent: '\x1b[38;2;91;228;155m',
+  accentStrong: '\x1b[38;2;125;237;178m',
   muted: '\x1b[38;2;168;168;168m',
   subtle: '\x1b[38;2;117;117;117m',
   destructive: '\x1b[38;2;220;60;60m',
@@ -123,7 +141,7 @@ export const glyphs: {
 } = unicodeEnabled() ? UNICODE_GLYPHS : ASCII_GLYPHS
 
 // Pointer glyph for pickers, kept as an alias so existing call sites compile.
-// Selection state per the design language: coral pointer plus coral text.
+// Selection state per the design language: mint pointer plus mint text.
 export const POINTER = glyphs.pointer
 
 export function statusColor(status: RunStatus): string | undefined {
@@ -172,9 +190,8 @@ export function paint(text: string, code: string): string {
   return `${code}${text}${ansi.reset}`
 }
 
-// Bold coral verb prefix for one-line mutation confirmations ("Created",
-// "Deleted", "Published", ...): primary emphasis, the same role accent plays
-// for panel titles and active state.
+// Bold mint verb prefix for one-line mutation confirmations ("Created",
+// "Deleted", "Published", ...): a success signal, matching active state.
 export function accentVerb(text: string): string {
   return paint(text, ansi.bold + ansi.accent)
 }

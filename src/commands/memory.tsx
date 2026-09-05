@@ -97,7 +97,7 @@ function fmtScore(n: number): string {
   return Number.isFinite(n) ? n.toFixed(3) : '-'
 }
 
-// renderMemoryDetail shows one memory as a coral-titled panel of fields plus
+// renderMemoryDetail shows one memory as a mint-titled panel of fields plus
 // the summary, processed content, and raw input blocks.
 async function renderMemoryDetail(agent: string, m: AgentMemory): Promise<void> {
   const { Panel, Field } = await import('../ui/Panel.js')

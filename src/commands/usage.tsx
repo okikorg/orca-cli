@@ -167,7 +167,7 @@ export function registerUsage(program: Command): void {
           return
         }
 
-        // -- TTY: summary fields + coral line chart inside a panel ------------
+        // -- TTY: summary fields + mint line chart inside a panel -------------
         const { Panel, Field } = await import('../ui/Panel.js')
         const { Box, Text } = await import('ink')
         const { theme } = await import('../ui/theme.js')
