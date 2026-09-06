@@ -124,19 +124,102 @@ describe('secrets list', () => {
 })
 
 describe('secrets set', () => {
+  // The metadata read behind `set` walks the list (there is no GET by name),
+  // so every set that omits --key or --description hits this route first.
+  const LIST_ROUTE = 'GET /api/secrets?limit=200'
+  const putMeta = (extra: Record<string, string> = {}) =>
+    jsonResponse({
+      name: 'apikey',
+      algorithm: 'xchacha20poly1305',
+      createdAt: 't',
+      updatedAt: 't',
+      ...extra,
+    })
+  const existingRow = {
+    name: 'apikey',
+    key: 'ANTHROPIC_API_KEY',
+    description: 'prod anthropic key',
+    algorithm: 'xchacha20poly1305',
+    createdAt: 't',
+    updatedAt: 't',
+  }
+  const putCall = (calls: { method: string; body?: string }[]) => calls.find((c) => c.method === 'PUT')!
+
   it('PUTs the plaintext in the request body from --value', async () => {
     const calls = stubFetch({
-      'PUT /api/secrets/apikey': jsonResponse({
-        name: 'apikey',
-        algorithm: 'xchacha20poly1305',
-        createdAt: 't',
-        updatedAt: 't',
-      }),
+      [LIST_ROUTE]: jsonResponse({ total: 0, secrets: [] }),
+      'PUT /api/secrets/apikey': putMeta(),
     })
     await run(['secrets', 'set', 'apikey', '--value', SECRET, '--key', 'ANTHROPIC_API_KEY'])
-    const body = JSON.parse(calls[0].body ?? '{}')
-    expect(body).toEqual({ plaintext: SECRET, key: 'ANTHROPIC_API_KEY' })
-    expect(calls[0].method).toBe('PUT')
+    const put = putCall(calls)
+    expect(JSON.parse(put.body ?? '{}')).toEqual({ plaintext: SECRET, key: 'ANTHROPIC_API_KEY' })
+  })
+
+  it('carries the existing key and description forward when the flags are omitted', async () => {
+    const calls = stubFetch({
+      [LIST_ROUTE]: jsonResponse({ total: 1, secrets: [existingRow] }),
+      'PUT /api/secrets/apikey': putMeta({ key: existingRow.key, description: existingRow.description }),
+    })
+    await run(['secrets', 'set', 'apikey', '--value', SECRET])
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([LIST_ROUTE, 'PUT /api/secrets/apikey'])
+    expect(JSON.parse(putCall(calls).body ?? '{}')).toEqual({
+      plaintext: SECRET,
+      key: 'ANTHROPIC_API_KEY',
+      description: 'prod anthropic key',
+    })
+    expect(allOutput()).not.toContain(SECRET)
+  })
+
+  it('lets an explicit flag override one field while carrying the other', async () => {
+    const calls = stubFetch({
+      [LIST_ROUTE]: jsonResponse({ total: 1, secrets: [existingRow] }),
+      'PUT /api/secrets/apikey': putMeta(),
+    })
+    await run(['secrets', 'set', 'apikey', '--value', SECRET, '--description', 'rotated'])
+    expect(JSON.parse(putCall(calls).body ?? '{}')).toEqual({
+      plaintext: SECRET,
+      key: 'ANTHROPIC_API_KEY',
+      description: 'rotated',
+    })
+  })
+
+  it('clears a field when the flag is passed empty', async () => {
+    const calls = stubFetch({
+      [LIST_ROUTE]: jsonResponse({ total: 1, secrets: [existingRow] }),
+      'PUT /api/secrets/apikey': putMeta(),
+    })
+    await run(['secrets', 'set', 'apikey', '--value', SECRET, '--key', ''])
+    expect(JSON.parse(putCall(calls).body ?? '{}')).toEqual({
+      plaintext: SECRET,
+      description: 'prod anthropic key',
+    })
+  })
+
+  it('creates without carrying anything when the secret does not exist yet', async () => {
+    const calls = stubFetch({
+      [LIST_ROUTE]: jsonResponse({ total: 1, secrets: [{ ...existingRow, name: 'other' }] }),
+      'PUT /api/secrets/apikey': putMeta(),
+    })
+    await run(['secrets', 'set', 'apikey', '--value', SECRET])
+    expect(JSON.parse(putCall(calls).body ?? '{}')).toEqual({ plaintext: SECRET })
+  })
+
+  it('skips the metadata read when both --key and --description are given', async () => {
+    const calls = stubFetch({ 'PUT /api/secrets/apikey': putMeta() })
+    await run(['secrets', 'set', 'apikey', '--value', SECRET, '--key', 'K', '--description', 'd'])
+    expect(calls.map((c) => c.method)).toEqual(['PUT'])
+    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ plaintext: SECRET, key: 'K', description: 'd' })
+  })
+
+  it('does not write when the metadata read fails', async () => {
+    const calls = stubFetch({
+      [LIST_ROUTE]: jsonResponse({ error: 'secrets store not configured' }, { status: 503 }),
+    })
+    await expect(run(['secrets', 'set', 'apikey', '--value', SECRET])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+    })
+    expect(calls.find((c) => c.method === 'PUT')).toBeUndefined()
+    expect(allOutput()).not.toContain(SECRET)
   })
 
   // The hard rule: the value must reach the request body but never appear on
@@ -146,16 +229,12 @@ describe('secrets set', () => {
     ['plain', ['secrets', 'set', 'apikey', '--value', SECRET]],
   ])('never prints the value in %s mode', async (_mode, args) => {
     const calls = stubFetch({
-      'PUT /api/secrets/apikey': jsonResponse({
-        name: 'apikey',
-        algorithm: 'xchacha20poly1305',
-        createdAt: 't',
-        updatedAt: 't',
-      }),
+      [LIST_ROUTE]: jsonResponse({ total: 1, secrets: [existingRow] }),
+      'PUT /api/secrets/apikey': putMeta(),
     })
     await run(args)
     // Proof the value WAS sent:
-    expect(JSON.parse(calls[0].body ?? '{}').plaintext).toBe(SECRET)
+    expect(JSON.parse(putCall(calls).body ?? '{}').plaintext).toBe(SECRET)
     // Proof it never leaked to any output sink:
     expect(allOutput()).not.toContain(SECRET)
   })
@@ -167,15 +246,11 @@ describe('secrets set', () => {
     process.stdin.isTTY = true
     try {
       const calls = stubFetch({
-        'PUT /api/secrets/apikey': jsonResponse({
-          name: 'apikey',
-          algorithm: 'xchacha20poly1305',
-          createdAt: 't',
-          updatedAt: 't',
-        }),
+        [LIST_ROUTE]: jsonResponse({ total: 0, secrets: [] }),
+        'PUT /api/secrets/apikey': putMeta(),
       })
       await run(['secrets', 'set', 'apikey', '--value', SECRET])
-      expect(JSON.parse(calls[0].body ?? '{}').plaintext).toBe(SECRET)
+      expect(JSON.parse(putCall(calls).body ?? '{}').plaintext).toBe(SECRET)
       expect(allOutput()).not.toContain(SECRET)
     } finally {
       process.stdout.isTTY = prevOut
@@ -185,12 +260,8 @@ describe('secrets set', () => {
 
   it('reads the value from piped stdin and strips one trailing newline', async () => {
     const calls = stubFetch({
-      'PUT /api/secrets/apikey': jsonResponse({
-        name: 'apikey',
-        algorithm: 'xchacha20poly1305',
-        createdAt: 't',
-        updatedAt: 't',
-      }),
+      [LIST_ROUTE]: jsonResponse({ total: 0, secrets: [] }),
+      'PUT /api/secrets/apikey': putMeta(),
     })
     const real = process.stdin
     const fake = Readable.from([Buffer.from(SECRET + '\n')])
@@ -200,7 +271,7 @@ describe('secrets set', () => {
     } finally {
       Object.defineProperty(process, 'stdin', { value: real, configurable: true, writable: true })
     }
-    expect(JSON.parse(calls[0].body ?? '{}').plaintext).toBe(SECRET)
+    expect(JSON.parse(putCall(calls).body ?? '{}').plaintext).toBe(SECRET)
     expect(allOutput()).not.toContain(SECRET)
   })
 

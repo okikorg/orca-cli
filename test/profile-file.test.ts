@@ -67,4 +67,80 @@ describe('loadProfileFile', () => {
       exitCode: ExitCode.Usage,
     })
   })
+
+  it('carries worker placement through for a sandbox profile', () => {
+    const result = validateProfile({
+      name: 'sandboxed',
+      runtime: 'marlin',
+      model: 'anthropic:claude-sonnet-4-6',
+      workerMode: 'sandbox',
+      workerSubstrate: ' daytona ',
+      workerImage: 'orca-agent-worker-dyn',
+    })
+    expect(result).toMatchObject({
+      ok: true,
+      warnings: [],
+      profile: {
+        workerMode: 'sandbox',
+        workerSubstrate: 'daytona',
+        workerImage: 'orca-agent-worker-dyn',
+      },
+    })
+  })
+
+  it('drops worker placement on a static profile with a warning, and omits static itself', () => {
+    const result = validateProfile({
+      name: 'warm',
+      runtime: 'vercel',
+      workerMode: 'static',
+      workerSubstrate: 'e2b',
+    })
+    expect(result.ok).toBe(true)
+    expect(result.profile).not.toHaveProperty('workerMode')
+    expect(result.profile).not.toHaveProperty('workerSubstrate')
+    expect(result.warnings).toContain(
+      'workerSubstrate/workerImage only apply when workerMode is "sandbox"; dropped',
+    )
+  })
+
+  it('rejects an unknown workerMode and marlin without a sandbox worker', () => {
+    const bad = validateProfile({ name: 'x', runtime: 'vercel', workerMode: 'remote' })
+    expect(bad.ok).toBe(false)
+    expect(bad.errors).toContain('workerMode must be one of: static, sandbox')
+
+    const marlin = validateProfile({ name: 'y', runtime: 'marlin', model: 'openai:gpt-5.2' })
+    expect(marlin.ok).toBe(false)
+    expect(marlin.errors).toContain('runtime "marlin" requires workerMode "sandbox"')
+  })
+
+  it('warns, but does not reject, a substrate this build has not heard of', () => {
+    const result = validateProfile({
+      name: 'z',
+      runtime: 'pi',
+      workerMode: 'sandbox',
+      workerSubstrate: 'firecracker',
+    })
+    expect(result.ok).toBe(true)
+    expect(result.profile?.workerSubstrate).toBe('firecracker')
+    expect(result.warnings[0]).toMatch(/Unrecognised workerSubstrate "firecracker"/)
+  })
+
+  it('accepts a catalog ref MCP entry and rejects one that copies a url', () => {
+    const ok = validateProfile({
+      name: 'apps',
+      runtime: 'pi',
+      mcpServers: [{ name: 'github', ref: 'catalog://github', optional: true }],
+    })
+    expect(ok.ok).toBe(true)
+    expect(ok.profile?.mcpServers).toEqual([{ name: 'github', ref: 'catalog://github', optional: true }])
+
+    const bad = validateProfile({
+      name: 'apps',
+      runtime: 'pi',
+      mcpServers: [{ name: 'github', ref: 'catalog://other', url: 'https://x.example' }],
+    })
+    expect(bad.ok).toBe(false)
+    expect(bad.errors).toContain('mcpServers[0].ref must be "catalog://<name>" (matching the entry\'s name)')
+    expect(bad.errors).toContain('mcpServers[0]: a catalog ref must not copy url or headers')
+  })
 })

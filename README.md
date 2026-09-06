@@ -19,8 +19,12 @@ fall back to ASCII when the locale is not UTF-8 or `ORCA_ASCII=1` is set.
 End users install a standalone binary (no Node required) via the landing domain:
 
 ```sh
-curl -fsSL https://orca-landing-woad.vercel.app/install.sh | sh
+curl -fsSL https://orcapods.ai/install.sh | sh
 ```
+
+Full documentation, including a per-command reference, lives at
+[docs.orcapods.ai/cli/overview](https://docs.orcapods.ai/cli/overview). This
+README is the developer-facing summary.
 
 The script detects your OS/arch, downloads the matching binary, verifies its
 SHA-256 checksum, and installs to `~/.local/bin/orca`. Pin a version with
@@ -51,10 +55,12 @@ dir (`update-check.json`), is skipped in scripts (non-TTY stderr), and is
 disabled entirely by `ORCA_NO_UPDATE_CHECK`. Both commands honor `GITHUB_TOKEN`
 to lift the anonymous GitHub API rate limit.
 
-Self-update is only available for the standalone binary. npm installs update via
-`npm install -g @agent-orc/cli@latest`; Windows can't replace a running `.exe`,
-so re-download `orca-windows-x64.tar.gz` from the releases page. In each of these
-cases `orca update` prints the right instructions instead of attempting a swap.
+Self-update is only available for the standalone binary. A source checkout
+updates with `git pull`; Windows can't replace a running `.exe`, so re-download
+`orca-windows-x64.tar.gz` from the releases page. In each of these cases
+`orca update` prints the right instructions instead of attempting a swap. The
+package is not published to npm; the installer and a source checkout are the
+two supported paths.
 
 ### Releasing binaries
 
@@ -82,24 +88,32 @@ npm run build && npm link    # global `orca`
 
 ## Authentication
 
-The CLI authenticates with a tenant API key (`ao_...`). `orca auth login`
-opens the dashboard in your browser, you authorize, and the dashboard mints a
-role-inheriting key and hands it back to the CLI over a localhost callback.
+The CLI authenticates with a tenant API key (`ao_...`). `orca login` (an
+alias of `orca auth login`) picks one of three flows:
+
+- **Browser** (the default in an interactive terminal): opens the dashboard,
+  you authorize, and the dashboard mints a role-inheriting key and hands it
+  back over a localhost callback. Falls back to a masked paste prompt after
+  five minutes.
+- **Device code** (`--headless`, or automatically when there is no TTY or a
+  coding agent, CI, or SSH session is detected): prints a one-time code and a
+  URL to approve on any device, then polls until the key is issued.
+- **Token** (`--with-token ao_...`): no browser, no prompt, for CI.
+
 Keys are stored per context in `~/.config/orca/config.json` (chmod 600).
 
 ```sh
-orca auth login                              # browser flow; defaults to the Orca production API
-orca auth login --api-url http://localhost:8080 --dashboard-url http://localhost:5173
+orca login                                   # browser flow; defaults to the Orca production API
+orca login --headless                        # device code
+orca login --api-url http://localhost:8080 --dashboard-url http://localhost:5173
+orca whoami                                  # tenant, role, and key id the stored key acts as
 orca auth status
 orca auth logout --revoke                    # revoke the key server-side, then clear it
 ```
 
-`orca auth login` defaults to the Orca production API; pass `--api-url` for a
-self-hosted or local conductor. The browser flow needs the dashboard URL: pass
-`--dashboard-url` or set `ORCA_DASHBOARD_URL` (until a production default is
-baked in). Over SSH, or with `--no-browser`, the dashboard reveals the key once
-so you can paste it into the CLI prompt. CI and scripts keep using
-`--with-token ao_...` (no browser, no prompt).
+`orca login` defaults to the production API (`https://api.orcapods.ai`) and
+dashboard (`https://app.orcapods.ai`); pass `--api-url` and `--dashboard-url`
+for a self-hosted or local conductor.
 
 Contexts work like kubectl contexts: `orca context list`, `orca context use
 prod`, or per-invocation `orca --context prod agents list`.
@@ -137,7 +151,7 @@ Environment overrides (all optional, win over the config file):
 | `ORCA_DASHBOARD_URL`| dashboard base URL for `orca auth login` |
 | `ORCA_GATEWAY_URL`| public chat gateway base URL     |
 | `ORCA_CHAT_KEY`   | published-agent chat key (`orca chat`) |
-| `ORCA_TENANT`     | tenant slug for `orca chat`      |
+| `ORCA_TENANT`     | tenant id (`org_...`) for `orca chat` |
 | `ORCA_CONTEXT`    | context name                     |
 | `ORCA_CONFIG_DIR` | config directory (default XDG)   |
 | `ORCA_ASCII`      | set to `1` to force ASCII glyphs (no Unicode tier) |
@@ -146,30 +160,39 @@ CI needs no config file: `ORCA_API_KEY=... ORCA_API_URL=... orca agents list --j
 
 ## Commands
 
-```
-orca auth login [--api-url u] [--dashboard-url u] [--gateway-url u] [--label l] [--no-browser] [--with-token ao_...]
-orca auth status
-orca auth logout [--revoke]
-orca context list|use <name>|show
+`[x]` marks a positional that opens an interactive picker when omitted in a
+terminal; in a script it is required (exit 2).
 
-orca agents list|get <name>
+```
+orca login | orca auth login [--api-url u] [--dashboard-url u] [--gateway-url u] [--label l] [--headless] [--with-token ao_...]
+orca whoami
+orca auth status
+orca auth logout [--revoke] [--yes]
+orca context list|use [name]|show
+
+orca agents list|get [name]|changes <name> [--limit n]
 orca agents create -f agent.yaml         # YAML or JSON; - for stdin
 orca agents update [name] -f agent.yaml  # target old name to rename
-orca agents delete <name> [--yes]
-orca agents publish <name> [--slug s] [--visibility v] [--expose-tool-events]
-orca agents unpublish <name> [--yes]
-orca agents keys list|create [--label l]|revoke <agent> [id]
+orca agents delete [name] [--yes]
+orca agents publish [name] [--slug s] [--visibility v] [--expose-tool-events]
+orca agents unpublish [name] [--yes]
+orca agents keys list <agent>
+orca agents keys create <agent> [--label l]
+orca agents keys revoke <agent> <id>
 
-orca run <agent> "prompt" [--title t] [--session id] [--detach]
+orca run [agent] [prompt...] [--title t] [--session id] [--detach]
 orca runs list [--agent name]
-orca runs get|tail|cancel <id>
+orca runs get|tail|cancel [id]
 
-orca keys list|create [name] [--expires <iso8601>]|revoke <id>
+orca keys list
+orca keys create [name] [--expires <iso8601>]
+orca keys revoke <id> [--yes]
 ```
 
-List commands that page (`agents list`, `runs list`, `keys list`, and the other
-`list` views) share `--limit N`, `--offset N`, and `--all` (fetch every page);
-see each command's `--help` for its per-command default limit.
+List commands that page (`agents list`, `runs list`, `sessions list`, and the
+other `list` views) share `--limit N` (default 10), `--offset N`, and `--all`
+(fetch every page, in windows of 200, up to 10,000 rows). `storage ls` (100)
+and `storage browse` (1000) have their own limits; `keys list` does not page.
 
 Every list/get command supports `--json` (raw API payloads, stdout only).
 When stdout is not a TTY, output degrades to uncolored tab-separated lines,
@@ -191,7 +214,7 @@ rest of the CLI uses. It always streams over SSE; there is no buffered mode.
 Auth is a published-agent chat key (`ao_...`), not the tenant API key. Mint one
 with `orca agents keys create <agent>` and pass it with `--key` or
 `ORCA_CHAT_KEY`. The gateway base URL comes from `ORCA_GATEWAY_URL` (or the
-context `gatewayUrl`) and the tenant slug from `--tenant` or `ORCA_TENANT` (the
+context `gatewayUrl`) and the tenant id (`org_...`) from `--tenant` or `ORCA_TENANT` (the
 org the agent was published under). The key is never echoed.
 
 ```sh
@@ -317,12 +340,12 @@ buffer, so a reattached tail resumes from the current snapshot.
 ## Agent documents
 
 `agents create/update -f` accepts the same schema the dashboard YAML import
-validates (`cli/src/lib/profile-schema.ts`, kept in sync with
-`dashboard/src/lib/agent-profile-schema.ts`):
+validates (`src/lib/profile-schema.ts`, kept in sync with
+`dashboard/src/lib/agent-profile-schema.ts` in the platform repo):
 
 ```yaml
 name: support-bot
-runtime: pi              # pi | vercel | claude | codex
+runtime: pi              # pi | vercel | claude | codex | marlin
 model: claude-sonnet-5
 systemPrompt: |
   You answer support questions.
@@ -332,14 +355,22 @@ mcpServers:
   - name: docs
     transport: http      # http | sse
     url: https://mcp.example.com/docs
+  - name: github         # a Connected Apps grant: ref only, no url/headers
+    ref: catalog://github
+    optional: true
 fs:
   read: [/agents/self]
 sandbox:
   provider: e2b
   resources: { cpu: 2, memoryMB: 1024 }
+workerMode: sandbox      # static (default, omitted) | sandbox
+workerSubstrate: daytona # e2b | daytona | docker | process; sandbox mode only
+workerImage: orca-agent-worker-dyn
 ```
 
-Unknown keys warn but do not block; `--strict` promotes warnings to errors.
+Unknown keys warn but do not block; `--strict` promotes warnings to errors. An
+unknown `workerMode` is an error (a silent fallback to static would hide a
+sandbox request); `runtime: marlin` requires `workerMode: sandbox`.
 
 ## Use from Claude Code (plugin, skill, MCP)
 
@@ -529,4 +560,5 @@ unless `--yes`. A missing memory exits 4; an unconfigured bank returns 503
 - Module layout: `lib/` (no Ink imports) -> `commands/` -> `ui/` (theme'd
   Ink components; design tokens in `src/ui/theme.ts` mirror
   `dashboard/src/index.css`)
-- Endpoint contract: `docs/openapi.sdk.yaml`
+- Endpoint contract: `GET /api/openapi.yaml` on the conductor (also served as
+  the `orca://openapi` MCP resource)

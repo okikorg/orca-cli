@@ -260,6 +260,28 @@ describe('mcp test', () => {
     })
   })
 
+  it.each([
+    ['--transport', ['mcp', 'test', 'github', '--transport', 'sse']],
+    ['--header', ['mcp', 'test', 'github', '--header', 'X-Token=abc']],
+  ])('rejects %s with a catalog NAME as a usage error, before any network call', async (flag, args) => {
+    const calls = stubFetch({})
+    await expect(run(args)).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+      message: expect.stringContaining(`${flag} only applies with --url`),
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('names both flags when both are passed with a catalog NAME', async () => {
+    stubFetch({})
+    await expect(
+      run(['mcp', 'test', 'github', '--transport', 'sse', '--header', 'X-Token=abc']),
+    ).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+      message: expect.stringContaining('--transport and --header only apply with --url'),
+    })
+  })
+
   it('probes an ad-hoc --url without touching the catalog', async () => {
     const calls = stubFetch({
       'POST /api/mcp-servers/test': jsonResponse({ ok: true, latencyMs: 5 }),

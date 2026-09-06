@@ -105,7 +105,7 @@ function parseDollarsToCents(raw: string): number {
   if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) {
     throw new CliError(`invalid amount "${raw}"`, ExitCode.Usage, [
       'Pass dollars like 10, 10.5, 10.50, or $10 (max two decimal places).',
-      'Pass "default" to clear the cap and revert to the system default.',
+      'Pass "default" (or "none" / "clear") to clear the cap and revert to the system default.',
     ])
   }
   const cents = Math.round(Number(cleaned) * 100)
@@ -219,7 +219,7 @@ export function registerBilling(program: Command): void {
   // -- cap set ----------------------------------------------------------------
   cap
     .command('set <amount>')
-    .description('set the monthly cap in dollars (or "default" to clear the override)')
+    .description('set the monthly cap in dollars (or "default", "none", or "clear" to clear the override)')
     .option('--email <address>', 'also set the billing email')
     .option('--yes', 'skip the confirmation prompt')
     .action(

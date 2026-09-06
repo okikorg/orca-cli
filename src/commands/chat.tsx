@@ -189,8 +189,8 @@ export function registerChat(program: Command): void {
     .command('chat [agent] [prompt...]')
     .description('chat with a published agent through the public gateway (always streams over SSE)')
     .option('--key <chat-key>', 'published-agent chat key (or env ORCA_CHAT_KEY)')
-    .option('--tenant <slug>', 'tenant the agent was published under (or env ORCA_TENANT)')
-    .option('--conversation <id>', 'resume a prior conversation (single-shot)')
+    .option('--tenant <id>', 'tenant id (org_...) the agent was published under (or env ORCA_TENANT)')
+    .option('--conversation <id>', 'resume a prior conversation (single-shot or REPL)')
     .option('--end-user <id>', 'metadata.end_user_id passed to the gateway')
     .action(async (agentArg: string | undefined, promptParts: string[], opts: ChatOpts, cmd: Command) => {
       const flags = globalFlags(cmd)

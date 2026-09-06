@@ -36,9 +36,20 @@ const KNOWN_KEYS = new Set([
   'tools',
   'fs',
   'sandbox',
+  'workerMode',
+  'workerSubstrate',
+  'workerImage',
 ])
 
-const KNOWN_MCP_KEYS = new Set(['name', 'transport', 'url', 'headers'])
+// Worker modes accepted on import. An omitted value means 'static', which is
+// what the API assumes for every profile written before this field existed.
+const WORKER_MODES = new Set(['static', 'sandbox'])
+
+// Where a per-session worker can boot. Advisory only on import: which of these
+// a given runner actually serves is deployment configuration, not schema.
+const WORKER_SUBSTRATES = new Set(['e2b', 'daytona', 'docker', 'process'])
+
+const KNOWN_MCP_KEYS = new Set(['name', 'transport', 'url', 'headers', 'ref', 'optional'])
 const KNOWN_FS_KEYS = new Set(['read', 'write', 'delete', 'deny', 'allow_mounts'])
 const KNOWN_SANDBOX_KEYS = new Set([
   'provider',
@@ -114,6 +125,7 @@ function validateMcpServers(
     const name = raw.name
     const transport = raw.transport
     const url = raw.url
+    const ref = raw.ref
 
     if (typeof name !== 'string' || !name.trim()) {
       errors.push(`${at}.name is required`)
@@ -123,6 +135,29 @@ function validateMcpServers(
       errors.push(`${at}.name "${name.trim()}" is duplicated`)
     } else {
       seen.add(name.trim())
+    }
+
+    // A catalog reference (Connected Apps grant) carries no transport of its
+    // own: it must be exactly `catalog://<name>` with no url/headers, mirroring
+    // the API's validateMCPServerSpec. Everything else is an inline server and
+    // needs transport + url.
+    if (ref !== undefined) {
+      if (typeof ref !== 'string' || typeof name !== 'string' || ref !== `catalog://${name.trim()}`) {
+        errors.push(`${at}.ref must be "catalog://<name>" (matching the entry's name)`)
+      }
+      if (url !== undefined || raw.headers !== undefined) {
+        errors.push(`${at}: a catalog ref must not copy url or headers`)
+      }
+      if (
+        typeof name === 'string' &&
+        typeof ref === 'string' &&
+        ref === `catalog://${name.trim()}` &&
+        url === undefined &&
+        raw.headers === undefined
+      ) {
+        out.push({ name: name.trim(), ref, ...(raw.optional === true ? { optional: true } : {}) })
+      }
+      return
     }
 
     if (transport !== 'http' && transport !== 'sse') {
@@ -292,6 +327,44 @@ export function validateProfile(raw: unknown): SchemaValidation {
     errors.push('tools must be a list of strings')
   }
 
+  // An unrecognised workerMode is an error rather than a warning: silently
+  // dropping it would import the profile as 'static', and the user would have
+  // no way to tell from the result that their sandbox request was ignored.
+  if (
+    raw.workerMode !== undefined &&
+    raw.workerMode !== '' &&
+    (typeof raw.workerMode !== 'string' || !WORKER_MODES.has(raw.workerMode))
+  ) {
+    errors.push(`workerMode must be one of: ${[...WORKER_MODES].join(', ')}`)
+  }
+  if (runtime === 'marlin' && raw.workerMode !== 'sandbox') {
+    errors.push('runtime "marlin" requires workerMode "sandbox"')
+  }
+  if (raw.workerSubstrate !== undefined && typeof raw.workerSubstrate !== 'string') {
+    errors.push('workerSubstrate must be a string')
+  } else if (
+    typeof raw.workerSubstrate === 'string' &&
+    raw.workerSubstrate.trim() &&
+    !WORKER_SUBSTRATES.has(raw.workerSubstrate.trim())
+  ) {
+    // A warning, not an error, unlike workerMode above. Which substrates exist
+    // is a property of the runner rather than of this schema, so a name this
+    // build has not heard of may still be valid on the deployment being
+    // imported into. A genuinely wrong one fails loudly at the session's first
+    // run, naming what the runner does serve.
+    warnings.push(
+      `Unrecognised workerSubstrate "${raw.workerSubstrate.trim()}" (known: ${[...WORKER_SUBSTRATES].join(', ')})`,
+    )
+  }
+  if (raw.workerImage !== undefined && typeof raw.workerImage !== 'string') {
+    errors.push('workerImage must be a string')
+  }
+  // Both worker placement fields are inert on a static profile, and silently
+  // keeping them is how a profile ends up carrying config that looks live.
+  if (raw.workerMode !== 'sandbox' && (raw.workerSubstrate || raw.workerImage)) {
+    warnings.push('workerSubstrate/workerImage only apply when workerMode is "sandbox"; dropped')
+  }
+
   const mcpServers = validateMcpServers(raw.mcpServers, errors, warnings)
   const fs = validateFs(raw.fs, errors, warnings)
   const sandbox = validateSandbox(raw.sandbox, errors, warnings)
@@ -319,6 +392,21 @@ export function validateProfile(raw: unknown): SchemaValidation {
     ...(mcpServers ? { mcpServers } : {}),
     ...(fs ? { fs } : {}),
     ...(sandbox ? { sandbox } : {}),
+    // Omit 'static' rather than writing it out: it is the API default, and a
+    // round-tripped export should not sprout a field the user never set.
+    ...(raw.workerMode === 'sandbox' ? { workerMode: 'sandbox' as const } : {}),
+    // Both are only meaningful for a per-session worker, and both are dropped
+    // for a static profile rather than carried silently: importing a sandbox
+    // agent as static and keeping its substrate would leave a field that reads
+    // like it does something and does not.
+    ...(raw.workerMode === 'sandbox' &&
+    typeof raw.workerSubstrate === 'string' &&
+    raw.workerSubstrate.trim()
+      ? { workerSubstrate: raw.workerSubstrate.trim() }
+      : {}),
+    ...(raw.workerMode === 'sandbox' && typeof raw.workerImage === 'string' && raw.workerImage.trim()
+      ? { workerImage: raw.workerImage.trim() }
+      : {}),
   }
 
   return { ok: true, errors, warnings, profile }

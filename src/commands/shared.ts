@@ -18,7 +18,7 @@ export function globalFlags(cmd: Command): GlobalFlags {
 
 // -- Pagination -----------------------------------------------------------
 // Every list command shares one pagination shape: a --limit (defaulting to
-// 50, uniform across table/plain/json), a --offset (both forwarded to the
+// 10, uniform across table/plain/json), a --offset (both forwarded to the
 // server), and an --all escape hatch that walks every page. Table/plain views
 // also print a "Showing X of Y" hint on stderr once the server has more rows
 // than the page returned. Keeping this here means the flags, defaults, help

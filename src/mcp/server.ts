@@ -28,7 +28,10 @@ import type { RunEvent, SubTask } from '../lib/types.js'
 // context window. Truncation is always announced in the payload.
 const MAX_RESULT_BYTES = 50_000
 const MAX_EVENTS_RETURNED = 100
-const DEFAULT_STORAGE_READ_BYTES = 65_536
+// storage_read's implicit cap. It must not exceed MAX_RESULT_BYTES, which is
+// also the schema's ceiling for an explicit maxBytes, or the default would
+// hand back more than any caller is allowed to ask for.
+const DEFAULT_STORAGE_READ_BYTES = MAX_RESULT_BYTES
 
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>

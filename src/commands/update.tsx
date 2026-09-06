@@ -7,7 +7,6 @@ import {
   fetchLatestRelease,
   fetchReleaseByTag,
   INSTALL_SCRIPT_URL,
-  NPM_PACKAGE,
   performBinaryUpdate,
   RELEASES_URL,
   summarizeCheck,
@@ -82,7 +81,7 @@ export function registerUpdate(program: Command, deps: UpdateDeps = realDeps): v
         return
       }
 
-      // Only a standalone binary can rewrite itself. npm/dev installs and
+      // Only a standalone binary can rewrite itself. Source checkouts and
       // Windows (a running .exe can't replace itself) get guidance instead.
       const guidance = updateGuidance(env)
       if (guidance) {
@@ -122,13 +121,15 @@ function updateGuidance(env: UpdateEnv): Guidance | null {
       hints: [`Download orca-windows-x64.tar.gz from ${RELEASES_URL}`],
     }
   }
+  // The package is private (not on npm), so a non-standalone orca can only be
+  // a source checkout (tsx or the tsup build); point there or at the script.
   if (!env.standalone) {
     return {
       reason: 'not-standalone',
       message: "This orca wasn't installed as a standalone binary, so it can't self-update.",
       hints: [
-        `If you installed via npm:  npm install -g ${NPM_PACKAGE}@latest`,
-        `Or (re)install the binary:  curl -fsSL ${INSTALL_SCRIPT_URL} | sh`,
+        `(Re)install the binary:  curl -fsSL ${INSTALL_SCRIPT_URL} | sh`,
+        'Or, in a source checkout:  git pull && npm run build',
       ],
     }
   }

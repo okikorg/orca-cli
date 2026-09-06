@@ -300,11 +300,30 @@ describe('workflows repair', () => {
     })
   })
 
-  it('rejects an unsupported repair type', async () => {
-    stubFetch({})
+  it('still accepts the retry_node wire alias', async () => {
+    const calls = stubFetch({
+      'POST /api/workflows/runs/workflow-1/repair': jsonResponse({ workflowRunId: 'workflow-1', ok: true }),
+    })
+    await run(['workflows', 'repair', 'workflow-1', '--type', 'retry_node', '--node', 'draft'])
+    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ type: 'retry_node', nodeId: 'draft' })
+  })
+
+  it('advertises only abort | retry-node in the help', () => {
+    const program = new Command()
+    registerWorkflows(program)
+    const wf = program.commands.find((c) => c.name() === 'workflows')!
+    const help = wf.commands.find((c) => c.name() === 'repair')!.helpInformation()
+    expect(help).toContain('abort | retry-node')
+    expect(help).not.toContain('retry_node')
+  })
+
+  it('rejects an unsupported repair type as a usage error naming the allowed values, before any network call', async () => {
+    const calls = stubFetch({})
     await expect(run(['workflows', 'repair', 'workflow-1', '--type', 'replace_node'])).rejects.toMatchObject({
       exitCode: ExitCode.Usage,
+      message: expect.stringContaining('abort, retry-node'),
     })
+    expect(calls).toHaveLength(0)
   })
 })
 

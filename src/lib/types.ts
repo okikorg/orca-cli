@@ -2,11 +2,17 @@
 // dashboard/src/lib/types.ts. docs/openapi.sdk.yaml is the contract; check
 // there when the backend changes.
 
+// An inline server carries transport + url (+ headers). A catalog reference
+// (`ref: "catalog://<name>"`, a Connected Apps grant) carries neither: the
+// runtime resolves it at session time. `optional` marks a dependency the
+// agent can work without.
 export type MCPServerSpec = {
   name: string
-  transport: 'http' | 'sse'
-  url: string
+  transport?: 'http' | 'sse'
+  url?: string
   headers?: Record<string, string>
+  ref?: string
+  optional?: boolean
 }
 
 export type FSPolicy = {
@@ -47,6 +53,13 @@ export type AgentProfile = {
   tools?: string[]
   fs?: FSPolicy
   sandbox?: SandboxSpec
+  // How the runner executes the profile: "static" (default, omitted on the
+  // wire) dials a warm sidecar; "sandbox" boots a per-session worker.
+  workerMode?: 'static' | 'sandbox'
+  // Where a sandbox worker boots (e2b, daytona, docker, process) and which
+  // image it runs. Only meaningful when workerMode is "sandbox".
+  workerSubstrate?: string
+  workerImage?: string
 }
 
 export type SubTask = {

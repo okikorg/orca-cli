@@ -101,12 +101,15 @@ describe('orca update', () => {
   })
 
   it('installs a pinned version via --tag', async () => {
+    // Pin a tag that can never equal the running VERSION, or the
+    // already-current branch short-circuits before the swap.
+    const pinned = 'cli-v9.1.0'
     const fetchByTag = vi.fn(async (tag: string) => release(tag.startsWith('cli-v') ? tag : `cli-v${tag}`))
     const performUpdate = vi.fn(deps().performUpdate)
-    await run(['update', '--tag', 'cli-v0.5.0'], deps({ fetchByTag, performUpdate }))
-    expect(fetchByTag).toHaveBeenCalledWith('cli-v0.5.0')
+    await run(['update', '--tag', pinned], deps({ fetchByTag, performUpdate }))
+    expect(fetchByTag).toHaveBeenCalledWith(pinned)
     expect(performUpdate).toHaveBeenCalledOnce()
-    expect(logged()).toContain('cli-v0.5.0')
+    expect(logged()).toContain(pinned)
   })
 
   it('--check reports without installing', async () => {
@@ -129,6 +132,21 @@ describe('orca update', () => {
     await run(['update'], deps({ env, performUpdate }))
     expect(performUpdate).not.toHaveBeenCalled()
     expect(logged()).toContain("can't self-update")
+    // The package is private, so the hints must point at the install script
+    // or a source checkout, never at npm.
+    const hints = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.map(String).join(' '))
+      .join('\n')
+    expect(hints).toContain('install.sh')
+    expect(hints).toContain('git pull')
+    expect(hints).not.toContain('npm install')
+  })
+
+  it('keeps the not-standalone reason in the --json result', async () => {
+    const env = (): UpdateEnv => ({ ...STANDALONE, standalone: false })
+    await run(['--json', 'update'], deps({ env }))
+    expect(JSON.parse(stdout())).toMatchObject({ updated: false, reason: 'not-standalone' })
   })
 
   it('gives Windows guidance (a running .exe cannot replace itself)', async () => {
