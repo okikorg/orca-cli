@@ -81,10 +81,19 @@ async function renderAgentDetail(p: AgentProfile): Promise<void> {
       {p.skills?.length ? <Field label="skills" value={p.skills.join(', ')} /> : null}
       {p.tools?.length ? <Field label="tools" value={p.tools.join(', ')} /> : null}
       {p.mcpServers?.length ? (
-        <Field label="mcp" value={p.mcpServers.map((s) => `${s.name} (${s.transport})`).join(', ')} />
+        <Field
+          label="mcp"
+          value={p.mcpServers.map((s) => `${s.name} (${s.ref ? 'catalog' : s.transport})`).join(', ')}
+        />
       ) : null}
       {p.sandbox ? (
         <Field label="sandbox" value={`${p.sandbox.provider}${p.sandbox.template ? ` / ${p.sandbox.template}` : ''}`} />
+      ) : null}
+      {p.workerMode === 'sandbox' ? (
+        <Field
+          label="worker"
+          value={['sandbox', p.workerSubstrate, p.workerImage].filter(Boolean).join(' / ')}
+        />
       ) : null}
       {p.systemPrompt ? (
         <Box flexDirection="column" marginTop={1}>

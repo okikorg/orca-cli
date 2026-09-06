@@ -168,14 +168,22 @@ describe('billing cap set (cents parsing)', () => {
 })
 
 describe('billing cap set (behavior)', () => {
-  it('clears the override when given "default"', async () => {
+  it.each(['default', 'none', 'clear'])('clears the override when given "%s"', async (word) => {
     const calls = stubFetch({
       'GET /api/spend-cap': jsonResponse(capResponse()),
       'PUT /api/spend-cap': jsonResponse(capResponse({ userSet: false })),
     })
-    await run(['billing', 'cap', 'set', 'default', '--yes'])
+    await run(['billing', 'cap', 'set', word, '--yes'])
     const put = calls.find((c) => c.method === 'PUT')
     expect(JSON.parse(put!.body ?? '{}')).toEqual({ monthly_cap_usd_cents: null })
+  })
+
+  it('names every clearing word in the help text', () => {
+    const program = new Command()
+    registerBilling(program)
+    const cap = program.commands.find((c) => c.name() === 'billing')!.commands.find((c) => c.name() === 'cap')!
+    const help = cap.commands.find((c) => c.name() === 'set')!.helpInformation()
+    for (const word of ['"default"', '"none"', '"clear"']) expect(help).toContain(word)
   })
 
   it('warns when the new cap is below this month spend', async () => {

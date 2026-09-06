@@ -127,6 +127,17 @@ describe('orca chat single-shot (plain)', () => {
     expect(JSON.parse(calls[0].body!)).toMatchObject({ message: 'hi', conversation_id: 'conv_prev' })
   })
 
+  it('documents --tenant as a tenant id and --conversation for both modes', () => {
+    const chat = buildProgram().commands.find((c) => c.name() === 'chat')!
+    const help = chat.helpInformation()
+    // The value is the org_... id the gateway path carries, not a slug.
+    expect(help).toContain('--tenant <id>')
+    expect(help).toContain('tenant id (org_...)')
+    expect(help).not.toContain('<slug>')
+    // The REPL seeds from --conversation too, so it is not single-shot only.
+    expect(help).toContain('single-shot or REPL')
+  })
+
   it('reads the message from piped stdin when no prompt arg is given', async () => {
     const calls = stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(doneStream) })
     const original = process.stdin

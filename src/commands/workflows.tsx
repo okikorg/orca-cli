@@ -491,7 +491,10 @@ export function registerWorkflows(program: Command): void {
     .option('--node <id>', 'node id to retry (required for retry-node)')
     .action(async (id: string, opts: { type?: string; node?: string }, cmd: Command) => {
       const flags = globalFlags(cmd)
-      const api = await apiContext(cmd)
+      // Validate the action before resolving credentials so a bad --type is a
+      // plain usage error with no network or auth in the way. The wire name
+      // retry_node is still accepted as an alias for callers that learned it
+      // from the API; the help only advertises the hyphenated form.
       const type = opts.type
       let action: RepairAction
       if (type === 'abort') {
@@ -506,6 +509,7 @@ export function registerWorkflows(program: Command): void {
           'replace_node and add_dependency need a full node body; use the API directly for those.',
         ])
       }
+      const api = await apiContext(cmd)
       const res = await withApi(api, (c) => repairWorkflowRun(c, id, action))
       if (outputMode(flags) === 'json') printJson(res)
       else {

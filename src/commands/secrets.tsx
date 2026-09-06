@@ -12,12 +12,14 @@ import { accentVerb, hintText } from '../ui/theme.js'
 import {
   addPageFlags,
   apiContext,
+  fetchAll,
   fetchPageOrAll,
   globalFlags,
   pagedSubtitle,
   printPageHint,
   validatePage,
   withApi,
+  type ApiContext,
   type PageFlags,
 } from './shared.js'
 
@@ -36,6 +38,16 @@ type SecretMeta = {
 
 function secretPath(name: string): string {
   return `/api/secrets/${encodeURIComponent(name)}`
+}
+
+// findSecret returns the metadata row for name, or undefined when no such
+// secret exists. The conductor has no GET /api/secrets/{name}, so this walks
+// the paged list (the server caps a page at 200) and matches on name. Read
+// failures propagate through withApi: a write that cannot see the current
+// row must not proceed and silently wipe its metadata.
+async function findSecret(api: ApiContext, name: string): Promise<SecretMeta | undefined> {
+  const page = await fetchAll((params) => withApi(api, (c) => c.listSecrets<SecretMeta>(params)))
+  return page.items.find((s) => s.name === name)
 }
 
 // confirmDestructive mounts the shared Confirm component for a y/N gate in
@@ -186,8 +198,11 @@ export function registerSecrets(program: Command): void {
     .command('set <name>')
     .description('create or replace a secret (value from --value, stdin, or a hidden prompt)')
     .option('--value <value>', 'the secret value (omit to read from stdin or a hidden prompt)')
-    .option('--key <key>', 'canonical variable name the value populates (e.g. ANTHROPIC_API_KEY)')
-    .option('--description <text>', 'human-readable description')
+    .option(
+      '--key <key>',
+      'canonical variable name the value populates (e.g. ANTHROPIC_API_KEY); kept when omitted',
+    )
+    .option('--description <text>', 'human-readable description; kept when omitted')
     .action(
       async (
         name: string,
@@ -197,12 +212,24 @@ export function registerSecrets(program: Command): void {
         const flags = globalFlags(cmd)
         const api = await apiContext(cmd)
         const plaintext = await resolveSecretValue(name, opts.value)
+        // The PUT replaces the whole record, so an omitted --key or
+        // --description would wipe what the secret already carries. Read the
+        // current metadata and carry those fields forward; a name that is not
+        // in the list is the create case and carries nothing. With both flags
+        // given there is nothing to carry, so the read is skipped. An explicit
+        // empty flag (--key "") still clears the field.
+        const existing =
+          opts.key === undefined || opts.description === undefined
+            ? await findSecret(api, name)
+            : undefined
+        const key = opts.key ?? existing?.key
+        const description = opts.description ?? existing?.description
         // The body is the ONLY place the plaintext travels. It is never
         // logged and never returned by the server on the response.
         const body = {
           plaintext,
-          ...(opts.key ? { key: opts.key } : {}),
-          ...(opts.description ? { description: opts.description } : {}),
+          ...(key ? { key } : {}),
+          ...(description ? { description } : {}),
         }
         const updated = await withApi(api, (c) =>
           c.request<SecretMeta>(secretPath(name), {

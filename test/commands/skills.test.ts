@@ -313,6 +313,17 @@ describe('skills import', () => {
     expect(JSON.parse(calls[1].body ?? '{}')).toEqual({ stagingId: 'stage-123', force: true })
   })
 
+  it('maps a 409 name conflict to the usage exit code, pointing at --force', async () => {
+    stubFetch({
+      'POST /api/skills/import-package?dryRun=1': preview(true),
+      'POST /api/skills/import-package/commit': jsonResponse({ error: 'skill exists' }, { status: 409 }),
+    })
+    await expect(run(['skills', 'import', skillDir])).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+      message: expect.stringContaining('--force'),
+    })
+  })
+
   it('rejects a directory without SKILL.md before any network call', async () => {
     const empty = await mkdtemp(path.join(os.tmpdir(), 'orca-empty-'))
     const calls = stubFetch({})

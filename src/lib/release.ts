@@ -19,10 +19,11 @@ const execFileP = promisify(execFile)
 
 // The public repo that hosts the release binaries; install.sh points at the
 // same one. Keep these three in sync with the install script and README.
+// There is no npm package: package.json is private, so the install script
+// and a source checkout are the only two install paths.
 export const RELEASE_REPO = 'okikorg/orca-cli'
 export const RELEASES_URL = `https://github.com/${RELEASE_REPO}/releases`
-export const INSTALL_SCRIPT_URL = 'https://orca-landing-woad.vercel.app/install.sh'
-export const NPM_PACKAGE = '@agent-orc/cli'
+export const INSTALL_SCRIPT_URL = 'https://orcapods.ai/install.sh'
 
 // Release tags are `cli-v<semver>`; the VERSION constant is the bare semver.
 export const TAG_PREFIX = 'cli-v'

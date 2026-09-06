@@ -165,6 +165,44 @@ describe('orca mcp serve', () => {
     expect(firstText(res)).toContain('orca login')
   })
 
+  it('storage_read defaults maxBytes to the schema maximum and truncates at the cap', async () => {
+    const client = await connect()
+
+    // The implicit default must never exceed what an explicit value may ask
+    // for, so the advertised default and the schema ceiling are one number.
+    const tools = (await client.listTools()).tools
+    const schema = tools.find((t) => t.name === 'storage_read')?.inputSchema as unknown as {
+      properties: { maxBytes: { maximum: number; description: string } }
+    }
+    expect(schema.properties.maxBytes.maximum).toBe(50_000)
+    expect(schema.properties.maxBytes.description).toContain('default 50000')
+
+    // Above the ceiling is refused before the request is made.
+    const calls = stubFetch({
+      'GET /api/storage/objects/notes/big.txt': jsonResponse({
+        key: 'notes/big.txt',
+        size: 30,
+        encoding: 'utf8',
+        content: 'x'.repeat(30),
+      }),
+    })
+    const tooBig = await client.callTool({
+      name: 'storage_read',
+      arguments: { key: 'notes/big.txt', maxBytes: 50_001 },
+    })
+    expect((tooBig as ToolText).isError).toBe(true)
+    expect(calls).toHaveLength(0)
+
+    // Within the ceiling the content is cut at the cap and the cut is announced.
+    const cut = await client.callTool({
+      name: 'storage_read',
+      arguments: { key: 'notes/big.txt', maxBytes: 10 },
+    })
+    const payload = JSON.parse(firstText(cut)) as { content: string; truncatedAt?: number }
+    expect(payload.content).toBe('x'.repeat(10))
+    expect(payload.truncatedAt).toBe(10)
+  })
+
   it('storage_write refuses prefix keys and round-trips content', async () => {
     const calls = stubFetch({
       'PUT /api/storage/objects/notes/hello.txt': jsonResponse({

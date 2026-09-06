@@ -29,7 +29,12 @@ import {
 // description, managed via the tenant-scoped /api/mcp-servers surface. The
 // runtime copies entries into a profile's mcpServers at attach time; it does
 // not consult the catalog at run time.
-type MCPServerCatalogEntry = MCPServerSpec & { description?: string }
+// A catalog entry is always an inline server (transport + url), never a ref.
+type MCPServerCatalogEntry = MCPServerSpec & {
+  transport: 'http' | 'sse'
+  url: string
+  description?: string
+}
 
 // The probe result returned by POST /api/mcp-servers/test.
 type MCPTestResult = {
@@ -438,6 +443,22 @@ export function registerMcp(program: Command): void {
         cmd: Command,
       ) => {
         const flags = globalFlags(cmd)
+        // A catalog entry carries its own transport and headers, so with a
+        // NAME those flags would be silently dropped. --transport has a
+        // default, so only an explicit CLI value counts as passing it.
+        if (name) {
+          const explicit = ['transport', 'header'].filter(
+            (o) => cmd.getOptionValueSource(o) === 'cli',
+          )
+          if (explicit.length > 0) {
+            const named = explicit.map((o) => `--${o}`).join(' and ')
+            const verb = explicit.length > 1 ? 'apply' : 'applies'
+            throw new CliError(`${named} only ${verb} with --url, not a catalog NAME`, ExitCode.Usage, [
+              `The entry "${name}" already stores its transport and headers.`,
+              `Change them with: orca mcp set ${name} ...`,
+            ])
+          }
+        }
         const api = await apiContext(cmd)
         let spec: MCPServerSpec
         if (name) {

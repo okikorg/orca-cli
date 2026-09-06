@@ -294,8 +294,12 @@ export function registerSkills(program: Command): void {
         else console.log(`${accentVerb('Imported')} skill "${created.name}" (${created.resources?.length ?? 0} resource file(s)).`)
       } catch (err) {
         if (err instanceof CliError) throw err
+        // A name conflict is a usage error (exit 2), as pools create treats
+        // its 409: the caller chooses whether to overwrite.
         if (err instanceof ApiError && err.status === 409) {
-          throw new CliError(`skill already exists; re-run with --force to overwrite`, ExitCode.Failure)
+          throw new CliError('skill already exists; re-run with --force to overwrite', ExitCode.Usage, [
+            `Overwrite it with: orca skills import ${target} --force`,
+          ])
         }
         throw mapApiError(err, { contextName: api.resolved.name, apiUrl: api.client.apiUrl })
       }
