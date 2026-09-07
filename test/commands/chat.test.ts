@@ -233,7 +233,30 @@ describe('orca chat exit codes', () => {
       buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
     ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
     // The request must have targeted the baked-in default host.
-    expect(calls[0].host).toBe('chat-gateway-production-b766.up.railway.app')
+    expect(calls[0].host).toBe('chat.orcapods.ai')
+  })
+
+  it('upgrades a context still pinned to the former Railway gateway host', async () => {
+    vi.stubEnv('ORCA_GATEWAY_URL', 'https://chat-gateway-production-b766.up.railway.app')
+    const calls = stubFetch({
+      'POST /v1/chat/org_x/support/stream': jsonResponse({ error: 'unauthorized' }, { status: 401 }),
+    })
+    await expect(
+      buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
+    ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
+    // The stale first-party default is rewritten, not honoured.
+    expect(calls[0].host).toBe('chat.orcapods.ai')
+  })
+
+  it('leaves a self-hosted gateway alone', async () => {
+    vi.stubEnv('ORCA_GATEWAY_URL', 'https://gateway.internal.example')
+    const calls = stubFetch({
+      'POST /v1/chat/org_x/support/stream': jsonResponse({ error: 'unauthorized' }, { status: 401 }),
+    })
+    await expect(
+      buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
+    ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
+    expect(calls[0].host).toBe('gateway.internal.example')
   })
 })
 
