@@ -116,6 +116,41 @@ describe('runs get', () => {
     expect(out).toContain('Tokens:   in 10 out 5')
   })
 
+  it('reports the conductor total, not the sum of cumulative usage snapshots', async () => {
+    // marlin uploads a cumulative snapshot per model step. Summing them
+    // counts every step but the last twice: these two events sum to
+    // in 17850 / out 188, while the run actually used in 11927 / out 130.
+    stubFetch({
+      'GET /api/runs/run_1': jsonResponse({
+        ...SUMMARY,
+        usage: { inputTokens: 11927, outputTokens: 130 },
+        events: [
+          { type: 'usage', usage: { inputTokens: 5923, outputTokens: 58 } },
+          { type: 'usage', usage: { inputTokens: 11927, outputTokens: 130 } },
+        ],
+      }),
+    })
+    await run(['runs', 'get', 'run_1'])
+    const out = vi.mocked(console.log).mock.calls.map((c) => String(c[0])).join('\n')
+    expect(out).toContain('Tokens:   in 11927 out 130')
+    expect(out).not.toContain('17850')
+  })
+
+  it('still adds up the events when the conductor sends no total', async () => {
+    stubFetch({
+      'GET /api/runs/run_1': jsonResponse({
+        ...SUMMARY,
+        events: [
+          { type: 'usage', usage: { inputTokens: 10, outputTokens: 5 } },
+          { type: 'usage', usage: { inputTokens: 4, outputTokens: 1 } },
+        ],
+      }),
+    })
+    await run(['runs', 'get', 'run_1'])
+    const out = vi.mocked(console.log).mock.calls.map((c) => String(c[0])).join('\n')
+    expect(out).toContain('Tokens:   in 14 out 6')
+  })
+
   it('emits the raw run with --json', async () => {
     stubFetch({ 'GET /api/runs/run_1': jsonResponse({ ...SUMMARY, events: [] }) })
     await run(['--json', 'runs', 'get', 'run_1'])
