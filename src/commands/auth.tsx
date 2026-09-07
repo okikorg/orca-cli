@@ -18,6 +18,8 @@ import {
   DEFAULT_DASHBOARD_URL,
   LEGACY_DEFAULT_API_URL,
   LEGACY_DEFAULT_DASHBOARD_URL,
+  DEFAULT_GATEWAY_URL,
+  LEGACY_DEFAULT_GATEWAY_URL,
 } from '../lib/defaults.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { listenForKeyPaste } from '../lib/key-listener.js'
@@ -227,6 +229,13 @@ async function runLogin(opts: LoginOpts, cmd: Command): Promise<void> {
   const ctxOut: ContextConfig = { ...existing, apiUrl, apiKey: token }
   if (dashboardUrl) ctxOut.dashboardUrl = dashboardUrl
   if (opts.gatewayUrl) ctxOut.gatewayUrl = opts.gatewayUrl.trim().replace(/\/+$/, '')
+  // Upgrade the former baked-in default the same way apiUrl and dashboardUrl
+  // are upgraded, so a context saved before the move to the first-party
+  // domain stops pinning the raw Railway hostname. Custom gateways are left
+  // alone.
+  if (ctxOut.gatewayUrl === LEGACY_DEFAULT_GATEWAY_URL && DEFAULT_GATEWAY_URL) {
+    ctxOut.gatewayUrl = DEFAULT_GATEWAY_URL
+  }
   if (handoff.keyId) ctxOut.keyId = handoff.keyId
   else delete ctxOut.keyId
   cfg.contexts[name] = ctxOut

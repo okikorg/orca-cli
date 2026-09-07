@@ -7,6 +7,7 @@ import {
   DEFAULT_DASHBOARD_URL,
   DEFAULT_GATEWAY_URL,
   LEGACY_DEFAULT_API_URL,
+  LEGACY_DEFAULT_GATEWAY_URL,
 } from './defaults.js'
 import { CliError, ExitCode } from './errors.js'
 
@@ -136,6 +137,8 @@ export async function resolveContext(flags: GlobalFlags): Promise<ResolvedContex
   const defaulted = new Set<DefaultableField>()
   const upgradeLegacyApiUrl = (url: string | undefined): string | undefined =>
     url === LEGACY_DEFAULT_API_URL && DEFAULT_API_URL ? DEFAULT_API_URL : url
+  const upgradeLegacyGatewayUrl = (url: string | undefined): string | undefined =>
+    url === LEGACY_DEFAULT_GATEWAY_URL && DEFAULT_GATEWAY_URL ? DEFAULT_GATEWAY_URL : url
   const withDefault = (
     field: DefaultableField,
     explicit: string | undefined,
@@ -159,7 +162,11 @@ export async function resolveContext(flags: GlobalFlags): Promise<ResolvedContex
       upgradeLegacyApiUrl(flags.apiUrl || process.env.ORCA_API_URL || base.apiUrl),
       DEFAULT_API_URL,
     ),
-    gatewayUrl: withDefault('gatewayUrl', process.env.ORCA_GATEWAY_URL || base.gatewayUrl, DEFAULT_GATEWAY_URL),
+    gatewayUrl: withDefault(
+      'gatewayUrl',
+      upgradeLegacyGatewayUrl(process.env.ORCA_GATEWAY_URL || base.gatewayUrl),
+      DEFAULT_GATEWAY_URL,
+    ),
     apiKey: process.env.ORCA_API_KEY || base.apiKey,
     dashboardUrl: withDefault('dashboardUrl', process.env.ORCA_DASHBOARD_URL || base.dashboardUrl, DEFAULT_DASHBOARD_URL),
     keyId: base.keyId,

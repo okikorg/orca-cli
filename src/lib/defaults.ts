@@ -27,8 +27,14 @@ export const DEFAULT_DASHBOARD_URL: string | null = 'https://app.orcapods.ai'
 // current production domain; user-supplied custom dashboard URLs are untouched.
 export const LEGACY_DEFAULT_DASHBOARD_URL = 'https://agent-orc-dashboard.vercel.app'
 
-// Public chat gateway base URL. CONFIRMED 2026-07-05: taken from the
-// conductor's own publicUrl on GET /api/published and verified live
-// (/healthz 200, unauthenticated /v1/chat 401).
-export const DEFAULT_GATEWAY_URL: string | null =
+// Public chat gateway base URL. Moved to the first-party domain on
+// 2026-09-07 so a published agent's URL does not advertise the hosting
+// provider. Railway keeps serving the generated hostname alongside the
+// custom domain, so URLs published before the switch keep working.
+export const DEFAULT_GATEWAY_URL: string | null = 'https://chat.orcapods.ai'
+
+// Former baked-in default (raw Railway hostname). Context resolution and
+// auth login upgrade this exact saved value to the current domain;
+// user-supplied custom gateway URLs are untouched.
+export const LEGACY_DEFAULT_GATEWAY_URL =
   'https://chat-gateway-production-b766.up.railway.app'
