@@ -112,7 +112,11 @@ export type RunSummary = {
   finishedAt?: string
 }
 
-export type RunDetail = RunSummary & { events: RunEvent[] }
+// `usage` is the conductor's authoritative total for the run. Prefer it over
+// re-deriving a total from the usage events: some runtimes (marlin) upload
+// CUMULATIVE snapshots, one per model step, so summing the events counts the
+// earlier steps again.
+export type RunDetail = RunSummary & { events: RunEvent[]; usage?: Usage }
 
 export type CreateRunResponse = {
   runId: string

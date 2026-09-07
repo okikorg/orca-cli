@@ -222,9 +222,16 @@ export function registerRuns(program: Command): void {
         return
       }
 
-      let usage: Usage = {}
-      for (const e of run.events) {
-        if (e.type === 'usage') usage = addUsage(usage, e.usage)
+      // The conductor reports the run's total in `usage`. Only fall back to
+      // adding up the usage events when it did not send one: marlin uploads a
+      // cumulative snapshot per model step, so summing those double-counts
+      // every step but the last (a 2-step run read 17850 in, against an
+      // actual 11927).
+      let usage: Usage = run.usage ?? {}
+      if (!run.usage) {
+        for (const e of run.events) {
+          if (e.type === 'usage') usage = addUsage(usage, e.usage)
+        }
       }
       const usageText = formatUsage(usage)
 
