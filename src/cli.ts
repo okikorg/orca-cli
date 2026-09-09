@@ -7,6 +7,7 @@ import { registerAuth } from './commands/auth.js'
 import { registerBilling } from './commands/billing.js'
 import { registerChat } from './commands/chat.js'
 import { registerContext } from './commands/context.js'
+import { registerCredit } from './commands/credit.js'
 import { registerDoctor } from './commands/doctor.js'
 import { registerKeys } from './commands/keys.js'
 import { registerMcp } from './commands/mcp.js'
@@ -63,6 +64,7 @@ const COMMAND_GROUP: Record<string, string> = {
   runs: GROUP.CORE,
   stats: GROUP.OBSERVE,
   usage: GROUP.OBSERVE,
+  credit: GROUP.OBSERVE,
   sessions: GROUP.OBSERVE,
   doctor: GROUP.OBSERVE,
   topology: GROUP.OBSERVE,
@@ -95,6 +97,7 @@ registerRuns(program)
 
 registerStats(program)
 registerUsage(program)
+registerCredit(program)
 registerSessions(program)
 registerDoctor(program)
 registerPlatform(program)

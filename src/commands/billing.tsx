@@ -1,6 +1,7 @@
 import type { Command } from 'commander'
 
 import { CliError, ExitCode } from '../lib/errors.js'
+import { resetLabel, usd, usdFloat } from '../lib/money.js'
 import {
   interactive,
   outputMode,
@@ -68,28 +69,6 @@ async function confirmDestructive(message: string): Promise<boolean> {
     const instance = render(<Confirm message={message} onDecision={finish} />, { exitOnCtrlC: true })
     void instance.waitUntilExit().then(() => finish(false))
   })
-}
-
-// usd formats a cents integer as a dollars-and-cents string. Cents are the
-// authoritative unit server-side; we only ever render dollars for display.
-function usd(cents: number): string {
-  const sign = cents < 0 ? '-' : ''
-  return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`
-}
-
-// usdFloat formats an already-dollar float (e.g. wallet balanceUSD) with cents
-// precision.
-function usdFloat(dollars: number): string {
-  const sign = dollars < 0 ? '-' : ''
-  return `${sign}$${Math.abs(dollars).toFixed(2)}`
-}
-
-// resetLabel compacts an RFC3339 reset time to a short calendar day, matching
-// the dashboard SpendCapCard. Returns '' for an unparseable value.
-function resetLabel(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toISOString().slice(0, 10)
 }
 
 // Sentinels that clear the tenant's monthly override and revert to the system
