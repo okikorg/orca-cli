@@ -490,10 +490,19 @@ Read the prepaid credit wallet and set the tenant's monthly spend cap. The
 payment/checkout flow is intentionally out of scope.
 
 ```
+orca credit                              # balance and cap headroom in one view
 orca billing wallet                      # read-only credit balance
 orca billing cap                         # show the monthly cap and accrued spend
 orca billing cap set <amount> [--email A] [--yes]   # amount in dollars, or "default" to clear
 ```
+
+`orca credit` answers "how much can I spend right now" by reading both
+endpoints at once. The two numbers are different things: `balance` is prepaid
+credit, `cap left` is headroom under the monthly ceiling, and spending stops at
+whichever runs out first. If one endpoint is down the command prints the half it
+got, names the missing half on stderr, and still exits 0; an auth failure is
+never degraded that way. `--json` emits `{ wallet, cap }` with both server
+payloads unreshaped.
 
 Amounts are dollars parsed into cents (`10`, `10.5`, `10.50`, `$10`, `1,000`);
 anything else, a negative, or more than two decimal places exits 2. `set`
