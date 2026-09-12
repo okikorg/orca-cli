@@ -10,6 +10,7 @@ import { registerContext } from './commands/context.js'
 import { registerCredit } from './commands/credit.js'
 import { registerDoctor } from './commands/doctor.js'
 import { registerKeys } from './commands/keys.js'
+import { registerKits } from './commands/kits.js'
 import { registerMcp } from './commands/mcp.js'
 import { registerMemory } from './commands/memory.js'
 import { registerPlatform } from './commands/platform.js'
@@ -77,6 +78,7 @@ const COMMAND_GROUP: Record<string, string> = {
   secrets: GROUP.MANAGE,
   storage: GROUP.MANAGE,
   memory: GROUP.MANAGE,
+  kit: GROUP.MANAGE,
   keys: GROUP.MANAGE,
   billing: GROUP.MANAGE,
   auth: GROUP.SETUP,
@@ -109,6 +111,7 @@ registerMcp(program)
 registerSecrets(program)
 registerStorage(program)
 registerMemory(program)
+registerKits(program)
 registerKeys(program)
 registerBilling(program)
 
