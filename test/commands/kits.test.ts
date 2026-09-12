@@ -146,6 +146,36 @@ describe('kit add', () => {
     expect(calls.some((c) => c.path === '/api/profiles/writer/pin')).toBe(true)
   })
 
+  it('attempts every pin even when one of them fails', async () => {
+    const calls = stubFetch(
+      routes({
+        'POST /api/templates/seo-helper/copy?id=tpl-1': jsonResponse({
+          copied: true,
+          profiles: ['writer', 'media'],
+        }),
+        'POST /api/profiles/writer/pin': jsonResponse({ error: 'nope' }, { status: 503 }),
+        'POST /api/profiles/media/pin': noContent(),
+      }),
+    )
+    await run(['kit', 'add', LINK, '--yes'])
+    expect(calls.filter((c) => c.path.endsWith('/pin')).map((c) => c.path)).toEqual([
+      '/api/profiles/writer/pin',
+      '/api/profiles/media/pin',
+    ])
+    expect(stderr()).toContain('could not pin')
+  })
+
+  it('says nothing about pinning when the add installed nothing pinnable', async () => {
+    const calls = stubFetch(
+      routes({
+        'POST /api/templates/seo-helper/copy?id=tpl-1': jsonResponse({ copied: true, skills: ['seo'] }),
+      }),
+    )
+    await run(['kit', 'add', LINK, '--yes'])
+    expect(calls.some((c) => c.path.endsWith('/pin'))).toBe(false)
+    expect(stderr()).not.toContain('could not pin')
+  })
+
   it('leaves the pin alone with --no-pin', async () => {
     const calls = stubFetch(routes())
     await run(['kit', 'add', LINK, '--yes', '--no-pin'])
@@ -243,6 +273,14 @@ describe('kit add name collisions', () => {
     await expect(run(['kit', 'add', LINK, '--yes', '--skip', 'widget:seo'])).rejects.toMatchObject({
       exitCode: ExitCode.Usage,
     })
+  })
+
+  it('refuses to rename and skip the same asset', async () => {
+    const calls = stubFetch(routes())
+    await expect(
+      run(['kit', 'add', LINK, '--yes', '--name', 'skill:seo=x', '--skip', 'skill:seo']),
+    ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    expect(calls).toHaveLength(0)
   })
 
   it('refuses an add with every asset skipped', async () => {

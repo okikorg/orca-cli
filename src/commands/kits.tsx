@@ -267,25 +267,29 @@ export function addedNames(result: KitCopyResult): { kind: string; name: string 
   return out
 }
 
+// A kit that installed nothing pinnable (a skill-only kit, or an add that
+// skipped the pod and the agents) is not a failed pin, and must not be reported
+// as one.
+export type PinOutcome = 'pinned' | 'failed' | 'nothing'
+
 // pinAdded pins what was added, because the kit page promises "pinned on Home"
 // and an add from the terminal lands in the same place as an add from the
 // browser. A pod is pinned as one thing; a kit with no pod pins its agents.
-// Best effort: a failed pin leaves the agent in Browse and is worth a line on
-// stderr, not a failed add.
-async function pinAdded(client: ApiClient, result: KitCopyResult): Promise<boolean> {
-  try {
-    if (result.pool) {
-      await client.request<void>(`/api/pools/${encodeURIComponent(result.pool)}/pin`, { method: 'POST' })
-      return true
-    }
-    const profiles = result.profiles ?? []
-    for (const name of profiles) {
-      await client.request<void>(`/api/profiles/${encodeURIComponent(name)}/pin`, { method: 'POST' })
-    }
-    return profiles.length > 0
-  } catch {
-    return false
-  }
+//
+// Every pin is attempted, the way the dashboard's Promise.all over pinAgent
+// attempts every one: a kit whose second agent fails to pin should still have
+// its first and third pinned. Best effort overall, since a pin that did not
+// take leaves the agent in Browse, which is worth a line on stderr and never a
+// failed add.
+async function pinAdded(client: ApiClient, result: KitCopyResult): Promise<PinOutcome> {
+  const paths = result.pool
+    ? [`/api/pools/${encodeURIComponent(result.pool)}/pin`]
+    : (result.profiles ?? []).map((name) => `/api/profiles/${encodeURIComponent(name)}/pin`)
+  if (paths.length === 0) return 'nothing'
+  const settled = await Promise.allSettled(
+    paths.map((path) => client.request<void>(path, { method: 'POST' })),
+  )
+  return settled.every((outcome) => outcome.status === 'fulfilled') ? 'pinned' : 'failed'
 }
 
 // -- Rendering ----------------------------------------------------------------
@@ -303,7 +307,7 @@ function planRowCells(row: KitSelectionRow): string[] {
   return [row.kind, row.name, planRowStatus(row), row.selected ? row.targetName : '-']
 }
 
-async function renderPlan(kit: Kit, rows: KitSelectionRow[]): Promise<void> {
+async function renderPlan(kit: Kit, rows: KitSelectionRow[], hint?: string): Promise<void> {
   const { Table } = await import('../ui/Table.js')
   const { Panel } = await import('../ui/Panel.js')
   const { theme } = await import('../ui/theme.js')
@@ -324,7 +328,7 @@ async function renderPlan(kit: Kit, rows: KitSelectionRow[]): Promise<void> {
         ]}
         rows={rows}
         headers
-        hint={`rename: --name <kind>:<name>=<target> ${glyphs.separator} leave out: --skip <kind>:<name>`}
+        hint={hint}
       />
     </Panel>,
   )
@@ -335,8 +339,13 @@ async function renderResult(kit: Kit, result: KitCopyResult, pinned: boolean): P
   const { Panel } = await import('../ui/Panel.js')
   const { theme } = await import('../ui/theme.js')
   const rows = addedNames(result)
+  const next = result.pool
+    ? `orca pools get ${result.pool}`
+    : result.profiles?.[0]
+      ? `orca run ${result.profiles[0]} "..."`
+      : undefined
   await renderStatic(
-    <Panel title="KIT ADDED" subtitle={kit.label}>
+    <Panel title="KIT ADDED" subtitle={pinned ? `${kit.label} ${glyphs.separator} pinned on Home` : kit.label}>
       <Table
         columns={[
           { header: 'kind', get: (row: { kind: string }) => row.kind },
@@ -349,7 +358,7 @@ async function renderResult(kit: Kit, result: KitCopyResult, pinned: boolean): P
         ]}
         rows={rows}
         headers
-        hint={pinned ? 'pinned on Home' : undefined}
+        hint={next}
       />
     </Panel>,
   )
@@ -392,6 +401,13 @@ export function registerKits(program: Command): void {
         const { publicId, utm } = parseKitLink(link)
         const overrides = new Map(opts.name.map(parseNameOverride))
         const skips = new Set(opts.skip.map((spec) => parseAssetRef(spec, '--skip')))
+        for (const key of overrides.keys()) {
+          if (skips.has(key)) {
+            throw new CliError(`--name and --skip both name "${key}"`, ExitCode.Usage, [
+              'Rename it or leave it out, not both.',
+            ])
+          }
+        }
 
         const api = await apiContext(cmd)
         const kitRow = await fetchKit(api, publicId)
@@ -429,7 +445,7 @@ export function registerKits(program: Command): void {
             printPlainRows(rows.map(planRowCells))
             return
           }
-          await renderPlan(kitRow, rows)
+          await renderPlan(kitRow, rows, `orca kit add ${publicId} --yes`)
           return
         }
 
@@ -453,7 +469,8 @@ export function registerKits(program: Command): void {
           }
           await renderPlan(kitRow, rows)
           if (!(await confirm(`Add "${kitRow.label}" to your workspace?`))) {
-            throw new CliError('cancelled', ExitCode.Usage)
+            console.error(hintText('Aborted.'))
+            return
           }
         }
 
@@ -468,15 +485,15 @@ export function registerKits(program: Command): void {
           ])
         }
 
-        const pinned = opts.pin ? await pinAdded(api.client, result) : false
+        const pin: PinOutcome = opts.pin ? await pinAdded(api.client, result) : 'nothing'
         const skipped = result.skipped ?? []
 
         if (mode === 'json') {
-          printJson({ ...result, pinned })
+          printJson({ ...result, pinned: pin === 'pinned' })
         } else if (mode === 'plain') {
           printPlainRows(addedNames(result).map((row) => [row.kind, row.name]))
         } else {
-          await renderResult(kitRow, result, pinned)
+          await renderResult(kitRow, result, pin === 'pinned')
         }
 
         if (skipped.length > 0) {
@@ -487,7 +504,7 @@ export function registerKits(program: Command): void {
           )
           for (const item of skipped) console.error(hintText(`  ${item.kind} "${item.targetName}"`))
         }
-        if (opts.pin && !pinned) {
+        if (pin === 'failed') {
           console.error(hintText('Added, but could not pin it on Home. Pin it from the agent page.'))
         }
         if (result.automations?.length || result.automation) {
