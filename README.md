@@ -187,6 +187,8 @@ orca runs get|tail|cancel [id]
 orca keys list
 orca keys create [name] [--expires <iso8601>]
 orca keys revoke <id> [--yes]
+
+orca kit add <link> [--name kind:name=target]... [--skip kind:name]... [--dry-run] [--no-pin] [--yes]
 ```
 
 List commands that page (`agents list`, `runs list`, `sessions list`, and the
@@ -462,6 +464,31 @@ at creation; `members add/remove` adjust the roster afterwards (both idempotent)
 The API has no per-pool GET, so `pools get` filters the list and exits 4 when
 the name is unknown. FS globs support the `{self}`, `{pool}`, and `{role}`
 tokens the runtime substitutes at policy compile time.
+
+## Kits
+
+A kit is a shared, frozen snapshot of a working setup: its agents, their
+skills, the pod they belong to, and any schedules that run them. `orca kit add`
+is the terminal twin of the Add kit button on a kit's page.
+
+```
+orca kit add https://app.orcapods.ai/kits/kit-xxxxxxxxxxxxxxxxx
+orca kit add kit-xxxxxxxxxxxxxxxxx --dry-run          # show the plan, add nothing
+orca kit add <link> --name profile:writer=my-writer   # install one asset under another name
+orca kit add <link> --skip skill:seo                  # leave one asset out
+```
+
+Nothing in your workspace is ever overwritten. Before the add, the conductor
+reads every name the kit carries against what you already have and answers with
+a target name for each: the kit's own name when it is free, `name-copy`,
+`name-copy-2` and so on when it is not. The CLI sends those names back
+unchanged, so adding the same kit twice gives you a second copy rather than a
+clobbered first one. `--name` overrides one of them; `--skip` drops an asset
+from the add entirely.
+
+The plan prints before the y/N prompt. In a script, pass `--yes` (without it,
+a non-interactive run exits 2). Schedules always arrive paused. Secrets are
+never part of a kit. What lands is pinned on Home unless you pass `--no-pin`.
 
 ## Secrets
 
