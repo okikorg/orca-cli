@@ -126,8 +126,8 @@ describe('kit add', () => {
     await run(['kit', 'add', LINK, '--yes'])
     expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
       `GET /api/kits/${ID}`,
-      `POST /api/kits/${ID}/events`,
       'GET /api/templates/seo-helper/copy?id=tpl-1',
+      `POST /api/kits/${ID}/events`,
       `POST /api/kits/${ID}/events`,
       'POST /api/templates/seo-helper/copy?id=tpl-1',
       'POST /api/pools/seo-pod/pin',
@@ -345,10 +345,17 @@ describe('kit add --dry-run', () => {
     await run(['kit', 'add', LINK, '--dry-run'])
     expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
       `GET /api/kits/${ID}`,
-      `POST /api/kits/${ID}/events`,
       'GET /api/templates/seo-helper/copy?id=tpl-1',
     ])
     expect(stdout()).toBe('skill\tseo\tnew\tseo\nprofile\twriter\tnew\twriter\npool\tseo-pod\tnew\tseo-pod\n')
+  })
+
+  it('posts no beacon, however many times it is run', async () => {
+    const calls = stubFetch(routes())
+    await run(['kit', 'add', LINK, '--dry-run'])
+    await run(['kit', 'add', LINK, '--dry-run'])
+    await run(['kit', 'add', LINK, '--dry-run'])
+    expect(calls.filter((c) => c.path.endsWith('/events'))).toHaveLength(0)
   })
 
   it('emits the resolved plan with --json', async () => {

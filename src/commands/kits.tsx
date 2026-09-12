@@ -412,12 +412,6 @@ export function registerKits(program: Command): void {
           return
         }
 
-        // One visit: the view and the click that follows it share an id, the
-        // way the kit page's per-tab id does.
-        const visitorId = randomUUID().replace(/-/g, '')
-        const beacon = { visitorId, utm: { source: 'cli', ...utm } }
-        await recordKitEvent(api.client, publicId, { type: 'view', ...beacon })
-
         const plan = await withApi(api, (c) =>
           c.request<KitCopyPlan>(
             `/api/templates/${encodeURIComponent(kitRow.slug)}/copy?id=${encodeURIComponent(kitRow.id)}`,
@@ -438,6 +432,20 @@ export function registerKits(program: Command): void {
           await renderPlan(kitRow, rows)
           return
         }
+
+        // One visit: the view and the click that follows it share an id, the
+        // way the kit page's per-tab id does.
+        //
+        // Posted here and not on the way in, so a --dry-run is not a visit. The
+        // page mints its id once per tab precisely so a reload is not a second
+        // view; a fresh process cannot dedup that way, and a dry run is the one
+        // shape of this command people put in a loop. Counting each pass would
+        // inflate the very tally the beacon exists to keep honest. A view now
+        // means someone reached the point of adding the kit, and a cancelled
+        // add reads as a view with no click, exactly as it does on the page.
+        const visitorId = randomUUID().replace(/-/g, '')
+        const beacon = { visitorId, utm: { source: 'cli', ...utm } }
+        await recordKitEvent(api.client, publicId, { type: 'view', ...beacon })
 
         if (!opts.yes) {
           if (!interactive()) {
