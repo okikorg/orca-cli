@@ -8,7 +8,7 @@
     {
       "name": "orca",
       "source": "./plugins/orca",
-      "description": "Run AI agents in the cloud with Orca: install and sign in the orca CLI, create and run agents, follow output, and drive the whole control plane over MCP."
+      "description": "Run AI agents in the cloud with Orca: install and sign in the orca CLI, create agents and chat with them, share kits, publish agents, and drive it all over MCP."
     }
   ]
 }

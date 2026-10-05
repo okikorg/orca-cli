@@ -1,7 +1,9 @@
 # orca CLI
 
-Manage agents, runs, and publishing on the Orca platform from the terminal.
-TypeScript + commander for command routing, Ink (React) for TTY rendering.
+Manage agents, sessions, and publishing on the Orca platform from the terminal.
+TypeScript + commander for command routing, Ink (React) for TTY rendering, and
+the official [`openai`](https://www.npmjs.com/package/openai) package for
+Orca's OpenAI-compatible Agents API.
 
 Running `orca` with no arguments shows a one-line brand banner and the command
 list. In a terminal, list and detail views are borderless: hierarchy comes from
@@ -22,13 +24,9 @@ End users install a standalone binary (no Node required) via the landing domain:
 curl -fsSL https://orcapods.ai/install.sh | sh
 ```
 
-Full documentation, including a per-command reference, lives at
-[docs.orcapods.ai/cli/overview](https://docs.orcapods.ai/cli/overview). This
-README is the developer-facing summary.
-
 The script detects your OS/arch, downloads the matching binary, verifies its
 SHA-256 checksum, and installs to `~/.local/bin/orca`. Pin a version with
-`ORCA_VERSION=cli-v0.1.0` or change the target directory with `ORCA_INSTALL_DIR`.
+`ORCA_VERSION=cli-v1.0.0` or change the target directory with `ORCA_INSTALL_DIR`.
 Windows users download `orca-windows-x64.tar.gz` from the
 [releases page](https://github.com/okikorg/orca-cli/releases).
 
@@ -40,13 +38,15 @@ Orca platform it talks to is a separate, private service.
 `orca update` updates a standalone binary to the latest release in place: it
 queries the GitHub Release, downloads the matching `orca-<os>-<arch>` binary,
 verifies its SHA-256 against `SHA256SUMS`, and atomically swaps the running
-executable.
+executable. It needs no Orca credentials, so it also rescues a CLI too old for
+the server (the server answers an old CLI's paths with "This CLI is too old for
+Orca. Run orca update.").
 
 ```sh
-orca update                 # update to the latest release
-orca update --check         # report whether a newer version exists, don't install
-orca update --tag cli-v0.1.0  # install a specific version (also accepts 0.1.0)
-orca update --force         # reinstall the target version even if already current
+orca update                   # update to the latest release
+orca update --check           # report whether a newer version exists, don't install
+orca update --tag cli-v1.0.0  # install a specific version (also accepts 1.0.0)
+orca update --force           # reinstall the target version even if already current
 ```
 
 `orca -v` prints the version and, in an interactive terminal, appends a hint
@@ -64,13 +64,13 @@ two supported paths.
 
 ### Releasing binaries
 
-Binaries are Bun-compiled (each embeds the Bun runtime, ~60–100 MB raw / ~23 MB
+Binaries are Bun-compiled (each embeds the Bun runtime, ~60-100 MB raw / ~23 MB
 gzipped) and cross-compiled for all platforms from one CI runner. Cut a release
 by pushing a tag; the `release-cli` workflow builds, packages, and publishes the
 GitHub Release (default `GITHUB_TOKEN`, no extra secret needed):
 
 ```sh
-git tag cli-v0.1.0 && git push origin cli-v0.1.0
+git tag cli-v1.0.0 && git push origin cli-v1.0.0
 ```
 
 Build locally with `npm run package:binaries` (outputs `dist-bin/*.tar.gz` +
@@ -88,41 +88,42 @@ npm run build && npm link    # global `orca`
 
 ## Authentication
 
-The CLI authenticates with a tenant API key (`ao_...`). `orca login` (an
-alias of `orca auth login`) picks one of three flows:
+The CLI authenticates with an Orca API key (`orca_sk_...`). `orca login` (an
+alias of `orca auth login`) signs in with a one-time code (RFC 8628 device
+login), which works everywhere, including inside coding agents and over SSH:
 
-- **Browser** (the default in an interactive terminal): opens the dashboard,
-  you authorize, and the dashboard mints a role-inheriting key and hands it
-  back over a localhost callback. Falls back to a masked paste prompt after
-  five minutes.
-- **Device code** (`--headless`, or automatically when there is no TTY or a
-  coding agent, CI, or SSH session is detected): prints a one-time code and a
-  URL to approve on any device, then polls until the key is issued.
-- **Token** (`--with-token ao_...`): no browser, no prompt, for CI.
+1. The CLI prints a code and a link to the dashboard's `/device` page, and opens
+   the link when a person is at the terminal.
+2. Signed in to the dashboard, you check the code and approve (or deny) it.
+3. The CLI's next poll receives a new API key with your role, shown once and
+   stored locally. No secret is stored on the server before that poll.
 
-Keys are stored per context in `~/.config/orca/config.json` (chmod 600).
+For CI, `--with-token orca_sk_...` stores a key minted elsewhere (`orca keys
+create`, or the dashboard) without any flow. Keys are stored per context in
+`~/.config/orca/config.json` (chmod 600).
 
 ```sh
-orca login                                   # browser flow; defaults to the Orca production API
-orca login --headless                        # device code
-orca login --api-url http://localhost:8080 --dashboard-url http://localhost:5173
-orca whoami                                  # tenant, role, and key id the stored key acts as
+orca login                                   # device login; defaults to the Orca production API
+orca login --no-browser                      # print the code and link only
+orca login --api-url http://localhost:8080   # a local or self-hosted server
+orca whoami                                  # tenant, actor, and role the stored key acts as
 orca auth status
 orca auth logout --revoke                    # revoke the key server-side, then clear it
 ```
 
-`orca login` defaults to the production API (`https://api.orcapods.ai`) and
-dashboard (`https://app.orcapods.ai`); pass `--api-url` and `--dashboard-url`
-for a self-hosted or local conductor.
+`orca login` defaults to the production API (`https://api.orcapods.ai`); pass
+`--api-url` for a self-hosted or local server. The dashboard origin comes from
+the server's verification link and is stored with the context, for kit share
+links.
 
-Contexts work like kubectl contexts: `orca context list`, `orca context use
-prod`, or per-invocation `orca --context prod agents list`.
+Contexts work like kubectl contexts, and are local only: `orca context list`,
+`orca context use prod`, or per-invocation `orca --context prod agents list`.
 
 ## Doctor
 
 `orca doctor` is a preflight that verifies everything the other commands need
 and prints a concrete fix for every problem it finds. It runs read-only probes
-only (it never creates a run, key, or any resource), timeboxes each network
+only (it never creates a session, key, or any resource), timeboxes each network
 probe to 3s so it never hangs, and completes in a few seconds.
 
 ```sh
@@ -134,245 +135,207 @@ orca doctor --strict   # promote warnings to failures
 It checks: Node version (>= 22), the color/TTY situation (informational),
 whether the config file exists, parses, and is `chmod 600`, how the active
 context resolves (which field came from a flag, env var, file, or baked default),
-conductor reachability (`GET /healthz`, with latency), the API key's presence
-and validity/role (`GET /api/api-keys`), a billing/credit preflight that predicts
-the `POST /api/runs` 402 credit gate without creating a run (reads `GET
-/api/billing/wallet` and `GET /api/spend-cap`), the chat gateway URL for `orca
-chat`, and the dashboard URL used by `orca auth login`. Each check reports `pass`,
-`warn`, `fail`, or `skip`. The exit code is `0` when nothing failed (warnings are
-allowed) and `1` when any check failed; `--strict` also fails on warnings.
+server reachability (`GET /health`, with latency), the API key's presence and
+validity and role (`GET /api/whoami`), a credit preflight (`GET
+/api/billing/wallet`: an empty wallet warns, since turns on Orca's model keys
+are refused while your own provider keys keep working), and the dashboard URL
+used for kit share links. Each check reports `pass`, `warn`, `fail`, or `skip`.
+The exit code is `0` when nothing failed (warnings are allowed) and `1` when any
+check failed; `--strict` also fails on warnings.
 
 Environment overrides (all optional, win over the config file):
 
-| Variable          | Meaning                          |
-| ----------------- | -------------------------------- |
-| `ORCA_API_KEY`    | tenant API key                   |
-| `ORCA_API_URL`    | conductor base URL (defaults to the Orca production API) |
-| `ORCA_DASHBOARD_URL`| dashboard base URL for `orca auth login` |
-| `ORCA_GATEWAY_URL`| public chat gateway base URL     |
-| `ORCA_CHAT_KEY`   | published-agent chat key (`orca chat`) |
-| `ORCA_TENANT`     | tenant id (`org_...`) for `orca chat` |
-| `ORCA_CONTEXT`    | context name                     |
-| `ORCA_CONFIG_DIR` | config directory (default XDG)   |
-| `ORCA_ASCII`      | set to `1` to force ASCII glyphs (no Unicode tier) |
+| Variable             | Meaning                                                |
+| -------------------- | ------------------------------------------------------ |
+| `ORCA_API_KEY`       | Orca API key                                           |
+| `ORCA_API_URL`       | server base URL (defaults to the Orca production API)  |
+| `ORCA_DASHBOARD_URL` | dashboard base URL, for kit share links                |
+| `ORCA_CONTEXT`       | context name                                           |
+| `ORCA_CONFIG_DIR`    | config directory (default XDG)                         |
+| `ORCA_ASCII`         | set to `1` to force ASCII glyphs (no Unicode tier)     |
 
 CI needs no config file: `ORCA_API_KEY=... ORCA_API_URL=... orca agents list --json`.
 
 ## Commands
 
 `[x]` marks a positional that opens an interactive picker when omitted in a
-terminal; in a script it is required (exit 2).
+terminal; in a script it is required (exit 2). An `<agent>` is an agent id
+(`agent_...`) or a unique agent name.
 
 ```
-orca login | orca auth login [--api-url u] [--dashboard-url u] [--gateway-url u] [--label l] [--headless] [--with-token ao_...]
-orca whoami
+orca login | orca auth login [--api-url u] [--label l] [--no-browser] [--with-token orca_sk_...]
+orca whoami | orca auth whoami
 orca auth status
 orca auth logout [--revoke] [--yes]
 orca context list|use [name]|show
 
-orca agents list|get [name]|changes <name> [--limit n]
-orca agents create -f agent.yaml         # YAML or JSON; - for stdin
-orca agents update [name] -f agent.yaml  # target old name to rename
-orca agents delete [name] [--yes]
-orca agents publish [name] [--slug s] [--visibility v] [--expose-tool-events]
-orca agents unpublish [name] [--yes]
-orca agents keys list <agent>
-orca agents keys create <agent> [--label l]
-orca agents keys revoke <agent> <id>
+orca chat [agent] [prompt...] [--session id] [--sandbox] [--template id] [--vault id]...
 
-orca run [agent] [prompt...] [--title t] [--session id] [--detach]
-orca runs list [--agent name]
-orca runs get|tail|cancel [id]
+orca agents list
+orca agents get [agent]
+orca agents create -f agent.yaml           # YAML or JSON; - for stdin
+orca agents update <agent> -f fields.yaml  # only the fields in the file change
+orca agents delete [agent] [--yes]
+
+orca sessions list [--agent agent]
+orca sessions get <id>
+orca sessions create --agent <agent> [--sandbox] [--template id] [--vault id]...
+orca sessions items <id> [--limit n]
+orca sessions delete <id> [--yes]
+
+orca usage [--days n] [--group-by model|provider|credential|session|agent] [--session id] [--meter m]
+orca usage events [--meter m]
+
+orca skills list|get <id>|delete <id> [--yes]
+orca skills create <folder>                # an Agent Skills folder with SKILL.md
+
+orca vaults list|create <name>|delete <id> [--yes]
+orca vaults credentials list <vault>
+orca vaults credentials add <vault> --name n --server https://... [--token t]
+orca vaults credentials delete <vault> <id> [--yes]
+
+orca files list
+orca files upload <path> [--name filename]
+orca files download <id> [-o path|-]
+orca files delete <id> [--yes]
+
+orca kits list
+orca kits make --name n [--description d] [--readme file] [--agent a]... [--skill id]... [--template id]...
+orca kits edit <kit-id> [same flags]       # any selection flag replaces the whole selection
+orca kits publish|withdraw <kit-id>
+orca kits show <link|public-id>            # no login needed
+orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run] [--yes]
+
+orca publish create <agent> --label l      # admin; the scoped key's secret is shown once
+orca publish list <agent>
+orca publish revoke <key-id> [--yes]       # revoking the last key unpublishes the agent
 
 orca keys list
-orca keys create [name] [--expires <iso8601>]
+orca keys create [name]
 orca keys revoke <id> [--yes]
 
-orca kit add <link> [--name kind:name=target]... [--skip kind:name]... [--dry-run] [--no-pin] [--yes]
+orca billing wallet
+orca billing buy pro|max|pack:<cents> [--no-open]   # admin; opens the checkout
+orca billing manage [--no-open]                     # admin; opens the billing portal
+
+orca mcp serve
+orca doctor [--strict]
+orca update [--check] [--tag t] [--force]
 ```
 
-List commands that page (`agents list`, `runs list`, `sessions list`, and the
-other `list` views) share `--limit N` (default 10), `--offset N`, and `--all`
-(fetch every page, in windows of 200, up to 10,000 rows). `storage ls` (100)
-and `storage browse` (1000) have their own limits; `keys list` does not page.
+List commands share `--limit N` (1 to 100, default 10), `--after <id>` (the
+cursor a previous page printed), and `--all` (follow the cursor through every
+page, up to 10,000 rows). `kits list` and `publish list` return everything at
+once.
 
 Every list/get command supports `--json` (raw API payloads, stdout only).
 When stdout is not a TTY, output degrades to uncolored tab-separated lines,
-so `orca agents list | cut -f1` works. `runs tail --json` emits one event
-per line (ndjson).
+so `orca agents list | cut -f1` works.
 
-Key minting prints the plaintext token exactly once. In a pipe, stdout
-carries only the token: `ORCA_API_KEY=$(orca keys create ci </dev/null)`.
+Key minting prints the secret exactly once. In a pipe, stdout carries only the
+secret: `ORCA_API_KEY=$(orca keys create ci </dev/null)`.
 
-Ctrl-C during `orca run` / `orca runs tail` detaches the local stream; the
-run keeps going server-side (`orca runs cancel <id>` stops it).
+## Agents, sessions, and chat
 
-## Chat
+Agents, sessions, skills, vaults, and files live on the server's `/v1` Agents
+API, which the CLI calls through the `openai` package exactly as any OpenAI
+client does. `agents create -f` takes the `POST /v1/agents` body; the model
+names its provider with a prefix:
 
-`orca chat <agent> [prompt]` talks to a PUBLISHED agent through the public chat
-gateway (`/v1/chat`), which is a different surface from the conductor API the
-rest of the CLI uses. It always streams over SSE; there is no buffered mode.
+```yaml
+model: openai/gpt-5          # or anthropic/..., openrouter/..., vercel/..., cheaperinference/...
+name: support
+instructions: |
+  You answer support questions.
+tools:
+  - type: mcp
+    server_label: docs
+    transport: { type: http, server_url: https://mcp.example.com/docs }
+    credential_id: cred_123  # from: orca vaults credentials add
+reasoning: { effort: medium }
+```
 
-Auth is a published-agent chat key (`ao_...`), not the tenant API key. Mint one
-with `orca agents keys create <agent>` and pass it with `--key` or
-`ORCA_CHAT_KEY`. The gateway base URL comes from `ORCA_GATEWAY_URL` (or the
-context `gatewayUrl`) and the tenant id (`org_...`) from `--tenant` or `ORCA_TENANT` (the
-org the agent was published under). The key is never echoed.
+Only the shape is checked locally; the server validates every field and the
+CLI prints its message.
+
+`orca chat <agent> [prompt]` runs a turn on a `/v1` session with your API key.
+Without `--session` it creates a session of the agent first (no environment by
+default; `--sandbox` for a hosted sandbox, `--template id` to build it from an
+environment template, `--vault id` to let it use a vault's credentials).
 
 ```sh
-export ORCA_GATEWAY_URL=https://<gateway-host>
-export ORCA_CHAT_KEY=ao_...                  # from: orca agents keys create support
-orca chat support --tenant org_123           # interactive REPL
-orca chat support "summarize the last run"   # single-shot, streams to stdout
-echo "and the one before?" | orca chat support --conversation conv_123
-orca chat support "hi" --json                # ndjson, one gateway event per line
+orca chat support                            # interactive REPL
+orca chat support "summarize the open tickets"   # one turn, streamed to stdout
+echo "and the oldest?" | orca chat support --session sess_123
+orca chat support "hi" --json                # NDJSON, one session event per line
 ```
 
 In a terminal with no prompt, `orca chat` opens a REPL: a persistent transcript,
-a mint prompt marker, assistant text streamed live, and a mint spinner while
-the first token is pending. Tool activity is shown subtly, and only when the
-published agent sets `exposeToolEvents`. Ctrl-C cancels an in-flight turn first,
-then exits from idle. Each turn reuses the conversation id the gateway returns,
-so context carries across the session.
+a mint prompt marker, assistant text streamed live, and the agent's tool
+activity grouped by intent. The session is created with the first message and
+every turn reuses it. Ctrl-C cancels an in-flight turn (on the server too), then
+exits from idle, printing the command that resumes the session.
 
-With a prompt argument or piped stdin it runs single-shot: the answer streams to
-stdout as plain text (no color) and the conversation id is printed to stderr so
-scripts can resume it with `--conversation`. Exit codes follow the table below:
-1 on a gateway error event, 2 on a missing gateway URL or tenant, 3 on a missing
-or rejected chat key, 4 on an unknown agent, 130 on Ctrl-C.
+With a prompt argument or piped stdin it runs one turn: the answer streams to
+stdout as plain text and the session id is printed to stderr (`session
+sess_...`), so scripts can resume with `--session`. A failed turn exits 1 after
+printing what arrived; Ctrl-C exits 130.
 
-## Usage and sessions
+## Usage and billing
 
-```
-orca usage [--window 1h|24h|7d|30d] [--days N] [--meter tokens|cost|runs]
-orca sessions list [--agent name] [--limit N]
-orca sessions get <id>
-```
+Every money figure is the server's: usage rows are priced when they are written,
+in micro-USD, and the CLI formats them without any arithmetic of its own.
 
-`orca usage` charts activity over the window as a mint ASCII line graph
-(default series `tokens`; `--meter cost|runs` switches it) and summarises
-totals, including the tool-call and sandbox-compute meters when the conductor
-exposes `GET /api/usage`. The window is served by `GET /api/stats/timeseries`;
-`--days N` is shorthand for `--window Nd`. Piped or `--json` output drops the
-chart and emits data rows instead (one bucket per line: date, meter, quantity,
-cost). Tool-call and sandbox meters are aggregate-only and shown as totals, not
-plotted.
-
-`orca sessions` reads the persisted, tenant-scoped session registry
-(`GET /api/sessions`); `get <id>` adds the session's recent runs from
-`GET /api/sessions/{id}/runs`.
-
-## Observability
-
-```
-orca stats [--window 1h|24h|7d|30d]          # summary + per-agent table + hotspots
-orca stats agents [--window W]               # per-agent breakdown alone
-orca stats hotspots [--window W]             # top token consumers, failing agents, busy runners
-orca topology                                # live conductor runner pool as an ASCII tree
-orca bundles                                 # capability bundles agents can attach (@fs, ...)
-orca apps                                    # Connected Apps providers + connections (read-only)
-orca agents changes <name> [--limit N]       # profile change history
+```sh
+orca usage                                   # last 30 days: cost, meters, daily chart
+orca usage --days 7 --group-by agent         # also totals per agent
+orca usage --session sess_123                # one session
+orca usage events --meter model_tokens       # raw rows, each with its cost
+orca billing wallet                          # balance, plan, period, packs on sale
+orca billing buy pro                         # checkout for the Pro plan
+orca billing buy pack:2000                   # checkout for the $20 credit pack
+orca billing manage                          # change or cancel the plan
 ```
 
-`orca stats` is the tenant health snapshot: aggregate totals (`GET
-/api/stats/summary`) as a labeled field block under the header line, a per-agent
-activity table (`GET
-/api/stats/agents`, failures colored on the run-status palette), and an
-activity-hotspots section (`GET /api/stats/hotspots`). It complements `orca
-usage`, which owns the time-series chart and spend; stats carries no cost column
-because the summary and per-agent endpoints do not report cost. The default
-window is `24h`. In `--json` the three payloads are composed into one object; in
-plain mode the top-level `orca stats` prints single-shape key/value totals, and
-`agents` / `hotspots` print their own rows.
+`buy` and `manage` print the Polar link and open it in a browser at a terminal
+(`--no-open` to only print it); both are admin. In a pipe, stdout carries only
+the link.
 
-`orca topology` (`GET /api/topology`) renders the runner pool as an indented
-tree: a mint `conductor` root, tree-edge connectors in gray (`├`/`└` on the
-Unicode tier, `|-`/`` `- `` on the ASCII tier), each runner's hash in mint with
-health and session/latency detail. It returns exit 4 in single-runner mode (the
-conductor is not pooled).
+## Kits
 
-`orca bundles` (`GET /api/capability-bundles`) and `orca apps` (`GET
-/api/connected-apps/{providers,connections}`) are read-only catalog views; `apps`
-degrades to an empty list when the Connected Apps registry is not configured on
-the conductor. `orca agents changes <name>` (`GET /api/profiles/{name}/changes`)
-lists the profile's audit history (when, action, changed fields).
+A kit bundles agents, skills, and environment templates into a shareable,
+versioned snapshot. Publishing mints a public id (`kit-...`) and a share link on
+the dashboard; no secret ever enters a kit, so a copy lists the credentials to
+add.
 
-## Workflows
-
-```
-orca workflows list                          # definitions
-orca workflows get <definition-id>           # definition + step tree (DAG)
-orca workflows delete <definition-id> [--yes]
-
-orca workflows runs [--status s] [--limit N] [--orchestrator run-id]
-orca workflows runs get <run-id>             # run + per-step status
-orca workflows start <id>                    # definition id: launch a run; run id: hand a pending run to the engine
-                                             #   [--prompt text] [--no-autostart]
-orca workflows tail <run-id>                 # stream status changes until terminal
-orca workflows cancel <run-id> [--yes]
-orca workflows repair <run-id> --type abort|retry-node [--node id]
-
-orca workflows schedules                     # list
-orca workflows schedules get <id>
-orca workflows schedules pause|resume <id>
-orca workflows schedules delete <id> [--yes]
+```sh
+orca kits make --name "Support desk" --agent support --skill skill_123
+orca kits publish kit_abc                    # prints the share link
+orca kits show https://app.orcapods.ai/kits/kit-xxxxxxxxxxxxxxxxx
+orca kits copy kit-xxxxxxxxxxxxxxxxx --dry-run
+orca kits copy kit-xxxxxxxxxxxxxxxxx --name agent-1=my-support --skip skill-1 --yes
 ```
 
-The definition/run views render steps in execution order as an indented
-tree: step names in the default foreground, profiles in mint, dependency
-edges (tree connector plus `<- after`, `├` on the Unicode tier and `|-` on the
-ASCII tier) in gray. `workflows tail` streams full
-run snapshots (not incremental events), diffing them into per-step
-transition lines; `tail --json` emits one raw `{type, workflowRun}` frame
-per line. Ctrl-C detaches the tail (exit 130); the run keeps going. A tail
-of a failed or cancelled run exits 1. There is no server-side replay
-buffer, so a reattached tail resumes from the current snapshot.
+`copy` copies every asset under its own name unless renamed with `--name
+key=name` or left out with `--skip key` (keys come from `kits show`). A name
+already used by the same kind fails the whole copy with "Name taken" and
+nothing is copied; rename and run it again. In a script, pass `--yes` (without
+it, a non-interactive run exits 2).
 
-## Exit codes
+## Publishing
 
-| Code | Meaning                                                   |
-| ---- | --------------------------------------------------------- |
-| 0    | success; tailed run finished `ok`                          |
-| 1    | API/network error; run finished error/cancelled/interrupted |
-| 2    | usage or validation error                                  |
-| 3    | auth: missing/invalid key, insufficient role               |
-| 4    | named resource not found                                   |
-| 130  | detached via Ctrl-C                                        |
+Publishing an agent mints an API key scoped to it: whoever holds the key can
+create sessions of that agent on `/v1` and talk to them, charged to your
+organization. Each plan publishes a set number of agents (409 past it) and gives
+them a monthly request quota.
 
-## Agent documents
-
-`agents create/update -f` accepts the same schema the dashboard YAML import
-validates (`src/lib/profile-schema.ts`, kept in sync with
-`dashboard/src/lib/agent-profile-schema.ts` in the platform repo):
-
-```yaml
-name: support-bot
-runtime: pi              # pi | vercel | claude | codex | marlin
-model: claude-sonnet-5
-systemPrompt: |
-  You answer support questions.
-skills: [orca-docs]
-tools: ["@orchestration"]
-mcpServers:
-  - name: docs
-    transport: http      # http | sse
-    url: https://mcp.example.com/docs
-  - name: github         # a Connected Apps grant: ref only, no url/headers
-    ref: catalog://github
-    optional: true
-fs:
-  read: [/agents/self]
-sandbox:
-  provider: e2b
-  resources: { cpu: 2, memoryMB: 1024 }
-workerMode: sandbox      # static (default, omitted) | sandbox
-workerSubstrate: daytona # e2b | daytona | docker | process; sandbox mode only
-workerImage: orca-agent-worker-dyn
+```sh
+orca publish create support --label website  # prints the scoped key once
+orca publish list support
+orca publish revoke key_abc                  # the last key's revocation unpublishes
 ```
 
-Unknown keys warn but do not block; `--strict` promotes warnings to errors. An
-unknown `workerMode` is an error (a silent fallback to static would hide a
-sandbox request); `runtime: marlin` requires `workerMode: sandbox`.
+`orca keys list` shows scoped keys too, with the agent they reach.
 
 ## Use from Claude Code (plugin, skill, MCP)
 
@@ -391,210 +354,32 @@ Or register just the MCP server against an existing install:
 claude mcp add orca -- orca mcp serve
 ```
 
-`orca mcp serve` speaks MCP over stdio and exposes the control plane as tools
-(create/run agents, follow runs via long-poll, skills, storage, publish, plus
-an `api_request` escape hatch documented by the `orca://openapi` resource).
-Other MCP clients (Cursor, Codex) use `{"command": "orca", "args": ["mcp",
-"serve"]}`. Headless login for agent contexts is `orca login` (device flow).
+`orca mcp serve` speaks MCP over stdio with one tool per CLI action: identity
+and keys, agents, sessions and `chat` (which sends a message and waits for the
+reply), skills, vaults, files, usage and billing, kits, and publishing. The
+commands that only touch this machine (login, logout, context, doctor, update)
+have no tool. Other MCP clients (Cursor, Codex) use `{"command": "orca",
+"args": ["mcp", "serve"]}`. Login for agent contexts is `orca login` (device
+login).
 
-## MCP
+## Exit codes
 
-Manage the tenant's MCP server catalog and wire entries onto agent profiles.
-The catalog is the tenant-scoped `/api/mcp-servers` surface; attach/detach are
-convenience wrappers that read-modify-write a profile's `mcpServers`.
-
-```
-orca mcp list                                            # catalog entries
-orca mcp get <name>
-orca mcp add --name N --url URL [--transport http|sse] [--header K=V]... [--description D]
-orca mcp set <name> [--rename NEW] [--url URL] [--transport t] [--header K=V]... [--clear-headers] [--description D]
-orca mcp remove <name> [--yes]
-orca mcp test <name>                                     # probe a registered entry
-orca mcp test --url URL [--transport t] [--header K=V]... # probe an ad-hoc endpoint
-orca mcp attach <agent> <name>                           # copy a catalog entry onto a profile
-orca mcp detach <agent> <name> [--yes]                   # remove a server from a profile
-```
-
-Server names must match `^[A-Za-z0-9_-]+$` (they are injected into the codex
-runtime's TOML config keys); `runner` is reserved. URLs must be absolute
-http(s). Header values may be literals, `${VAR}` env references, or
-`secret://name` references resolved by the runtime. `mcp test` exits non-zero
-when the probe fails, so it is safe to gate scripts on connectivity.
-
-## Skills
-
-Manage the tenant's skill catalog (the open Agent Skills standard) and wire
-skills onto agent profiles. List/get/delete are the tenant-scoped
-`/api/skills` surface; attach/detach call the conductor's idempotent
-`/api/profiles/{name}/skills/{skill}` endpoint after a read that validates the
-agent and reports whether the skill is already present.
-
-```
-orca skills list
-orca skills get <name> [--resource path]         # metadata + SKILL.md body, or one bundled file
-orca skills import <path> [--dry-run] [--force]  # Agent Skills folder (must contain SKILL.md)
-orca skills delete <name> [--yes]
-orca skills attach <agent> <skill>               # add a skill to an agent profile
-orca skills detach <agent> <skill>               # remove a skill from an agent profile
-```
-
-`import` uploads the folder for a server-side dry-run (validation + preview),
-then commits it; `--dry-run` stops after the preview and `--force` overwrites an
-existing skill. Folder import is gated to member+ API keys. Attaching a skill
-the catalog does not know exits 2; a missing agent exits 4.
-
-## Pools
-
-Manage agent pools: named groups of profiles that share an FS workspace under
-`/pools/{name}/**`, layered on top of each member's profile sandbox with
-role-aware partitions. Backed by the tenant-scoped `/api/pools` surface.
-
-```
-orca pools list
-orca pools get <name>
-orca pools create <name> [--description D] [--member profile[:role]]... \
-                         [--read glob]... [--write glob]... [--delete glob]... [--deny glob]...
-orca pools delete <name> [--yes]
-orca pools members add <pool> <profile> [--role lead|member|observer]
-orca pools members remove <pool> <profile> [--yes]
-```
-
-Roles are `lead`, `member`, or `observer`. `--member alpha:lead` seeds a pool
-at creation; `members add/remove` adjust the roster afterwards (both idempotent).
-The API has no per-pool GET, so `pools get` filters the list and exits 4 when
-the name is unknown. FS globs support the `{self}`, `{pool}`, and `{role}`
-tokens the runtime substitutes at policy compile time.
-
-## Kits
-
-A kit is a shared, frozen snapshot of a working setup: its agents, their
-skills, the pod they belong to, and any schedules that run them. `orca kit add`
-is the terminal twin of the Add kit button on a kit's page.
-
-```
-orca kit add https://app.orcapods.ai/kits/kit-xxxxxxxxxxxxxxxxx
-orca kit add kit-xxxxxxxxxxxxxxxxx --dry-run          # show the plan, add nothing
-orca kit add <link> --name profile:writer=my-writer   # install one asset under another name
-orca kit add <link> --skip skill:seo                  # leave one asset out
-```
-
-Nothing in your workspace is ever overwritten. Before the add, the conductor
-reads every name the kit carries against what you already have and answers with
-a target name for each: the kit's own name when it is free, `name-copy`,
-`name-copy-2` and so on when it is not. The CLI sends those names back
-unchanged, so adding the same kit twice gives you a second copy rather than a
-clobbered first one. `--name` overrides one of them; `--skip` drops an asset
-from the add entirely.
-
-The plan prints before the y/N prompt. In a script, pass `--yes` (without it,
-a non-interactive run exits 2). Schedules always arrive paused. Secrets are
-never part of a kit. What lands is pinned on Home unless you pass `--no-pin`.
-
-## Secrets
-
-Manage the tenant's envelope-encrypted secrets (`/api/secrets`). The store is
-write-only from the CLI: values are never returned by the API, never printed,
-and never placed in `--json` output or error text. List and get show metadata
-only (name, key hint, algorithm, timestamps).
-
-```
-orca secrets list
-orca secrets set <name> [--value V] [--key VAR_NAME] [--description D]
-orca secrets delete <name> [--yes]
-```
-
-`secrets set` is an upsert (`PUT /api/secrets/{name}`). The value comes from
-`--value`, else from piped stdin (a single trailing newline is stripped, so
-`printf %s val | orca secrets set NAME` and `echo val | ...` both round-trip),
-else from a hidden masked prompt in a terminal. `--key` records the canonical
-variable name the value populates (e.g. `ANTHROPIC_API_KEY`). Secrets require
-`POSTGRES_DSN` + a master key server-side; an unconfigured deployment returns
-503 (mapped to exit 1). These endpoints are admin-gated: a member key exits 3.
-
-## Billing
-
-Read the prepaid credit wallet and set the tenant's monthly spend cap. The
-payment/checkout flow is intentionally out of scope.
-
-```
-orca credit                              # balance and cap headroom in one view
-orca billing wallet                      # read-only credit balance
-orca billing cap                         # show the monthly cap and accrued spend
-orca billing cap set <amount> [--email A] [--yes]   # amount in dollars, or "default" to clear
-```
-
-`orca credit` answers "how much can I spend right now" by reading both
-endpoints at once. The two numbers are different things: `balance` is prepaid
-credit, `cap left` is headroom under the monthly ceiling, and spending stops at
-whichever runs out first. If one endpoint is down the command prints the half it
-got, names the missing half on stderr, and still exits 0; an auth failure is
-never degraded that way. `--json` emits `{ wallet, cap }` with both server
-payloads unreshaped.
-
-Amounts are dollars parsed into cents (`10`, `10.5`, `10.50`, `$10`, `1,000`);
-anything else, a negative, or more than two decimal places exits 2. `set`
-confirms before writing unless `--yes`, and warns when the new cap is below the
-current month's spend (the platform gates run creation on the cap fail-closed,
-so runs would be blocked until reset). `cap set default` clears the tenant
-override and reverts to the system default. Writing the cap is admin-gated (a
-member key exits 3).
-
-## Storage
-
-Manage the tenant's storage bucket (the dashboard Files page). Backed by the
-tenant-scoped `/api/storage` surface; the server jails each tenant to its own
-subtree. Object keys may contain slashes, which stay literal path separators
-(each segment is URL-encoded, matching the dashboard).
-
-```
-orca storage info                        # bucket usage summary
-orca storage ls [prefix] [--limit N]     # immediate folders/files in a TTY; flat rows when piped
-orca storage browse [prefix]             # interactive filesystem-style navigation
-orca storage get <key> [--output FILE]   # bytes to stdout when piped, or to a file
-orca storage put <key> <file> [--content-type T]   # upload (upsert; overwrites)
-orca storage rm <key> [--yes]            # trailing "/" deletes a whole prefix
-```
-
-`get` returns the object bytes: piped, they stream raw to stdout and nothing
-else; with `--output` they are written verbatim to a file. To a live terminal
-the CLI refuses to dump a binary object (base64/non-text Content-Type/NUL bytes)
-and asks for `--output` or a pipe; text objects print as-is. `--json` emits the
-raw `{key, encoding, content, ...}` payload (binary is base64 there). `put`
-sends the file body raw with a Content-Type guessed from the extension (override
-with `--content-type`); uploads are an upsert and are capped at the server's 8
-MiB inline limit (413). `rm` confirms unless `--yes`; a key ending in `/` is a
-prefix delete and the reported count is how many objects were removed.
-
-## Memory
-
-Inspect agent memories and the cross-profile memory bank
-(`/api/profiles/{name}/memories` and `/api/memory-bank`). Memories are written
-by agents (or the dashboard's extraction form), so the CLI is read/search/delete
-only, with no create/update.
-
-```
-orca memory list <agent> [--limit N] [--offset N]
-orca memory search <agent> <query> [--limit N] [--min-score N]
-orca memory show <agent> <id>
-orca memory delete <agent> <id> [--yes]
-orca memory bank                         # every memory, grouped by profile
-orca memory bank stats                   # bank-wide totals and per-profile counts
-```
-
-`search` scores by relevance (recency, usage, topic); `--min-score` filters weak
-matches. `bank` flattens the grouped snapshot into one table carrying each
-entry's profile; `bank stats` is the lightweight totals view. `delete` confirms
-unless `--yes`. A missing memory exits 4; an unconfigured bank returns 503
-(mapped to exit 1).
+| Code | Meaning                                                    |
+| ---- | ---------------------------------------------------------- |
+| 0    | success                                                    |
+| 1    | API/network error; a chat turn failed                      |
+| 2    | usage or validation error                                  |
+| 3    | auth: missing/invalid key, insufficient role               |
+| 4    | named resource not found or gone                           |
+| 130  | interrupted via Ctrl-C                                     |
 
 ## Development
 
-- `npm test` - vitest (SSE parser byte-boundary cases, config permissions,
-  command handlers against a fetch mock, Ink components via
+- `npm test` - vitest (config permissions, command handlers against a fetch
+  mock that also serves the `openai` package, Ink components via
   ink-testing-library)
 - `npm run lint` / `npm run typecheck`
 - Module layout: `lib/` (no Ink imports) -> `commands/` -> `ui/` (theme'd
-  Ink components; design tokens in `src/ui/theme.ts` mirror
-  `dashboard/src/index.css`)
-- Endpoint contract: `GET /api/openapi.yaml` on the conductor (also served as
-  the `orca://openapi` MCP resource)
+  Ink components; design tokens in `src/ui/theme.ts`)
+- Server contract: the Orca server's README documents the `/api` routes; `/v1`
+  is the OpenAI Agents API as typed by the `openai` package
