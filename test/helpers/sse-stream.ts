@@ -1,15 +1,6 @@
 // Builds SSE Response bodies with adversarial chunk boundaries: frames are
 // split mid-line and mid-multibyte-character to lock in decoder semantics.
 
-export function sseFrames(events: unknown[], opts?: { pings?: boolean }): string {
-  const frames: string[] = []
-  events.forEach((e, i) => {
-    if (opts?.pings && i > 0 && i % 2 === 0) frames.push(': ping\n\n')
-    frames.push(`id: ${i}\ndata: ${JSON.stringify(e)}\n\n`)
-  })
-  return frames.join('')
-}
-
 // chunked splits raw text into byte chunks of the given sizes (repeating the
 // last size), guaranteeing some multibyte characters straddle boundaries
 // when sizes are odd.

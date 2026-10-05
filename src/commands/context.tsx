@@ -7,7 +7,7 @@ import { accentVerb, hintText } from '../ui/theme.js'
 import { globalFlags } from './shared.js'
 
 export function registerContext(program: Command): void {
-  const context = program.command('context').description('manage named platform contexts')
+  const context = program.command('context').description('manage named contexts (local server URL and key configurations)')
 
   context
     .command('list')
@@ -25,7 +25,6 @@ export function registerContext(program: Command): void {
             name,
             current: name === current,
             apiUrl: cfg.contexts[name].apiUrl ?? null,
-            gatewayUrl: cfg.contexts[name].gatewayUrl ?? null,
             hasKey: Boolean(cfg.contexts[name].apiKey),
           })),
         )
@@ -126,21 +125,19 @@ export function registerContext(program: Command): void {
       const hasExplicit =
         Boolean(ctx.apiKey) ||
         (Boolean(ctx.apiUrl) && !ctx.defaulted.has('apiUrl')) ||
-        (Boolean(ctx.gatewayUrl) && !ctx.defaulted.has('gatewayUrl')) ||
         (Boolean(ctx.dashboardUrl) && !ctx.defaulted.has('dashboardUrl'))
       if (!hasExplicit) {
         throw new CliError(`context "${ctx.name}" is not configured`, ExitCode.Usage, [
           'Run: orca auth login, or set ORCA_API_URL and ORCA_API_KEY.',
         ])
       }
-      const mark = (field: 'apiUrl' | 'gatewayUrl' | 'dashboardUrl', value: string): string =>
+      const mark = (field: 'apiUrl' | 'dashboardUrl', value: string): string =>
         ctx.defaulted.has(field) ? `${value} (default)` : value
       const mode = outputMode(flags)
       if (mode === 'json') {
         printJson({
           name: ctx.name,
           apiUrl: ctx.apiUrl ?? null,
-          gatewayUrl: ctx.gatewayUrl ?? null,
           dashboardUrl: ctx.dashboardUrl ?? null,
           apiKey: ctx.apiKey ? maskKey(ctx.apiKey) : null,
           defaults: [...ctx.defaulted],
@@ -150,7 +147,6 @@ export function registerContext(program: Command): void {
       if (mode === 'plain') {
         console.log(`Context:  ${ctx.name}`)
         console.log(`API URL:  ${ctx.apiUrl ? mark('apiUrl', ctx.apiUrl) : '-'}`)
-        console.log(`Gateway:  ${ctx.gatewayUrl ? mark('gatewayUrl', ctx.gatewayUrl) : '-'}`)
         console.log(`Dashboard: ${ctx.dashboardUrl ? mark('dashboardUrl', ctx.dashboardUrl) : '-'}`)
         console.log(`API key:  ${ctx.apiKey ? maskKey(ctx.apiKey) : '-'}`)
         return
@@ -161,7 +157,6 @@ export function registerContext(program: Command): void {
       await renderStatic(
         <Panel title="CONTEXT" subtitle={ctx.name}>
           <Field label="api url" value={ctx.apiUrl ? mark('apiUrl', ctx.apiUrl) : '-'} />
-          <Field label="gateway" value={ctx.gatewayUrl ? mark('gatewayUrl', ctx.gatewayUrl) : '-'} />
           <Field label="dashboard" value={ctx.dashboardUrl ? mark('dashboardUrl', ctx.dashboardUrl) : '-'} />
           <Field
             label="api key"

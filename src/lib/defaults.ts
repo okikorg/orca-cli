@@ -2,14 +2,11 @@
 // typed. Every field still follows the standard precedence: an explicit flag
 // beats an environment variable, which beats the context config file, which
 // beats these defaults. A default of null means "no confirmed value yet";
-// the resolver treats it as unset (so, e.g., the browser login flow still
-// exits with a "set --dashboard-url or ORCA_DASHBOARD_URL" hint until a real
-// value is filled in here).
+// the resolver treats it as unset.
 
-// Conductor control-plane API. CONFIRMED 2026-08-20: api.orcapods.ai fronts
-// the production conductor (live probes: /healthz 200, /api/openapi.yaml 200,
-// device-code flow end to end). Always prefer the first-party domain over raw
-// host URLs so installed CLIs survive infrastructure moves.
+// The Orca server: the /api routes and the /v1 Agents API. Always prefer the
+// first-party domain over raw host URLs so installed CLIs survive
+// infrastructure moves.
 export const DEFAULT_API_URL: string | null = 'https://api.orcapods.ai'
 
 // Former baked-in default (raw Railway hostname, leaked into login banners
@@ -18,23 +15,7 @@ export const DEFAULT_API_URL: string | null = 'https://api.orcapods.ai'
 // API URLs are untouched.
 export const LEGACY_DEFAULT_API_URL = 'https://conductor-production-0859.up.railway.app'
 
-// Orca dashboard base URL for the browser login flow. CONFIRMED 2026-08-08
-// from the agent-orc-dashboard Vercel project's production domains and a
-// live 200 probe of /cli-auth.
+// The Orca dashboard, where a published kit's public page lives. Device
+// login replaces it with the origin of the server's verification page, so a
+// local or staging server's kit links point at its own dashboard.
 export const DEFAULT_DASHBOARD_URL: string | null = 'https://app.orcapods.ai'
-
-// Former baked-in default. Auth login upgrades this exact saved value to the
-// current production domain; user-supplied custom dashboard URLs are untouched.
-export const LEGACY_DEFAULT_DASHBOARD_URL = 'https://agent-orc-dashboard.vercel.app'
-
-// Public chat gateway base URL. Moved to the first-party domain on
-// 2026-09-07 so a published agent's URL does not advertise the hosting
-// provider. Railway keeps serving the generated hostname alongside the
-// custom domain, so URLs published before the switch keep working.
-export const DEFAULT_GATEWAY_URL: string | null = 'https://chat.orcapods.ai'
-
-// Former baked-in default (raw Railway hostname). Context resolution and
-// auth login upgrade this exact saved value to the current domain;
-// user-supplied custom gateway URLs are untouched.
-export const LEGACY_DEFAULT_GATEWAY_URL =
-  'https://chat-gateway-production-b766.up.railway.app'

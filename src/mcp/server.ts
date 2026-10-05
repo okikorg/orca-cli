@@ -1,51 +1,45 @@
-// Orca's control-plane MCP server (stdio), mounted by `orca mcp serve`.
+// Orca's MCP server (stdio), mounted by `orca mcp serve`.
 //
 // This is how coding agents (Claude Code, Cursor, Codex) drive Orca without
-// shelling out per call: a curated tool per golden-path verb, one raw
-// `api_request` escape hatch that reaches every /api/* operation, and an
-// `orca://openapi` resource so the escape hatch is self-documenting.
+// shelling out per call: one tool per CLI action, over the same /api routes
+// and /v1 Agents API the commands use. The commands that only touch this
+// machine (auth login and logout, context, doctor, update) have no tool.
 //
 // Design rules:
 // - stdio discipline: nothing but JSON-RPC on stdout. Every tool failure is
 //   an in-band MCP error result (isError: true) whose text contains the fix,
 //   because agents act on error text. The process never mounts Ink.
-// - context economy: compact JSON, capped arrays and byte sizes, described
-//   truncation. MCP tools are request/response, so run-following is the
-//   `wait_for_run` long-poll over the conductor's SSE stream.
+// - context economy: compact JSON, capped byte sizes, described truncation.
+//   MCP tools are request/response, so `chat` waits for the turn up to a
+//   timeout and says how to pick it up when it runs longer.
 // - auth is the CLI's own: flag > ORCA_API_KEY > ~/.config/orca contexts,
 //   resolved lazily so `claude mcp add` can register the server before the
 //   user has logged in.
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type OpenAI from 'openai'
+import type { AgentCreateParams, AgentUpdateParams } from 'openai/resources/beta/agents/agents'
+import type { Turn } from 'openai/resources/beta/agents/sessions/turns'
 import { z } from 'zod'
 
-import { ApiClient, ApiError } from '../lib/api.js'
+import { resolveAgentId } from '../lib/agents.js'
+import { ApiClient, mapApiError, toPage } from '../lib/api.js'
 import { resolveContext, type GlobalFlags } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { streamRunEvents } from '../lib/sse.js'
-import type { RunEvent, SubTask } from '../lib/types.js'
+import { itemText, sessionEnvironment } from '../lib/sessions.js'
+import { collectSkillFiles } from '../lib/skills.js'
+import type { KitInput } from '../lib/types.js'
+import { VERSION } from '../version.js'
 
 // Result payloads are capped so one tool call cannot flood an agent's
 // context window. Truncation is always announced in the payload.
 const MAX_RESULT_BYTES = 50_000
-const MAX_EVENTS_RETURNED = 100
-// storage_read's implicit cap. It must not exceed MAX_RESULT_BYTES, which is
-// also the schema's ceiling for an explicit maxBytes, or the default would
-// hand back more than any caller is allowed to ask for.
-const DEFAULT_STORAGE_READ_BYTES = MAX_RESULT_BYTES
 
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>
   isError?: boolean
-}
-
-// Prefix a result with a warning line the caller should surface. Used where
-// the CLI's file-based profile parser would warn but the raw API path (which
-// MCP uses) normalizes silently -- e.g. the deprecated "general" runtime.
-function jsonResultWithWarning(warning: string, value: unknown): ToolResult {
-  const base = jsonResult(value)
-  const first = base.content[0]
-  if (first?.type === 'text') first.text = `warning: ${warning}\n${first.text}`
-  return base
 }
 
 function jsonResult(value: unknown): ToolResult {
@@ -53,7 +47,7 @@ function jsonResult(value: unknown): ToolResult {
   if (text.length > MAX_RESULT_BYTES) {
     text =
       text.slice(0, MAX_RESULT_BYTES) +
-      `\n... [truncated at ${MAX_RESULT_BYTES} bytes; narrow the request (limit, prefix, maxBytes) for the rest]`
+      `\n... [truncated at ${MAX_RESULT_BYTES} bytes; narrow the request (limit, after) for the rest]`
   }
   return { content: [{ type: 'text', text }] }
 }
@@ -61,22 +55,6 @@ function jsonResult(value: unknown): ToolResult {
 function errorResult(message: string, detail?: string[]): ToolResult {
   const text = [message, ...(detail ?? [])].join('\n')
   return { content: [{ type: 'text', text }], isError: true }
-}
-
-function describeError(err: unknown): ToolResult {
-  if (err instanceof ApiError) {
-    if (err.status === 401) {
-      return errorResult('unauthorized: the stored key was rejected.', [
-        'Run: orca login   (or set ORCA_API_KEY)',
-      ])
-    }
-    const body = err.body ? ` ${JSON.stringify(err.body)}` : ''
-    return errorResult(`API error ${err.status}:${body || ' ' + err.message}`)
-  }
-  if (err instanceof CliError) {
-    return errorResult(err.message, err.detail)
-  }
-  return errorResult(err instanceof Error ? err.message : String(err))
 }
 
 // clientSource resolves the CLI context lazily and caches the result. A
@@ -91,7 +69,7 @@ export function makeClientSource(flags: GlobalFlags): ClientSource {
     const ctx = await resolveContext(flags)
     if (!ctx.apiUrl || !ctx.apiKey) {
       throw new CliError('not logged in to Orca.', ExitCode.Auth, [
-        'Run: orca login   (or set ORCA_API_KEY and ORCA_API_URL)',
+        'Run: orca auth login   (or set ORCA_API_KEY and ORCA_API_URL)',
       ])
     }
     cached = new ApiClient({
@@ -103,452 +81,487 @@ export function makeClientSource(flags: GlobalFlags): ClientSource {
   }
 }
 
-// capEvents keeps the most recent events and says what was dropped.
-function capEvents(events: RunEvent[]): { events: RunEvent[]; dropped: number } {
-  if (events.length <= MAX_EVENTS_RETURNED) return { events, dropped: 0 }
-  return {
-    events: events.slice(events.length - MAX_EVENTS_RETURNED),
-    dropped: events.length - MAX_EVENTS_RETURNED,
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const TERMINAL = new Set<Turn['status']>(['completed', 'failed', 'cancelled'])
+
+// waitForTurn polls a session's newest turn until it is a new one (not
+// `previous`) and has ended, or the deadline passes.
+async function waitForTurn(
+  v1: OpenAI,
+  sessionId: string,
+  previous: string | null,
+  deadline: number,
+): Promise<Turn | null> {
+  while (Date.now() < deadline) {
+    const [turn] = (await v1.beta.agents.sessions.turns.list(sessionId, { limit: 1 })).data
+    if (turn && turn.id !== previous && TERMINAL.has(turn.status)) return turn
+    await sleep(500)
   }
+  return null
 }
 
-// buildMcpServer wires every tool and resource onto a fresh McpServer.
-// Exported for tests (driven over an in-memory transport).
-export function buildMcpServer(getClient: ClientSource): McpServer {
-  const server = new McpServer({ name: 'orca', version: '1.0.0' })
+// replyText joins the assistant's messages in one turn, oldest first.
+async function replyText(v1: OpenAI, sessionId: string, turnId: string): Promise<string> {
+  const items = (await v1.beta.agents.sessions.items.list(sessionId, { limit: 50, order: 'desc' })).data
+  return items
+    .filter((item) => item.type === 'message' && item.role === 'assistant' && item.turn_id === turnId)
+    .reverse()
+    .map(itemText)
+    .join('\n\n')
+}
 
-  // tool wraps a handler with the shared error mapping.
+const limit = z.number().int().min(1).max(100).optional().describe('max rows (default 20)')
+const after = z.string().optional().describe('cursor: the last id of the previous page')
+
+// buildMcpServer wires every tool onto a fresh McpServer. Exported for tests
+// (driven over an in-memory transport).
+export function buildMcpServer(getClient: ClientSource): McpServer {
+  const server = new McpServer({ name: 'orca', version: VERSION })
+
+  // tool wraps a handler with the client lookup and the shared error mapping.
   const tool = (
     name: string,
     description: string,
     inputSchema: z.ZodRawShape,
-    handler: (args: Record<string, unknown>) => Promise<ToolResult>,
+    handler: (client: ApiClient, args: Record<string, unknown>) => Promise<unknown>,
   ): void => {
     server.registerTool(name, { description, inputSchema }, async (args: Record<string, unknown>) => {
+      let client: ApiClient
       try {
-        return await handler(args ?? {})
+        client = await getClient()
       } catch (err) {
-        return describeError(err)
+        return err instanceof CliError ? errorResult(err.message, err.detail) : errorResult(String(err))
+      }
+      try {
+        return jsonResult(await handler(client, args ?? {}))
+      } catch (err) {
+        const mapped = mapApiError(err, client)
+        return errorResult(mapped.message, mapped.detail)
       }
     })
   }
+  const page = (args: Record<string, unknown>) => ({
+    limit: (args.limit as number | undefined) ?? 20,
+    ...(args.after ? { after: args.after as string } : {}),
+  })
+  const agentId = async (client: ApiClient, ref: unknown) => resolveAgentId(await client.v1(), ref as string)
 
-  // -- Identity and account ---------------------------------------------------
+  // -- Identity and keys ------------------------------------------------------
 
   tool(
     'whoami',
-    'Identify the authenticated Orca caller: tenant, role, credential kind, key id. Call this first to confirm auth works.',
+    'Identify the authenticated Orca caller: tenant, actor, role. Call this first to confirm auth works.',
     {},
-    async () => {
-      const client = await getClient()
-      try {
-        // Raw request rather than a typed client method: /api/whoami ships
-        // with the same wave as this server and the typed helper lands in
-        // the device-login branch; the raw path keeps the branches unstacked.
-        const who = await client.request<Record<string, unknown>>('/api/whoami')
-        return jsonResult({ ...who, apiUrl: client.apiUrl, context: client.contextName })
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 404) {
-          // Conductor predates /api/whoami; prove auth works instead.
-          await client.listProfiles({ limit: 1 })
-          return jsonResult({
-            apiUrl: client.apiUrl,
-            context: client.contextName,
-            note: 'authenticated; this conductor predates /api/whoami so tenant details are unavailable',
-          })
-        }
-        throw err
-      }
-    },
+    async (client) => ({ ...(await client.whoami()), apiUrl: client.apiUrl, context: client.contextName }),
+  )
+
+  tool('list_keys', 'List active API keys, newest first. Never shows secrets.', { limit, after }, async (client, args) =>
+    client.listKeys(page(args)),
   )
 
   tool(
-    'get_usage',
-    'Read the account status: credit wallet balance and the monthly spend cap.',
-    {},
-    async () => {
-      const client = await getClient()
-      const [wallet, spendCap] = await Promise.all([
-        client.request<unknown>('/api/billing/wallet').catch((e: unknown) => ({ error: String(e) })),
-        client.request<unknown>('/api/spend-cap').catch((e: unknown) => ({ error: String(e) })),
-      ])
-      return jsonResult({ wallet, spendCap })
+    'create_key',
+    'Mint an API key with the caller\'s role. The secret is in this one response and cannot be read again.',
+    { name: z.string().describe('a name for the key') },
+    async (client, args) => client.createKey(args.name as string),
+  )
+
+  tool(
+    'revoke_key',
+    'Revoke an API key. Revoking a published agent\'s last scoped key unpublishes the agent.',
+    { id: z.string().describe('key id') },
+    async (client, args) => {
+      await client.revokeKey(args.id as string)
+      return { id: args.id, revoked: true }
     },
   )
 
-  // -- Agents (profiles) --------------------------------------------------------
+  // -- Agents -------------------------------------------------------------------
 
-  tool(
-    'list_agents',
-    'List the agents (profiles) in this Orca tenant.',
-    { limit: z.number().int().min(1).max(200).optional().describe('max rows (default 50)') },
-    async (args) => {
-      const client = await getClient()
-      const { items, total } = await client.listProfiles({ limit: (args.limit as number) ?? 50 })
-      return jsonResult({ agents: items, total })
-    },
+  tool('list_agents', 'List the agents in this Orca organization, newest first.', { limit, after }, async (client, args) =>
+    toPage(await (await client.v1()).beta.agents.list(page(args))),
   )
 
   tool(
     'get_agent',
-    'Fetch one agent profile by name (model, instructions, skills, tools, everything).',
-    { name: z.string().describe('agent profile name') },
-    async (args) => {
-      const client = await getClient()
-      return jsonResult(await client.getProfile(args.name as string))
-    },
+    'Fetch one agent (model, instructions, tools, everything) by id or name.',
+    { agent: z.string().describe('agent id or name') },
+    async (client, args) => (await client.v1()).beta.agents.retrieve(await agentId(client, args.agent)),
   )
 
   tool(
     'create_agent',
-    'Create an agent profile. spec is the AgentProfile body (common fields: model, instructions, skills, mcpServers); the full schema is in the orca://openapi resource under #/components/schemas/AgentProfile.',
-    {
-      name: z.string().describe('unique agent profile name'),
-      spec: z.record(z.string(), z.unknown()).optional().describe('AgentProfile fields besides name'),
-    },
-    async (args) => {
-      const client = await getClient()
-      const spec = (args.spec as Record<string, unknown>) ?? {}
-      const profile = { ...spec, name: args.name as string }
-      const result = await client.createProfile(profile as never)
-      if (spec.runtime === 'general') {
-        return jsonResultWithWarning(
-          'runtime "general" is deprecated; the platform imported it as "vercel". Pass runtime "vercel".',
-          result,
-        )
-      }
-      return jsonResult(result)
-    },
+    'Create an agent. spec is the POST /v1/agents body: model (with a provider prefix, such as openai/gpt-5), name, instructions, tools, reasoning, multi_agent.',
+    { spec: z.record(z.string(), z.unknown()).describe('the agent body; model is required') },
+    async (client, args) => (await client.v1()).beta.agents.create(args.spec as unknown as AgentCreateParams),
   )
 
   tool(
     'update_agent',
-    'Replace an agent profile (PUT semantics: send the full desired spec, not a patch).',
+    'Update an agent. spec holds only the fields to change; the rest are kept.',
     {
-      name: z.string().describe('agent profile name'),
-      spec: z.record(z.string(), z.unknown()).describe('full AgentProfile body to store'),
+      agent: z.string().describe('agent id or name'),
+      spec: z.record(z.string(), z.unknown()).describe('fields to change'),
     },
-    async (args) => {
-      const client = await getClient()
-      const spec = args.spec as Record<string, unknown>
-      const profile = { ...spec, name: args.name as string }
-      const result = await client.updateProfile(args.name as string, profile as never)
-      if (spec.runtime === 'general') {
-        return jsonResultWithWarning(
-          'runtime "general" is deprecated; the platform imported it as "vercel". Pass runtime "vercel".',
-          result,
-        )
-      }
-      return jsonResult(result)
+    async (client, args) =>
+      (await client.v1()).beta.agents.update(await agentId(client, args.agent), args.spec as AgentUpdateParams),
+  )
+
+  tool('delete_agent', 'Delete an agent.', { agent: z.string().describe('agent id or name') }, async (client, args) =>
+    (await client.v1()).beta.agents.delete(await agentId(client, args.agent)),
+  )
+
+  // -- Sessions and chat ----------------------------------------------------------
+
+  tool(
+    'list_sessions',
+    'List sessions (conversations), newest first, optionally of one agent.',
+    { agent: z.string().optional().describe('agent id or name'), limit, after },
+    async (client, args) => {
+      const filter = args.agent ? { agent_id: await agentId(client, args.agent) } : {}
+      return toPage(await (await client.v1()).beta.agents.sessions.list({ ...page(args), ...filter }))
     },
   )
 
-  // -- Runs ---------------------------------------------------------------------
-
-  tool(
-    'run_agent',
-    'Start an agent run with a prompt. Returns {runId, sessionId} immediately; call wait_for_run to follow it. Pass sessionId to continue an existing conversation.',
-    {
-      agent: z.string().describe('agent profile name to run'),
-      prompt: z.string().describe('the task or message for the agent'),
-      title: z.string().optional().describe('short run title (defaults to the prompt head)'),
-      sessionId: z.string().optional().describe('existing session to continue'),
-    },
-    async (args) => {
-      const client = await getClient()
-      const prompt = args.prompt as string
-      const input: SubTask = {
-        profile: args.agent as string,
-        prompt,
-        title: (args.title as string | undefined) ?? prompt.slice(0, 60),
-      }
-      if (args.sessionId) input.sessionId = args.sessionId as string
-      const res = await client.createRun(input)
-      return jsonResult({ ...res, next: 'call wait_for_run with this runId to follow the run' })
-    },
+  tool('get_session', 'Fetch one session: status, environment, usage, error.', { id: z.string() }, async (client, args) =>
+    (await client.v1()).beta.agents.sessions.retrieve(args.id as string),
   )
 
   tool(
-    'get_run',
-    'Fetch a run: status plus its buffered events (cheap poll; use wait_for_run to block until new events or completion).',
-    { runId: z.string() },
-    async (args) => {
-      const client = await getClient()
-      const run = await client.getRun(args.runId as string)
-      const { events, dropped } = capEvents(run.events ?? [])
-      return jsonResult({
-        ...run,
-        events,
-        ...(dropped > 0 ? { eventsDropped: dropped } : {}),
+    'create_session',
+    'Create a session of an agent without sending anything. Use chat to talk to it.',
+    {
+      agent: z.string().describe('agent id or name'),
+      sandbox: z.boolean().optional().describe('run in a hosted sandbox (default: no environment)'),
+      template: z.string().optional().describe('environment template id for a hosted sandbox'),
+      vaults: z.array(z.string()).optional().describe('vault ids the session may use'),
+    },
+    async (client, args) => {
+      const vaults = (args.vaults as string[] | undefined) ?? []
+      return (await client.v1()).beta.agents.sessions.create({
+        agent_id: await agentId(client, args.agent),
+        environment: sessionEnvironment({
+          sandbox: args.sandbox as boolean | undefined,
+          template: args.template as string | undefined,
+          vault: vaults,
+        }),
+        ...(vaults.length ? { vault_ids: vaults } : {}),
       })
     },
   )
 
   tool(
-    'wait_for_run',
-    'Long-poll a run: blocks until it finishes or timeoutSeconds elapses, returning events after afterEvent. Loop with nextAfterEvent until done is true.',
-    {
-      runId: z.string(),
-      timeoutSeconds: z.number().int().min(1).max(240).optional().describe('max wait (default 60)'),
-      afterEvent: z.number().int().min(0).optional().describe('skip this many already-seen events'),
-    },
-    async (args) => {
-      const client = await getClient()
-      const runId = args.runId as string
-      const timeoutMs = (((args.timeoutSeconds as number) ?? 60) * 1000) | 0
-      const skip = (args.afterEvent as number) ?? 0
-
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), timeoutMs)
-      let seen = 0
-      const fresh: RunEvent[] = []
-      let status: string
-      try {
-        // streamRunEvents replays the buffer then follows live, returning
-        // the terminal status, or 'running' when we abort on timeout.
-        status = await streamRunEvents(
-          client,
-          runId,
-          (event) => {
-            seen++
-            if (seen > skip) fresh.push(event)
-          },
-          { signal: controller.signal },
-        )
-      } finally {
-        clearTimeout(timer)
-      }
-      const { events, dropped } = capEvents(fresh)
-      return jsonResult({
-        runId,
-        status,
-        done: status !== 'running',
-        events,
-        ...(dropped > 0 ? { eventsDropped: dropped } : {}),
-        nextAfterEvent: seen,
+    'list_session_items',
+    'Read a session\'s latest conversation items (messages and tool calls), oldest first.',
+    { id: z.string(), limit },
+    async (client, args) => {
+      const items = await (await client.v1()).beta.agents.sessions.items.list(args.id as string, {
+        limit: (args.limit as number | undefined) ?? 20,
+        order: 'desc',
       })
+      return [...items.data].reverse()
     },
+  )
+
+  tool('delete_session', 'Delete a session and its history.', { id: z.string() }, async (client, args) =>
+    (await client.v1()).beta.agents.sessions.delete(args.id as string),
   )
 
   tool(
-    'list_runs',
-    'List recent runs, optionally scoped to one agent or one session.',
+    'chat',
+    'Send a message to an agent and wait for its reply. Pass session to continue a conversation, otherwise agent starts a new session. Returns the reply and the session id; if the turn outlasts timeoutSeconds, done is false and the reply is read later with list_session_items.',
     {
-      agent: z.string().optional().describe('filter: agent profile name'),
-      sessionId: z.string().optional().describe('filter: session id'),
-      limit: z.number().int().min(1).max(200).optional().describe('max rows (default 20)'),
+      message: z.string().describe('the message for the agent'),
+      agent: z.string().optional().describe('agent id or name, for a new session'),
+      session: z.string().optional().describe('existing session to continue'),
+      timeoutSeconds: z.number().int().min(1).max(600).optional().describe('max wait (default 120)'),
     },
-    async (args) => {
-      const client = await getClient()
-      const limit = (args.limit as number) ?? 20
-      const page = args.sessionId
-        ? await client.listSessionRuns(args.sessionId as string, { limit })
-        : args.agent
-          ? await client.listProfileRuns(args.agent as string, { limit })
-          : await client.listRuns({ limit })
-      return jsonResult({ runs: page.items, total: page.total })
+    async (client, args) => {
+      const v1 = await client.v1()
+      const message = args.message as string
+      const deadline = Date.now() + ((args.timeoutSeconds as number | undefined) ?? 120) * 1000
+      let sessionId = args.session as string | undefined
+      let previous: string | null = null
+      if (sessionId) {
+        previous = (await v1.beta.agents.sessions.turns.list(sessionId, { limit: 1 })).data[0]?.id ?? null
+        await v1.beta.agents.sessions.events.create(sessionId, {
+          events: [
+            {
+              type: 'agent.session.input.message',
+              input: [{ role: 'user', content: [{ type: 'input_text', text: message }] }],
+            },
+          ],
+        })
+      } else {
+        if (!args.agent) throw new CliError('pass agent for a new session, or session to continue one', ExitCode.Usage)
+        const session = await v1.beta.agents.sessions.create({
+          agent_id: await agentId(client, args.agent),
+          environment: { type: 'none' },
+          input: message,
+        })
+        sessionId = session.id
+      }
+      const turn = await waitForTurn(v1, sessionId, previous, deadline)
+      if (!turn) {
+        return { sessionId, done: false, next: 'the turn is still running; read it later with list_session_items' }
+      }
+      return {
+        sessionId,
+        done: true,
+        status: turn.status,
+        reply: await replyText(v1, sessionId, turn.id),
+        ...(turn.error ? { error: turn.error } : {}),
+        usage: turn.usage,
+      }
     },
   )
-
-  tool('cancel_run', 'Cancel a running run.', { runId: z.string() }, async (args) => {
-    const client = await getClient()
-    await client.cancelRun(args.runId as string)
-    return jsonResult({ runId: args.runId, cancelled: true })
-  })
 
   // -- Skills ---------------------------------------------------------------------
 
-  tool(
-    'list_skills',
-    'List the skills available in this tenant (attachable to agents).',
-    { limit: z.number().int().min(1).max(200).optional() },
-    async (args) => {
-      const client = await getClient()
-      const { items, total } = await client.listSkills({ limit: (args.limit as number) ?? 50 })
-      return jsonResult({ skills: items, total })
-    },
+  tool('list_skills', 'List skills, newest first.', { limit, after }, async (client, args) =>
+    toPage(await (await client.v1()).skills.list(page(args))),
+  )
+
+  tool('get_skill', 'Fetch one skill\'s metadata.', { id: z.string() }, async (client, args) =>
+    (await client.v1()).skills.retrieve(args.id as string),
   )
 
   tool(
-    'attach_skill',
-    'Attach a skill to an agent profile.',
-    { agent: z.string(), skill: z.string() },
-    async (args) => {
-      const client = await getClient()
-      await client.request<void>(
-        `/api/profiles/${encodeURIComponent(args.agent as string)}/skills/${encodeURIComponent(args.skill as string)}`,
-        { method: 'PUT' },
-      )
-      return jsonResult({ agent: args.agent, skill: args.skill, attached: true })
-    },
-  )
-
-  tool(
-    'detach_skill',
-    'Detach a skill from an agent profile.',
-    { agent: z.string(), skill: z.string() },
-    async (args) => {
-      const client = await getClient()
-      await client.request<void>(
-        `/api/profiles/${encodeURIComponent(args.agent as string)}/skills/${encodeURIComponent(args.skill as string)}`,
-        { method: 'DELETE' },
-      )
-      return jsonResult({ agent: args.agent, skill: args.skill, detached: true })
-    },
-  )
-
-  // -- Storage ----------------------------------------------------------------------
-
-  tool(
-    'storage_list',
-    'List objects in the tenant storage (VFS), optionally under a prefix.',
-    {
-      prefix: z.string().optional(),
-      limit: z.number().int().min(1).max(1000).optional().describe('max rows (default 100)'),
-    },
-    async (args) => {
-      const client = await getClient()
-      const sp = new URLSearchParams()
-      if (args.prefix) sp.set('prefix', args.prefix as string)
-      if (args.limit != null) sp.set('limit', String(args.limit))
-      const qs = sp.toString()
-      return jsonResult(await client.request(`/api/storage/objects${qs ? `?${qs}` : ''}`))
-    },
-  )
-
-  tool(
-    'storage_read',
-    'Read one storage object. Text comes back inline; binary comes back base64. Large objects are truncated at maxBytes.',
-    {
-      key: z.string(),
-      maxBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(MAX_RESULT_BYTES)
-        .optional()
-        .describe(`cap on returned content bytes (default ${DEFAULT_STORAGE_READ_BYTES})`),
-    },
-    async (args) => {
-      const client = await getClient()
-      const obj = await client.request<{
-        key: string
-        contentType?: string
-        size: number
-        encoding: string
-        content: string
-      }>(`/api/storage/objects/${encodeStorageKey(args.key as string)}`)
-      const cap = (args.maxBytes as number) ?? DEFAULT_STORAGE_READ_BYTES
-      let content = obj.content
-      let truncated = false
-      if (content.length > cap) {
-        content = content.slice(0, cap)
-        truncated = true
+    'create_skill',
+    'Upload an Agent Skills folder on this machine (it must contain SKILL.md) as a new skill.',
+    { path: z.string().describe('the folder\'s path') },
+    async (client, args) => {
+      const dir = path.resolve(args.path as string)
+      const files = await collectSkillFiles(dir)
+      if (!files.some((f) => f.relPath === 'SKILL.md')) {
+        throw new CliError(`no SKILL.md in ${dir}`, ExitCode.Usage)
       }
-      return jsonResult({ ...obj, content, ...(truncated ? { truncatedAt: cap } : {}) })
+      const { toFile } = await import('openai/uploads')
+      const folder = path.basename(dir)
+      const uploads = await Promise.all(files.map((f) => toFile(f.bytes, `${folder}/${f.relPath}`)))
+      return (await client.v1()).skills.create({ files: uploads })
+    },
+  )
+
+  tool('delete_skill', 'Delete a skill and all its versions.', { id: z.string() }, async (client, args) =>
+    (await client.v1()).skills.delete(args.id as string),
+  )
+
+  // -- Vaults ---------------------------------------------------------------------
+
+  tool('list_vaults', 'List vaults (they hold the credentials MCP tools use).', { limit, after }, async (client, args) =>
+    toPage(await (await client.v1()).beta.agents.vaults.list(page(args))),
+  )
+
+  tool('create_vault', 'Create a vault (admin).', { name: z.string() }, async (client, args) =>
+    (await client.v1()).beta.agents.vaults.create({ name: args.name as string }),
+  )
+
+  tool('delete_vault', 'Delete a vault and its credentials (admin).', { id: z.string() }, async (client, args) =>
+    (await client.v1()).beta.agents.vaults.delete(args.id as string),
+  )
+
+  tool(
+    'list_credentials',
+    'List the credentials in a vault. Values are never returned.',
+    { vault: z.string(), limit, after },
+    async (client, args) =>
+      toPage(await (await client.v1()).beta.agents.vaults.credentials.list(args.vault as string, page(args))),
+  )
+
+  tool(
+    'add_credential',
+    'Add a bearer token for an MCP server to a vault (admin). The token is sealed and never returned.',
+    {
+      vault: z.string(),
+      name: z.string(),
+      server: z.string().describe('the MCP server URL (https)'),
+      token: z.string(),
+    },
+    async (client, args) =>
+      (await client.v1()).beta.agents.vaults.credentials.create(args.vault as string, {
+        name: args.name as string,
+        auth: { type: 'static_bearer', mcp_server_url: args.server as string, token: args.token as string },
+      }),
+  )
+
+  tool('delete_credential', 'Delete a credential (admin).', { vault: z.string(), id: z.string() }, async (client, args) =>
+    (await client.v1()).beta.agents.vaults.credentials.delete(args.id as string, { vault_id: args.vault as string }),
+  )
+
+  // -- Files ----------------------------------------------------------------------
+
+  tool('list_files', 'List uploaded files, newest first.', { limit, after }, async (client, args) =>
+    toPage(await (await client.v1()).files.list(page(args))),
+  )
+
+  tool(
+    'upload_file',
+    'Upload a file on this machine.',
+    { path: z.string(), name: z.string().optional().describe('store it under this name') },
+    async (client, args) => {
+      const target = args.path as string
+      const { toFile } = await import('openai/uploads')
+      const file = await toFile(await fs.readFile(target), (args.name as string | undefined) ?? path.basename(target))
+      return (await client.v1()).files.create({ file, purpose: 'user_data' })
     },
   )
 
   tool(
-    'storage_write',
-    'Write (upsert) one storage object. Pass base64: true when content is base64-encoded binary.',
-    {
-      key: z.string().describe('object key; must not end with "/"'),
-      content: z.string(),
-      contentType: z.string().optional().describe('stored Content-Type (default text/plain)'),
-      base64: z.boolean().optional().describe('content is base64-encoded binary'),
+    'download_file',
+    'Download a file\'s bytes to a path on this machine.',
+    { id: z.string(), path: z.string().describe('where to write it') },
+    async (client, args) => {
+      const res = await (await client.v1()).files.content(args.id as string)
+      const bytes = Buffer.from(await res.arrayBuffer())
+      await fs.writeFile(args.path as string, bytes)
+      return { id: args.id, path: args.path, bytes: bytes.length }
     },
-    async (args) => {
-      const client = await getClient()
-      const key = args.key as string
-      if (key.endsWith('/')) {
-        return errorResult('key must not end with "/" (that denotes a prefix)')
-      }
-      const body = args.base64
-        ? Buffer.from(args.content as string, 'base64')
-        : Buffer.from(args.content as string, 'utf8')
-      const result = await client.request(`/api/storage/objects/${encodeStorageKey(key)}`, {
-        method: 'PUT',
-        body,
-        headers: { 'Content-Type': (args.contentType as string) ?? 'text/plain; charset=utf-8' },
+  )
+
+  tool('delete_file', 'Delete a file.', { id: z.string() }, async (client, args) =>
+    (await client.v1()).files.delete(args.id as string),
+  )
+
+  // -- Usage and billing ------------------------------------------------------------
+
+  tool(
+    'get_usage',
+    'Usage totals per meter with their cost in micro-USD, a daily series, and optional groups. Costs are the server\'s; do not recompute them.',
+    {
+      days: z.number().int().min(1).max(366).optional().describe('look-back window (default 30)'),
+      groupBy: z.enum(['model', 'provider', 'credential', 'session', 'agent']).optional(),
+      session: z.string().optional().describe('only this session'),
+    },
+    async (client, args) => {
+      const end = Math.floor(Date.now() / 1000) + 1
+      const start = end - ((args.days as number | undefined) ?? 30) * 86_400
+      return client.usage({
+        start,
+        end,
+        group_by: args.groupBy as string | undefined,
+        session: args.session as string | undefined,
       })
-      return jsonResult(result)
     },
   )
 
-  // -- Publishing ----------------------------------------------------------------------
+  tool(
+    'list_usage_events',
+    'Raw usage rows, newest first, each with its cost in micro-USD.',
+    { meter: z.string().optional(), limit, after },
+    async (client, args) => client.usageEvents({ ...page(args), meter: args.meter as string | undefined }),
+  )
+
+  tool(
+    'get_wallet',
+    'The credit wallet: balance, credited and charged (micro-USD), plan tier, period, compute allowance, and the credit packs on sale.',
+    {},
+    async (client) => client.wallet(),
+  )
+
+  tool(
+    'billing_checkout',
+    'Open a checkout (admin): offer is plan:pro, plan:max, or pack:<cents> from get_wallet. Returns the URL for the user to open.',
+    { offer: z.string() },
+    async (client, args) => client.checkout(args.offer as string),
+  )
+
+  tool(
+    'billing_portal',
+    'Open the billing portal (admin) to change or cancel the plan. Returns the URL for the user to open.',
+    {},
+    async (client) => client.portal(),
+  )
+
+  // -- Kits -------------------------------------------------------------------------
+
+  const kitFields = {
+    name: z.string().optional(),
+    description: z.string().optional(),
+    readme: z.string().optional().describe('markdown'),
+    agents: z.array(z.string()).optional().describe('agent ids or names'),
+    skills: z.array(z.string()).optional().describe('skill ids'),
+    templates: z.array(z.string()).optional().describe('environment template ids'),
+  }
+  const kitInput = async (client: ApiClient, args: Record<string, unknown>): Promise<Partial<KitInput>> => {
+    const selection =
+      args.agents || args.skills || args.templates
+        ? {
+            selection: {
+              agents: await Promise.all(((args.agents as string[] | undefined) ?? []).map((a) => agentId(client, a))),
+              skills: (args.skills as string[] | undefined) ?? [],
+              templates: (args.templates as string[] | undefined) ?? [],
+            },
+          }
+        : {}
+    return {
+      ...(args.name !== undefined ? { name: args.name as string } : {}),
+      ...(args.description !== undefined ? { description: args.description as string } : {}),
+      ...(args.readme !== undefined ? { readme: args.readme as string } : {}),
+      ...selection,
+    }
+  }
+
+  tool('list_kits', 'List this organization\'s kits.', {}, async (client) => client.listKits())
+
+  tool(
+    'make_kit',
+    'Make a kit from agents, skills, and environment templates. Publish it with publish_kit.',
+    { ...kitFields, name: z.string() },
+    async (client, args) => {
+      const input = await kitInput(client, args)
+      return client.createKit({ selection: {}, ...input, name: args.name as string })
+    },
+  )
+
+  tool(
+    'edit_kit',
+    'Change a kit. Passing agents, skills, or templates replaces the whole selection.',
+    { id: z.string().describe('kit id'), ...kitFields },
+    async (client, args) => client.updateKit(args.id as string, await kitInput(client, args)),
+  )
+
+  tool('publish_kit', 'Publish a kit\'s current selection as its next version.', { id: z.string() }, async (client, args) =>
+    client.publishKit(args.id as string),
+  )
+
+  tool('withdraw_kit', 'Withdraw a published kit.', { id: z.string() }, async (client, args) =>
+    client.withdrawKit(args.id as string),
+  )
+
+  tool(
+    'show_kit',
+    'Read a published kit by its public id (kit-...): contents, each asset\'s key, and the credentials a copy needs.',
+    { publicId: z.string() },
+    async (client, args) => client.publicKit(args.publicId as string),
+  )
+
+  tool(
+    'copy_kit',
+    'Copy a published kit into this organization. assets lists {key, name} for each asset to copy (keys from show_kit). A name already in use fails the whole copy with name_taken.',
+    {
+      publicId: z.string(),
+      assets: z.array(z.object({ key: z.string(), name: z.string() })),
+    },
+    async (client, args) => client.copyKit(args.publicId as string, args.assets as { key: string; name: string }[]),
+  )
+
+  // -- Publishing -------------------------------------------------------------------
 
   tool(
     'publish_agent',
-    'Publish an agent as a public chat endpoint. options maps to the publish request body (visibility, authMode, allowedOrigins, ...; schema in orca://openapi).',
-    {
-      agent: z.string(),
-      options: z.record(z.string(), z.unknown()).optional(),
-    },
-    async (args) => {
-      const client = await getClient()
-      return jsonResult(
-        await client.request(
-          `/api/profiles/${encodeURIComponent(args.agent as string)}/publish`,
-          { method: 'POST', body: JSON.stringify((args.options as object) ?? {}) },
-        ),
-      )
-    },
+    'Publish an agent (admin): mint an API key scoped to it. The secret is in this one response. Unpublish with revoke_key.',
+    { agent: z.string().describe('agent id or name'), label: z.string().describe('where the key is used') },
+    async (client, args) => client.publishAgent(await agentId(client, args.agent), args.label as string),
   )
-
-  // -- Escape hatch ----------------------------------------------------------------------
 
   tool(
-    'api_request',
-    'Escape hatch for any Orca API operation not covered by a dedicated tool: raw authenticated request against /api/*. The full OpenAPI spec is in the orca://openapi resource (or GET {apiUrl}/api/openapi.yaml).',
-    {
-      method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-      path: z.string().describe('request path; must start with /api/'),
-      query: z.record(z.string(), z.string()).optional().describe('query string parameters'),
-      body: z.unknown().optional().describe('JSON request body'),
-    },
-    async (args) => {
-      const client = await getClient()
-      const path = args.path as string
-      if (!path.startsWith('/api/')) {
-        return errorResult('path must start with /api/')
-      }
-      const sp = new URLSearchParams((args.query as Record<string, string>) ?? {})
-      const qs = sp.toString()
-      const full = `${path}${qs ? (path.includes('?') ? '&' : '?') + qs : ''}`
-      const init: RequestInit = { method: args.method as string }
-      if (args.body !== undefined) init.body = JSON.stringify(args.body)
-      const result = await client.request<unknown>(full, init)
-      return jsonResult(result === undefined ? { ok: true } : result)
-    },
-  )
-
-  // -- Resources ----------------------------------------------------------------------
-
-  server.registerResource(
-    'openapi',
-    'orca://openapi',
-    {
-      title: 'Orca OpenAPI specification',
-      description: 'The full control-plane API schema, for use with the api_request tool.',
-      mimeType: 'application/yaml',
-    },
-    async (uri) => {
-      const client = await getClient()
-      const res = await fetch(client.url('/api/openapi.yaml'))
-      const text = await res.text()
-      return { contents: [{ uri: uri.href, mimeType: 'application/yaml', text }] }
-    },
+    'list_published_keys',
+    'List the scoped keys an agent is published with.',
+    { agent: z.string().describe('agent id or name') },
+    async (client, args) => client.publishedKeys(await agentId(client, args.agent)),
   )
 
   return server
-}
-
-// encodeStorageKey mirrors src/commands/storage.tsx: slashes stay literal
-// path separators for the Go {key...} wildcard; each segment is encoded.
-function encodeStorageKey(key: string): string {
-  const isFolder = key.endsWith('/')
-  const trimmed = isFolder ? key.slice(0, -1) : key
-  const safe = trimmed.split('/').map(encodeURIComponent).join('/')
-  return safe + (isFolder ? '/' : '')
 }

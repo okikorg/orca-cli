@@ -1,7 +1,6 @@
 import { Box, Text } from 'ink'
 
 import { glyphs, theme } from './theme.js'
-import type { RunStatus } from '../lib/types.js'
 
 export type Column<T> = {
   header: string
@@ -22,14 +21,6 @@ function fit(text: string, width: number): string {
   return clipped.padEnd(width + 2)
 }
 
-// A status glyph + word as one string, for a Column<T>.get that renders a
-// run's state (`● running`, `● error`). Pair with statusColor in the column's
-// `color` fn so the whole cell takes the status color. The glyph comes from the
-// active tier (Unicode `●` / ASCII `*`); never hardcode it at a call site.
-export function statusDot(status: RunStatus): string {
-  return `${glyphs.statusFilled} ${status}`
-}
-
 // Borderless column list. Hierarchy is whitespace and weight, not boxes.
 // - Optional header line: bold mint `title`, then subtle ` · `-joined `meta`.
 // - A subtle UPPERCASE header row by default (no mint, no rule), so every
@@ -37,7 +28,7 @@ export function statusDot(status: RunStatus): string {
 //   only for a deliberately headerless presentation.
 // - Optional `hint`: a subtle `next: ...` footer teaching follow-up commands.
 // Cells use the terminal default unless a column supplies a color. Two-space
-// gutters, MAX_COL cap, truncation — all preserved. Callers that pass only
+// gutters, MAX_COL cap, truncation: all preserved. Callers that pass only
 // `columns`/`rows` render a bare aligned grid exactly as before.
 export function Table<T>({
   columns,

@@ -36,7 +36,7 @@ function bulletGlyph(): string {
   return /UTF-?8$/i.test(locale) ? '·' : '-'
 }
 
-// Remote text (gateway chat replies, run events, workflow step names) must
+// Remote text (agent replies, conversation items, tool names) must
 // never smuggle terminal control sequences to the user's TTY: OSC can retitle
 // the window or write the clipboard (OSC 52), CSI can move/erase, and C1 bytes
 // alias CSI on some terminals. stripControlSequences removes ESC-introduced

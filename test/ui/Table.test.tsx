@@ -1,7 +1,7 @@
 import { render } from 'ink-testing-library'
 import { describe, expect, it } from 'vitest'
 
-import { Table, statusDot } from '../../src/ui/Table.js'
+import { Table } from '../../src/ui/Table.js'
 import { glyphs } from '../../src/ui/theme.js'
 
 type Row = { name: string; runtime: string }
@@ -59,10 +59,5 @@ describe('Table', () => {
     const frame = lastFrame() ?? ''
     expect(frame).toContain('...')
     expect(frame).not.toContain(long)
-  })
-
-  it('statusDot pairs the active status glyph with the status word', () => {
-    expect(statusDot('running')).toBe(`${glyphs.statusFilled} running`)
-    expect(statusDot('error')).toBe(`${glyphs.statusFilled} error`)
   })
 })

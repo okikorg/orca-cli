@@ -9,14 +9,13 @@ import {
   checkApiKeyPresent,
   checkBilling,
   checkColor,
-  checkConductor,
   checkConfigFile,
   checkConfigPermissions,
   checkContext,
   checkDashboard,
-  checkGateway,
   checkKeyRole,
   checkNode,
+  checkServer,
   computeFieldSources,
   doctorExitCode,
   gatherContext,
@@ -30,7 +29,7 @@ import { saveConfig } from '../../src/lib/config.js'
 import { DEFAULT_API_URL } from '../../src/lib/defaults.js'
 import { useTmpConfigDir } from '../helpers/tmp-config.js'
 
-const KEY = 'ao_dev_abcdefghijklmnopqrstuv'
+const KEY = 'orca_sk_abcdefghijklmnopqrstuvwxyz234567abcdefghijklmn'
 
 // jsonRes / textRes build Response objects for the injected fetch mocks. These
 // never touch global fetch, so Ink's yoga-wasm loader is untouched.
@@ -149,7 +148,7 @@ describe('checkContext', () => {
   it('reports the active context and per-field sources', () => {
     const r = checkContext({
       name: 'prod',
-      sources: { apiUrl: 'flag', gatewayUrl: 'unset', dashboardUrl: 'default', apiKey: 'file' },
+      sources: { apiUrl: 'flag', dashboardUrl: 'default', apiKey: 'file' },
     })
     expect(r.status).toBe('pass')
     expect(r.message).toContain('active "prod"')
@@ -160,7 +159,7 @@ describe('checkContext', () => {
   it('fails when an explicitly named context is unknown', () => {
     const r = checkContext({
       name: 'typpo',
-      sources: { apiUrl: 'default', gatewayUrl: 'default', dashboardUrl: 'default', apiKey: 'unset' },
+      sources: { apiUrl: 'default', dashboardUrl: 'default', apiKey: 'unset' },
       missing: 'typpo',
       configPath: '/home/ada/.config/orca/config.json',
     })
@@ -177,60 +176,54 @@ describe('computeFieldSources', () => {
       defaulted: new Set(['dashboardUrl']),
       flags: { apiUrl: 'http://flag' },
       env: { ORCA_API_KEY: KEY } as NodeJS.ProcessEnv,
-      file: { gatewayUrl: 'http://gw' },
+      file: { apiKey: KEY },
     })
     expect(s.apiUrl).toBe('flag')
-    expect(s.gatewayUrl).toBe('file')
     expect(s.dashboardUrl).toBe('default')
     expect(s.apiKey).toBe('env')
   })
 })
 
-describe('checkConductor', () => {
-  it('passes with latency on a healthy /healthz', async () => {
-    const r = await checkConductor({
+describe('checkServer', () => {
+  it('passes with latency on a healthy /health', async () => {
+    const r = await checkServer({
       apiUrl: 'http://test:8080',
-      fetchImpl: router({ '/healthz': () => textRes('ok') }),
+      fetchImpl: router({ '/health': () => jsonRes({ status: 'ok' }) }),
       timeoutMs: 3000,
     })
     expect(r.status).toBe('pass')
-    expect(r.message).toContain('HTTP 200')
+    expect(r.message).toContain('reachable in')
   })
 
   it('fails on a non-ok status', async () => {
-    const r = await checkConductor({
+    const r = await checkServer({
       apiUrl: 'http://test:8080',
-      fetchImpl: router({ '/healthz': () => textRes('nope', 503) }),
+      fetchImpl: router({ '/health': () => textRes('nope', 503) }),
       timeoutMs: 3000,
     })
     expect(r.status).toBe('fail')
-    expect(r.message).toContain('503')
+    expect(r.message).toContain('HTTP 503')
   })
 
-  it('fails with a localhost fix when the local conductor is down', async () => {
-    const r = await checkConductor({
-      apiUrl: 'http://localhost:8080',
-      fetchImpl: networkError,
-      timeoutMs: 3000,
-    })
+  it('fails with a localhost fix when the local server is down', async () => {
+    const r = await checkServer({ apiUrl: 'http://localhost:8080', fetchImpl: networkError, timeoutMs: 3000 })
     expect(r.status).toBe('fail')
-    expect(r.fix).toContain('local conductor')
+    expect(r.fix).toContain('local server')
   })
 
   it('fails with a remote fix hint for a non-local host', async () => {
-    const r = await checkConductor({
-      apiUrl: 'https://conductor.example.com',
-      fetchImpl: networkError,
-      timeoutMs: 3000,
-    })
-    expect(r.status).toBe('fail')
-    expect(r.fix).toContain('conductor.example.com')
+    const r = await checkServer({ apiUrl: 'https://api.example.com', fetchImpl: networkError, timeoutMs: 3000 })
+    expect(r.fix).toContain('api.example.com')
   })
 
-  it('fails on a timeout (hard fail for check 6)', async () => {
-    const r = await checkConductor({ apiUrl: 'http://test:8080', fetchImpl: hanging, timeoutMs: 20 })
+  it('fails on a timeout', async () => {
+    const r = await checkServer({ apiUrl: 'http://test:8080', fetchImpl: hanging, timeoutMs: 20 })
     expect(r.status).toBe('fail')
     expect(r.message).toContain('timed out')
+  })
+
+  it('fails without an API URL', async () => {
+    expect((await checkServer({ fetchImpl: networkError, timeoutMs: 20 })).status).toBe('fail')
   })
 })
 
@@ -239,8 +232,8 @@ describe('checkApiKeyPresent', () => {
     const r = checkApiKeyPresent(KEY)
     expect(r.status).toBe('pass')
     expect(r.message).not.toContain(KEY)
-    expect(r.message).toContain('...')
   })
+
   it('fails with a login fix when absent', () => {
     const r = checkApiKeyPresent(undefined)
     expect(r.status).toBe('fail')
@@ -251,44 +244,28 @@ describe('checkApiKeyPresent', () => {
 describe('checkKeyRole', () => {
   const base = { apiUrl: 'http://test:8080', apiKey: KEY, timeoutMs: 3000 }
 
-  it('passes and reports role + label on a 200 with a matching keyId', async () => {
+  it('passes with the role and tenant from /api/whoami', async () => {
     const r = await checkKeyRole({
       ...base,
-      keyId: 'key_9',
-      fetchImpl: router({
-        '/api/api-keys': () => jsonRes({ keys: [{ id: 'key_9', role: 'admin', name: 'cli-ada@laptop' }] }),
-      }),
+      fetchImpl: router({ '/api/whoami': () => jsonRes({ tenant: 'org_1', role: 'member', agent: null }) }),
     })
     expect(r.status).toBe('pass')
-    expect(r.message).toContain('role admin')
-    expect(r.message).toContain('cli-ada@laptop')
+    expect(r.message).toBe('valid; member of org_1')
   })
 
-  it('passes generically when no keyId is stored', async () => {
+  it('warns for a key scoped to a published agent', async () => {
     const r = await checkKeyRole({
       ...base,
-      fetchImpl: router({ '/api/api-keys': () => jsonRes({ keys: [] }) }),
+      fetchImpl: router({ '/api/whoami': () => jsonRes({ tenant: 'org_1', role: 'member', agent: 'agent_1' }) }),
     })
-    expect(r.status).toBe('pass')
-    expect(r.message).toContain('member')
+    expect(r.status).toBe('warn')
+    expect(r.message).toContain('agent_1')
   })
 
   it('fails on 401 (invalid/revoked)', async () => {
-    const r = await checkKeyRole({
-      ...base,
-      fetchImpl: router({ '/api/api-keys': () => jsonRes({ error: 'bad' }, 401) }),
-    })
+    const r = await checkKeyRole({ ...base, fetchImpl: router({ '/api/whoami': () => jsonRes({}, 401) }) })
     expect(r.status).toBe('fail')
     expect(r.fix).toBe('run orca auth login')
-  })
-
-  it('warns on 403 (role below member)', async () => {
-    const r = await checkKeyRole({
-      ...base,
-      fetchImpl: router({ '/api/api-keys': () => jsonRes({ error: 'forbidden' }, 403) }),
-    })
-    expect(r.status).toBe('warn')
-    expect(r.message).toContain('below member')
   })
 
   it('warns (not fails) on a probe timeout', async () => {
@@ -297,139 +274,45 @@ describe('checkKeyRole', () => {
   })
 
   it('skips when no API key is configured', async () => {
-    const r = await checkKeyRole({ apiUrl: base.apiUrl, fetchImpl: networkError, timeoutMs: 3000 })
+    const r = await checkKeyRole({ ...base, apiKey: undefined, fetchImpl: networkError })
     expect(r.status).toBe('skip')
   })
 })
 
-describe('checkBilling (402-risk mappings)', () => {
+describe('checkBilling', () => {
   const base = { apiUrl: 'http://test:8080', apiKey: KEY, timeoutMs: 3000 }
 
-  it('passes when the wallet has credits', async () => {
+  it('passes with the formatted balance when the wallet has credit', async () => {
     const r = await checkBilling({
       ...base,
-      fetchImpl: router({
-        '/api/billing/wallet': () => jsonRes({ configured: true, balanceUSD: 12.5 }),
-        '/api/spend-cap': () => jsonRes({ enabled: false }),
-      }),
+      fetchImpl: router({ '/api/billing/wallet': () => jsonRes({ balance_micro_usd: 12_500_000, tier: 'pro' }) }),
     })
     expect(r.status).toBe('pass')
-    expect(r.message).toContain('credits available')
+    expect(r.message).toBe('credit available (balance $12.50, pro plan)')
   })
 
-  it('passes (gate inactive) when billing is not wired (503)', async () => {
+  it('warns with a fix when the balance is spent', async () => {
     const r = await checkBilling({
       ...base,
-      fetchImpl: router({
-        '/api/billing/wallet': () => jsonRes({ error: 'billing not configured' }, 503),
-        '/api/spend-cap': () => jsonRes({ enabled: false }),
-      }),
+      fetchImpl: router({ '/api/billing/wallet': () => jsonRes({ balance_micro_usd: -200, tier: 'free' }) }),
     })
-    expect(r.status).toBe('pass')
-    expect(r.message).toContain('not wired')
+    expect(r.status).toBe('warn')
+    expect(r.fix).toContain('orca billing buy')
   })
 
-  it('fails when the wallet is unconfigured (no credits granted)', async () => {
-    const r = await checkBilling({
-      ...base,
-      fetchImpl: router({
-        '/api/billing/wallet': () => jsonRes({ configured: false, balanceUSD: 0 }),
-        '/api/spend-cap': () => jsonRes({ enabled: false }),
-      }),
-    })
-    expect(r.status).toBe('fail')
-    expect(r.message).toContain('unconfigured')
-    expect(r.fix).toContain('add credits')
+  it('warns on a server error', async () => {
+    const r = await checkBilling({ ...base, fetchImpl: router({ '/api/billing/wallet': () => jsonRes({}, 502) }) })
+    expect(r.status).toBe('warn')
   })
 
-  it('fails when credits are exhausted (balance <= 0)', async () => {
-    const r = await checkBilling({
-      ...base,
-      fetchImpl: router({
-        '/api/billing/wallet': () => jsonRes({ configured: true, balanceUSD: 0 }),
-        '/api/spend-cap': () => jsonRes({ enabled: false }),
-      }),
-    })
-    expect(r.status).toBe('fail')
-    expect(r.message).toContain('out of credits')
-    expect(r.fix).toContain('top up')
-  })
-
-  it('fails when the billing path is broken (5xx), predicting the fail-closed 402', async () => {
-    const r = await checkBilling({
-      ...base,
-      fetchImpl: router({
-        '/api/billing/wallet': () => jsonRes({ error: 'could not read wallet' }, 502),
-        '/api/spend-cap': () => jsonRes({ enabled: false }),
-      }),
-    })
-    expect(r.status).toBe('fail')
-    expect(r.message).toContain('fail-closed credit check')
-    expect(r.fix).toContain('BILLING_INTERNAL_URL')
-  })
-
-  it('skips when the billing endpoints are absent (404, older conductor)', async () => {
-    const r = await checkBilling({
-      ...base,
-      fetchImpl: router({
-        '/api/billing/wallet': () => jsonRes({ error: 'not found' }, 404),
-        '/api/spend-cap': () => jsonRes({ error: 'not found' }, 404),
-      }),
-    })
-    expect(r.status).toBe('skip')
-  })
-
-  it('fails on a reached monthly spend cap even when credits are fine', async () => {
-    const r = await checkBilling({
-      ...base,
-      fetchImpl: router({
-        '/api/billing/wallet': () => jsonRes({ configured: true, balanceUSD: 100 }),
-        '/api/spend-cap': () =>
-          jsonRes({
-            enabled: true,
-            month: { remaining_usd_cents: 0, spent_usd_cents: 5000, limit_usd_cents: 5000 },
-          }),
-      }),
-    })
-    expect(r.status).toBe('fail')
-    expect(r.message).toContain('spend cap reached')
-    expect(r.fix).toContain('orca billing cap set')
-  })
-
-  it('warns when the conductor cannot be reached to check billing', async () => {
+  it('warns when the server cannot be reached to check billing', async () => {
     const r = await checkBilling({ ...base, fetchImpl: networkError })
     expect(r.status).toBe('warn')
   })
 
   it('skips without an API key', async () => {
-    const r = await checkBilling({ apiUrl: base.apiUrl, fetchImpl: networkError, timeoutMs: 3000 })
+    const r = await checkBilling({ ...base, apiKey: undefined, fetchImpl: networkError })
     expect(r.status).toBe('skip')
-  })
-})
-
-describe('checkGateway', () => {
-  it('warns (with a fix) when the gateway URL is unresolved', async () => {
-    const r = await checkGateway({ fetchImpl: networkError, timeoutMs: 3000 })
-    expect(r.status).toBe('warn')
-    expect(r.fix).toContain('ORCA_GATEWAY_URL')
-  })
-
-  it('passes when the gateway answers (any HTTP response is reachable)', async () => {
-    const r = await checkGateway({
-      gatewayUrl: 'https://gw.example.com',
-      fetchImpl: router({ '/healthz': () => textRes('not found', 404) }),
-      timeoutMs: 3000,
-    })
-    expect(r.status).toBe('pass')
-  })
-
-  it('warns when a set gateway cannot be reached', async () => {
-    const r = await checkGateway({
-      gatewayUrl: 'https://gw.example.com',
-      fetchImpl: networkError,
-      timeoutMs: 3000,
-    })
-    expect(r.status).toBe('warn')
   })
 })
 
@@ -589,17 +472,16 @@ describe('runDoctor (orchestration)', () => {
     await cleanup()
   })
 
-  it('runs all 11 checks in display order against injected inputs', async () => {
+  it('runs all 10 checks in display order against injected inputs', async () => {
     await saveConfig({
       currentContext: 'default',
       contexts: { default: { apiUrl: 'http://test:8080', apiKey: KEY, keyId: 'key_9' } },
     })
     const ctx = await gatherContext({}, process.env)
     const fetchImpl = router({
-      '/healthz': () => textRes('ok'),
-      '/api/api-keys': () => jsonRes({ keys: [{ id: 'key_9', role: 'admin', name: 'cli' }] }),
-      '/api/billing/wallet': () => jsonRes({ configured: true, balanceUSD: 5 }),
-      '/api/spend-cap': () => jsonRes({ enabled: false }),
+      '/health': () => jsonRes({ status: 'ok' }),
+      '/api/whoami': () => jsonRes({ tenant: 'org_1', role: 'admin', agent: null }),
+      '/api/billing/wallet': () => jsonRes({ balance_micro_usd: 5_000_000, tier: 'free' }),
     })
     const results = await runDoctor({
       ctx,
@@ -615,11 +497,10 @@ describe('runDoctor (orchestration)', () => {
       'config file',
       'config permissions',
       'context',
-      'conductor',
+      'server',
       'api key',
       'api key role',
       'billing',
-      'chat gateway',
       'dashboard url',
     ])
     expect(doctorExitCode(results)).toBe(0)

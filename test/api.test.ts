@@ -1,157 +1,141 @@
+import { APIConnectionError, APIError as OpenAIAPIError } from 'openai/error'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiClient, ApiError, extractErrorBody, mapApiError } from '../src/lib/api.js'
+import { ApiClient, ApiError, extractErrorBody, mapApiError, pageQuery, toPage } from '../src/lib/api.js'
 import { ExitCode } from '../src/lib/errors.js'
 import { jsonResponse, stubFetch } from './helpers/fetch-mock.js'
 
-const OPTS = { apiUrl: 'http://test:8080', apiKey: 'ao_dev_k'.padEnd(30, 'x'), contextName: 'test' }
-
-function client() {
-  return new ApiClient(OPTS)
-}
+const OPTS = { apiUrl: 'http://test:8080/', apiKey: 'orca_sk_'.padEnd(60, 'x'), contextName: 'test' }
+const CTX = { contextName: 'test', apiUrl: 'http://test:8080' }
 
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
 describe('ApiClient.request', () => {
-  it('sends the bearer key and parses JSON', async () => {
+  it('sends the bearer key to /api and parses JSON', async () => {
     const calls = stubFetch({
-      'GET /api/profiles/orca': jsonResponse({ name: 'orca', runtime: 'claude' }),
+      'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'user_1', role: 'admin', agent: null }),
     })
-    const profile = await client().getProfile('orca')
-    expect(profile.name).toBe('orca')
+    const who = await new ApiClient(OPTS).whoami()
+    expect(who.tenant).toBe('org_1')
     expect(calls[0].headers.Authorization).toBe(`Bearer ${OPTS.apiKey}`)
-    expect(calls[0].headers['X-Tenant-ID']).toBeUndefined()
   })
 
-  it('returns undefined for empty bodies', async () => {
-    stubFetch({ 'DELETE /api/profiles/orca': () => new Response(null, { status: 204 }) })
-    await expect(client().deleteProfile('orca')).resolves.toBeUndefined()
+  it('sends no Authorization header without a key', async () => {
+    const calls = stubFetch({ 'GET /api/public/kits/kit-abcdefghijklmnopq': jsonResponse({ object: 'kit.public' }) })
+    await new ApiClient({ ...OPTS, apiKey: '' }).publicKit('kit-abcdefghijklmnopq')
+    expect(calls[0].headers.Authorization).toBeUndefined()
   })
 
   it('throws ApiError with the parsed body on 4xx', async () => {
     stubFetch({
-      'POST /api/profiles': jsonResponse({ error: 'invalid body: name required' }, { status: 400 }),
-    })
-    const err = await client()
-      .createProfile({ name: '', runtime: 'claude' })
-      .catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(ApiError)
-    expect((err as ApiError).status).toBe(400)
-    expect(extractErrorBody((err as ApiError).body)).toBe('invalid body: name required')
-  })
-
-  it('strips trailing slashes from the base URL', async () => {
-    const calls = stubFetch({ 'GET /api/runs': jsonResponse([]) })
-    const c = new ApiClient({ ...OPTS, apiUrl: 'http://test:8080///' })
-    await c.listRuns()
-    expect(calls).toHaveLength(1)
-  })
-})
-
-describe('ApiClient.requestPaged', () => {
-  it('reads X-Total-Count', async () => {
-    stubFetch({
-      'GET /api/profiles?limit=2': jsonResponse([{ name: 'a' }, { name: 'b' }], {
-        headers: { 'X-Total-Count': '41' },
-      }),
-    })
-    const page = await client().listProfiles({ limit: 2 })
-    expect(page.items).toHaveLength(2)
-    expect(page.total).toBe(41)
-  })
-
-  it('falls back to array length without the header', async () => {
-    stubFetch({ 'GET /api/profiles': jsonResponse([{ name: 'a' }]) })
-    const page = await client().listProfiles()
-    expect(page.total).toBe(1)
-  })
-
-  it('forwards limit and offset as query params', async () => {
-    const calls = stubFetch({ 'GET /api/runs?limit=5&offset=10': jsonResponse([]) })
-    await client().listRuns({ limit: 5, offset: 10 })
-    expect(calls[0].path).toBe('/api/runs?limit=5&offset=10')
-  })
-
-  it('passes the sessions ?q= filter alongside pagination', async () => {
-    const calls = stubFetch({ 'GET /api/sessions?limit=25&q=triage': jsonResponse([]) })
-    await client().listSessions({ limit: 25, q: 'triage' })
-    expect(calls[0].path).toBe('/api/sessions?limit=25&q=triage')
-  })
-
-  it('passes the sessions ?profile= exact filter alongside pagination', async () => {
-    const calls = stubFetch({ 'GET /api/sessions?limit=25&profile=dev': jsonResponse([]) })
-    await client().listSessions({ limit: 25, profile: 'dev' })
-    expect(calls[0].path).toBe('/api/sessions?limit=25&profile=dev')
-  })
-})
-
-describe('ApiClient.requestPagedField', () => {
-  it('unwraps the envelope array and reads X-Total-Count', async () => {
-    stubFetch({
-      'GET /api/secrets?limit=2': jsonResponse(
-        { total: 2, secrets: [{ name: 'A' }, { name: 'B' }] },
-        { headers: { 'X-Total-Count': '30' } },
+      'POST /api/keys': jsonResponse(
+        { error: { message: 'name must be a string', type: 'invalid_request_error', param: 'name', code: 'invalid_request' } },
+        { status: 400 },
       ),
     })
-    const page = await client().listSecrets({ limit: 2 })
-    expect(page.items).toEqual([{ name: 'A' }, { name: 'B' }])
-    expect(page.total).toBe(30)
+    const err = await new ApiClient(OPTS).createKey('').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(400)
+    expect(extractErrorBody((err as ApiError).body)).toBe('name must be a string')
   })
 
-  it('falls back to the envelope total when the header is absent', async () => {
+  it('reads list envelopes into cursor pages', async () => {
     stubFetch({
-      'GET /api/published': jsonResponse({
-        publishedAgents: [{ profileName: 'a', publicUrl: 'https://x' }],
-        total: 7,
+      'GET /api/keys?limit=2': jsonResponse({
+        object: 'list',
+        data: [{ id: 'key_2' }, { id: 'key_1' }],
+        has_more: true,
+        first_id: 'key_2',
+        last_id: 'key_1',
       }),
     })
-    const page = await client().listPublishedAgents()
-    expect(page.items).toHaveLength(1)
-    expect(page.total).toBe(7)
+    const page = await new ApiClient(OPTS).listKeys({ limit: 2 })
+    expect(page.hasMore).toBe(true)
+    expect(page.lastId).toBe('key_1')
+  })
+})
+
+describe('v1()', () => {
+  it('points the openai client at /v1 with the same key, and reuses it', async () => {
+    const calls = stubFetch({
+      'GET /v1/agents?limit=1': jsonResponse({ object: 'list', data: [], has_more: false, first_id: null, last_id: null }),
+    })
+    const client = new ApiClient(OPTS)
+    const v1 = await client.v1()
+    expect(await client.v1()).toBe(v1)
+    await v1.beta.agents.list({ limit: 1 })
+    expect(calls[0].host).toBe('test:8080')
+    expect(new Headers(calls[0].headers as ConstructorParameters<typeof Headers>[0]).get('authorization')).toBe(`Bearer ${OPTS.apiKey}`)
+  })
+})
+
+describe('helpers', () => {
+  it('pageQuery skips empty values', () => {
+    expect(pageQuery({ limit: 5, after: undefined, meter: '' })).toBe('?limit=5')
+    expect(pageQuery()).toBe('')
   })
 
-  it('falls back to the array length when neither header nor total is present', async () => {
-    stubFetch({
-      'GET /api/profiles/bot/keys': jsonResponse({ keys: [{ id: 'k1' }] }),
+  it('toPage takes the cursor from the last row', () => {
+    expect(toPage({ data: [{ id: 'a' }, { id: 'b' }], has_more: false })).toEqual({
+      items: [{ id: 'a' }, { id: 'b' }],
+      hasMore: false,
+      lastId: 'b',
     })
-    const page = await client().listAgentKeys('bot')
-    expect(page.total).toBe(1)
+  })
+
+  it('extractErrorBody reads the server error object, the device flow code, and a message', () => {
+    expect(extractErrorBody({ error: { message: 'Resource not found' } })).toBe('Resource not found')
+    expect(extractErrorBody({ error: 'authorization_pending' })).toBe('authorization_pending')
+    expect(extractErrorBody({ message: 'plain' })).toBe('plain')
+    expect(extractErrorBody(undefined)).toBe('')
   })
 })
 
 describe('mapApiError', () => {
-  const opts = { contextName: 'test', apiUrl: 'http://test:8080' }
-
-  it('maps 401 to the auth exit code with a login hint', () => {
-    const e = mapApiError(new ApiError('401', 401), opts)
-    expect(e.exitCode).toBe(ExitCode.Auth)
-    expect(e.message).toContain('test')
+  it('maps 401 to the auth exit code with the login hint', () => {
+    const err = mapApiError(new ApiError('401', 401, {}), CTX)
+    expect(err.exitCode).toBe(ExitCode.Auth)
+    expect(err.detail).toEqual(['Run: orca auth login'])
   })
 
-  it('maps 403 to the auth exit code', () => {
-    expect(mapApiError(new ApiError('403', 403), opts).exitCode).toBe(ExitCode.Auth)
+  it('maps 403 to the auth exit code and keeps the server reason', () => {
+    const err = mapApiError(new ApiError('403', 403, { error: { message: 'This action requires the admin role' } }), CTX)
+    expect(err.exitCode).toBe(ExitCode.Auth)
+    expect(err.message).toContain('admin role')
   })
 
-  it('maps 404 to the not-found exit code', () => {
-    const e = mapApiError(new ApiError('404', 404, { error: 'unknown_profile: x' }), opts)
-    expect(e.exitCode).toBe(ExitCode.NotFound)
-    expect(e.message).toContain('unknown_profile: x')
+  it('maps 404 and 410 to the not-found exit code', () => {
+    expect(mapApiError(new ApiError('404', 404, {}), CTX).exitCode).toBe(ExitCode.NotFound)
+    const gone = mapApiError(
+      new ApiError('410', 410, { error: { message: 'This CLI is too old for Orca. Run orca update.' } }),
+      CTX,
+    )
+    expect(gone.exitCode).toBe(ExitCode.NotFound)
+    expect(gone.message).toBe('This CLI is too old for Orca. Run orca update.')
   })
 
-  it('surfaces the structured reason on other 4xx', () => {
-    const e = mapApiError(new ApiError('400', 400, { error: 'profile required' }), opts)
-    expect(e.exitCode).toBe(ExitCode.Failure)
-    expect(e.message).toBe('400: profile required')
+  it('maps openai errors the same way', () => {
+    const notFound = OpenAIAPIError.generate(404, { error: { message: 'Resource not found' } }, undefined, new Headers())
+    expect(mapApiError(notFound, CTX)).toMatchObject({ exitCode: ExitCode.NotFound, message: 'not found: Resource not found' })
+    const quota = OpenAIAPIError.generate(
+      429,
+      { error: { message: 'Your plan runs 1 sessions at once', code: 'rate_limit_exceeded' } },
+      undefined,
+      new Headers(),
+    )
+    expect(mapApiError(quota, CTX).message).toBe('429: Your plan runs 1 sessions at once')
   })
 
-  it('maps 5xx to a retry message', () => {
-    expect(mapApiError(new ApiError('502', 502), opts).message).toContain('502')
+  it('maps an unreachable host to a connectivity error', () => {
+    expect(mapApiError(new TypeError('fetch failed'), CTX).message).toContain('cannot reach http://test:8080')
+    expect(mapApiError(new APIConnectionError({ message: 'Connection error.' }), CTX).message).toContain('cannot reach')
   })
 
-  it('maps fetch TypeError to a connectivity message', () => {
-    const e = mapApiError(new TypeError('fetch failed'), opts)
-    expect(e.message).toContain('http://test:8080')
+  it('hides 5xx bodies behind a retry hint', () => {
+    expect(mapApiError(new ApiError('502', 502, { error: { message: 'internal' } }), CTX).message).toContain(
+      'returned 502',
+    )
   })
 })

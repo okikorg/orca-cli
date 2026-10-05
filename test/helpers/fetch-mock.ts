@@ -6,6 +6,8 @@ export type RecordedCall = {
   path: string
   headers: Record<string, string>
   body?: string
+  // A multipart body (file and skill uploads through the openai package).
+  form?: FormData
 }
 
 export type RouteHandler = (call: RecordedCall) => Response
@@ -15,10 +17,14 @@ export type RouteHandler = (call: RecordedCall) => Response
 // typo in a test surfaces as a failure, not a hang.
 export function stubFetch(routes: Record<string, RouteHandler | Response>): RecordedCall[] {
   const calls: RecordedCall[] = []
+  const realFetch = globalThis.fetch
   vi.stubGlobal(
     'fetch',
     async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
+      // The openai package probes multipart support by fetching a data: URL
+      // before an upload; that is no request to the server.
+      if (url.protocol === 'data:') return realFetch(input, init)
       const method = (init?.method ?? 'GET').toUpperCase()
       const call: RecordedCall = {
         method,
@@ -26,6 +32,7 @@ export function stubFetch(routes: Record<string, RouteHandler | Response>): Reco
         path: url.pathname + url.search,
         headers: (init?.headers ?? {}) as Record<string, string>,
         body: typeof init?.body === 'string' ? init.body : undefined,
+        form: init?.body instanceof FormData ? init.body : undefined,
       }
       calls.push(call)
       const key = `${method} ${call.path}`

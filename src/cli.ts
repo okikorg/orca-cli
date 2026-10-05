@@ -7,23 +7,17 @@ import { registerAuth } from './commands/auth.js'
 import { registerBilling } from './commands/billing.js'
 import { registerChat } from './commands/chat.js'
 import { registerContext } from './commands/context.js'
-import { registerCredit } from './commands/credit.js'
 import { registerDoctor } from './commands/doctor.js'
+import { registerFiles } from './commands/files.js'
 import { registerKeys } from './commands/keys.js'
 import { registerKits } from './commands/kits.js'
 import { registerMcp } from './commands/mcp.js'
-import { registerMemory } from './commands/memory.js'
-import { registerPlatform } from './commands/platform.js'
-import { registerPools } from './commands/pools.js'
-import { registerRuns } from './commands/runs.js'
-import { registerSecrets } from './commands/secrets.js'
+import { registerPublish } from './commands/publish.js'
 import { registerSessions } from './commands/sessions.js'
 import { registerSkills } from './commands/skills.js'
-import { registerStats } from './commands/stats.js'
-import { registerStorage } from './commands/storage.js'
 import { registerUpdate } from './commands/update.js'
 import { registerUsage } from './commands/usage.js'
-import { registerWorkflows } from './commands/workflows.js'
+import { registerVaults } from './commands/vaults.js'
 import { configPath } from './lib/config.js'
 import { CliError, ExitCode } from './lib/errors.js'
 import { notifyIfUpdateAvailable } from './lib/update-check.js'
@@ -35,18 +29,18 @@ const program = new Command()
 
 program
   .name('orca')
-  .description('Manage agents, runs, and publishing on the Orca platform')
+  .description('Manage agents, sessions, and publishing on the Orca platform')
   .version(VERSION, '-v, --version')
   .option('--context <name>', 'use a named context from the config file')
-  .option('--api-url <url>', 'override the conductor API base URL')
+  .option('--api-url <url>', 'override the Orca server base URL')
   .option('--json', 'machine-readable JSON output')
   .exitOverride()
 
 // Command groups for the top-level help. Headings are the uppercase group
 // labels the design language prescribes; commander renders each group as a
-// section (see configureHelp below). Order here does not decide section order —
-// that follows registration order (the order commands land in program.commands)
-// — but registration is arranged CORE -> OBSERVE -> MANAGE -> SETUP to match.
+// section (see configureHelp below). Order here does not decide section order
+// (that follows registration order, the order commands land in program.commands),
+// but registration is arranged CORE -> OBSERVE -> MANAGE -> SETUP to match.
 const GROUP = {
   CORE: 'CORE',
   OBSERVE: 'OBSERVE',
@@ -56,31 +50,21 @@ const GROUP = {
 
 // Which group each top-level command belongs to. Commands not listed (and the
 // implicit `help` command) fall through to SETUP so no stray "Commands:"
-// section is emitted. bundles/apps/topology all come from platform.tsx and
-// read as observation surfaces, so they sit in OBSERVE.
+// section is emitted.
 const COMMAND_GROUP: Record<string, string> = {
-  run: GROUP.CORE,
   chat: GROUP.CORE,
   agents: GROUP.CORE,
-  runs: GROUP.CORE,
-  stats: GROUP.OBSERVE,
+  sessions: GROUP.CORE,
   usage: GROUP.OBSERVE,
-  credit: GROUP.OBSERVE,
-  sessions: GROUP.OBSERVE,
   doctor: GROUP.OBSERVE,
-  topology: GROUP.OBSERVE,
-  bundles: GROUP.OBSERVE,
-  apps: GROUP.OBSERVE,
-  workflows: GROUP.MANAGE,
-  pools: GROUP.MANAGE,
   skills: GROUP.MANAGE,
-  mcp: GROUP.MANAGE,
-  secrets: GROUP.MANAGE,
-  storage: GROUP.MANAGE,
-  memory: GROUP.MANAGE,
-  kit: GROUP.MANAGE,
+  vaults: GROUP.MANAGE,
+  files: GROUP.MANAGE,
+  kits: GROUP.MANAGE,
+  publish: GROUP.MANAGE,
   keys: GROUP.MANAGE,
   billing: GROUP.MANAGE,
+  mcp: GROUP.MANAGE,
   auth: GROUP.SETUP,
   login: GROUP.SETUP,
   whoami: GROUP.SETUP,
@@ -91,29 +75,22 @@ const COMMAND_GROUP: Record<string, string> = {
 // Registration order == section order in the grouped help. Grouped
 // CORE -> OBSERVE -> MANAGE -> SETUP so the first command of each group appears
 // in that sequence (commander keys section order on first appearance in
-// program.commands). registerRuns adds both `runs` and the top-level `run`;
-// registerPlatform adds topology/bundles/apps.
+// program.commands).
 registerChat(program)
 registerAgents(program)
-registerRuns(program)
-
-registerStats(program)
-registerUsage(program)
-registerCredit(program)
 registerSessions(program)
-registerDoctor(program)
-registerPlatform(program)
 
-registerWorkflows(program)
-registerPools(program)
+registerUsage(program)
+registerDoctor(program)
+
 registerSkills(program)
-registerMcp(program)
-registerSecrets(program)
-registerStorage(program)
-registerMemory(program)
+registerVaults(program)
+registerFiles(program)
 registerKits(program)
+registerPublish(program)
 registerKeys(program)
 registerBilling(program)
+registerMcp(program)
 
 registerAuth(program)
 registerContext(program)
@@ -160,7 +137,7 @@ program.configureHelp({
 })
 
 // The brand banner heads the top-level help only (not every subcommand). On a
-// first run — no config file and no ORCA_API_KEY in the environment — a subtle
+// first run (no config file and no ORCA_API_KEY in the environment) a subtle
 // "not signed in" note follows the brand line, teaching the very first command.
 program.addHelpText('beforeAll', (ctx) => {
   if (ctx.command !== program) return ''

@@ -1,12 +1,11 @@
-// RFC 8628 device-authorization login against the conductor.
+// RFC 8628 device-authorization login against the Orca server, the CLI's
+// only login.
 //
-// The headless path for `orca login`: no browser on this machine, no
-// loopback server. The CLI asks the conductor for a device_code (its
-// private poll secret) plus a short user_code, prints the code and the
-// dashboard URL for the user to open on ANY device, then polls until the
-// user approves or denies there. On approval the conductor mints the
-// tenant API key inside the same transaction that spends the handshake,
-// so exactly one poll ever receives it.
+// The CLI asks the server for a device_code (its private poll secret) plus a
+// short user_code, prints the code and the dashboard URL for the user to open
+// on ANY device, then polls until the user approves or denies there. On the
+// first poll after approval the server mints the API key with the approver's
+// role and returns it once; no secret is stored anywhere before that.
 //
 // Wire notes: requests are JSON (not form-encoded); flow errors come back
 // as HTTP 400 with the RFC-named codes in {"error": "<code>"}.
@@ -26,7 +25,6 @@ export type DeviceTokenSuccess = {
   token_type: string
   key_id: string
   role: string
-  org_slug?: string
   tenant_id: string
 }
 
@@ -65,9 +63,9 @@ async function postJson(
   return { status: res.status, json }
 }
 
-// requestDeviceCode starts the handshake. 404 means the conductor predates
-// device login; 503 means it is not configured for it -- both get an
-// actionable message instead of a bare status line.
+// requestDeviceCode starts the handshake. 404 means the server predates
+// device login, and 429 means this address started too many logins; both get
+// an actionable message instead of a bare status line.
 export async function requestDeviceCode(
   apiUrl: string,
   clientLabel: string,
@@ -76,14 +74,14 @@ export async function requestDeviceCode(
     client_label: clientLabel,
   })
   if (status === 404) {
-    throw new CliError('this Orca deployment does not support headless login', ExitCode.Failure, [
-      'Upgrade the conductor, or pass --with-token <key> with a key minted in the dashboard.',
+    throw new CliError('this server does not support device login', ExitCode.Failure, [
+      'Check the API URL, or pass --with-token <key> with a key minted in the dashboard.',
     ])
   }
-  if (status === 503) {
-    const msg =
-      (json as { error?: string } | undefined)?.error ?? 'device login not configured on the server'
-    throw new CliError(msg, ExitCode.Failure)
+  if (status === 429) {
+    throw new CliError('too many login attempts from this address', ExitCode.Failure, [
+      'Wait a minute, then run: orca auth login',
+    ])
   }
   if (status !== 200 || !json || typeof json !== 'object') {
     throw new CliError(`device code request failed (${status})`, ExitCode.Failure)
@@ -109,7 +107,7 @@ export async function pollDeviceToken(
     await sleep(intervalSec * 1000)
     if (Date.now() > deadline) {
       throw new CliError('login timed out waiting for approval', ExitCode.Failure, [
-        'Re-run: orca login',
+        'Re-run: orca auth login',
       ])
     }
     const { status, json } = await postJson(`${apiUrl}/api/device/token`, {
@@ -133,8 +131,10 @@ export async function pollDeviceToken(
       case 'access_denied':
         throw new CliError('login denied in the dashboard', ExitCode.Auth)
       case 'expired_token':
-        throw new CliError('login code expired or was already used', ExitCode.Failure, [
-          'Re-run: orca login',
+        throw new CliError('login code expired', ExitCode.Failure, ['Re-run: orca auth login'])
+      case 'invalid_grant':
+        throw new CliError('login code was already used or is unknown', ExitCode.Failure, [
+          'Re-run: orca auth login',
         ])
       default:
         throw new CliError(`device token poll failed (${status})`, ExitCode.Failure)

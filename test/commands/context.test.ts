@@ -65,7 +65,7 @@ describe('context list', () => {
     })
     await run(['--json', 'context', 'list'])
     expect(JSON.parse(stdout())).toEqual([
-      { name: 'default', current: true, apiUrl: 'http://test:8080', gatewayUrl: null, hasKey: false },
+      { name: 'default', current: true, apiUrl: 'http://test:8080', hasKey: false },
     ])
   })
 

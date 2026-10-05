@@ -4,7 +4,7 @@
 //
 // Grammar (see docs/superpowers/specs/2026-07-09-cli-ui-modernization-design.md):
 // - Hierarchy comes from whitespace and weight, not boxes. No panel borders.
-//   The border token survives only for tree edges (topology, workflow DAG) and
+//   The border token survives only for tree edges and
 //   chart axes.
 // - A view starts with a header line: bold mint title, then ` · `-separated
 //   metadata in subtle gray. Content rows indent two spaces; blank lines
@@ -12,15 +12,12 @@
 // - Mint is the brand accent: headers, prompt marker, running/active state,
 //   and selection. Primary actions stay in the terminal's default foreground,
 //   which preserves the product's inverse role (black on light, near-white on
-//   dark). Status palette: running=accent, error=destructive,
-//   cancelled/interrupted=subtle, ok=default foreground.
+//   dark).
 // - Default foreground is left to the user's terminal; we only color emphasis,
 //   secondary text, tree/axis edges, and errors.
 // - No emoji, ever. No rounded/double borders. No background colors.
 // - Glyphs route through `glyphs` (below): a safe CP437/Latin-1 tier by
 //   default, an ASCII tier when the locale is not UTF-8 or ORCA_ASCII is set.
-
-import type { RunStatus } from '../lib/types.js'
 
 export const productTheme = {
   light: {
@@ -143,36 +140,6 @@ export const glyphs: {
 // Pointer glyph for pickers, kept as an alias so existing call sites compile.
 // Selection state per the design language: mint pointer plus mint text.
 export const POINTER = glyphs.pointer
-
-export function statusColor(status: RunStatus): string | undefined {
-  switch (status) {
-    case 'running':
-      return theme.accent
-    case 'error':
-      return theme.destructive
-    case 'cancelled':
-    case 'interrupted':
-      return theme.subtle
-    case 'ok':
-      return undefined
-  }
-}
-
-// Same mapping as statusColor, as a raw ANSI code for the plain-text sinks
-// (outside Ink) that print a run's terminal status, e.g. `orca run` on exit.
-export function statusAnsiCode(status: RunStatus): string {
-  switch (status) {
-    case 'running':
-      return ansi.accent
-    case 'error':
-      return ansi.destructive
-    case 'cancelled':
-    case 'interrupted':
-      return ansi.subtle
-    case 'ok':
-      return ''
-  }
-}
 
 // colorEnabled gates ANSI escapes: honor NO_COLOR and skip color when stdout
 // is not a terminal (piped/redirected output stays clean).

@@ -1,264 +1,137 @@
+import { writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { Command } from 'commander'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { describe, expect, it } from 'vitest'
 
 import { registerAgents } from '../../src/commands/agents.js'
-import { saveConfig } from '../../src/lib/config.js'
 import { ExitCode } from '../../src/lib/errors.js'
+import { commandHarness, list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
-import { useTmpConfigDir } from '../helpers/tmp-config.js'
 
-const KEY = 'ao_dev_abcdefghijklmnopqrstuv'
-const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures')
+const ID = 'agent_' + '1'.repeat(32)
+const OTHER = 'agent_' + '2'.repeat(32)
 
-let cleanup: () => Promise<void>
-
-async function run(args: string[]): Promise<void> {
-  const program = new Command()
-  program
-    .exitOverride()
-    .option('--context <name>')
-    .option('--api-url <url>')
-    .option('--json')
-  registerAgents(program)
-  await program.parseAsync(args, { from: 'user' })
+function agent(id: string, name: string | null) {
+  return {
+    id,
+    object: 'agent',
+    name,
+    model: 'openai/gpt-5',
+    instructions: 'Answer support questions.',
+    metadata: {},
+    tools: [],
+    multi_agent: { enabled: false },
+    created_at: 1_783_245_600,
+    updated_at: 1_783_245_600,
+  }
 }
 
-beforeEach(async () => {
-  const tmp = await useTmpConfigDir()
-  cleanup = tmp.cleanup
-  delete process.env.ORCA_API_KEY
-  delete process.env.ORCA_API_URL
-  await saveConfig({
-    currentContext: 'default',
-    contexts: { default: { apiUrl: 'http://test:8080', apiKey: KEY } },
-  })
-  vi.spyOn(console, 'log').mockImplementation(() => {})
-  vi.spyOn(console, 'error').mockImplementation(() => {})
-  vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
-})
+const { run, stdout, stderr } = commandHarness(registerAgents)
 
-afterEach(async () => {
-  await cleanup()
-  vi.unstubAllGlobals()
-  vi.restoreAllMocks()
-})
-
-function stdout(): string {
-  return vi
-    .mocked(process.stdout.write)
-    .mock.calls.map((c) => String(c[0]))
-    .join('')
+async function agentFile(body: string): Promise<string> {
+  const file = path.join(os.tmpdir(), `orca-agent-${process.pid}-${Math.random()}.yaml`)
+  await writeFile(file, body)
+  return file
 }
 
 describe('agents list', () => {
-  it('emits raw profiles with --json', async () => {
-    stubFetch({
-      'GET /api/profiles?limit=10': jsonResponse([{ name: 'a', runtime: 'claude' }]),
-    })
-    await run(['--json', 'agents', 'list'])
-    expect(JSON.parse(stdout())).toEqual([{ name: 'a', runtime: 'claude' }])
-  })
-
-  it('sends the default limit of 10 and passes --limit/--offset through', async () => {
-    const calls = stubFetch({
-      'GET /api/profiles?limit=10': jsonResponse([{ name: 'a', runtime: 'claude' }]),
-      'GET /api/profiles?limit=10&offset=20': jsonResponse([{ name: 'a', runtime: 'claude' }]),
-      'GET /api/published?limit=200': jsonResponse({ publishedAgents: [], total: 0 }),
-    })
-    await run(['--json', 'agents', 'list'])
-    expect(calls[0].path).toBe('/api/profiles?limit=10')
-    await run(['--json', 'agents', 'list', '--limit', '10', '--offset', '20'])
-    expect(calls[1].path).toBe('/api/profiles?limit=10&offset=20')
-  })
-
-  it('rejects a non-positive --limit as a usage error', async () => {
-    const calls = stubFetch({})
-    await expect(run(['agents', 'list', '--limit', '0'])).rejects.toMatchObject({
-      exitCode: ExitCode.Usage,
-    })
-    expect(calls).toHaveLength(0)
-  })
-
-  it('prints tab-separated rows in plain mode with published state', async () => {
-    stubFetch({
-      'GET /api/profiles?limit=10': jsonResponse([
-        { name: 'a', runtime: 'claude', model: 'm1' },
-        { name: 'b', runtime: 'codex' },
-      ]),
-      'GET /api/published?limit=200': jsonResponse({
-        publishedAgents: [{ profileName: 'a', publicUrl: 'https://x' }],
-        total: 1,
-      }),
-    })
+  it('prints one row per agent and names the next cursor', async () => {
+    stubFetch({ 'GET /v1/agents?limit=10': jsonResponse(list([agent(ID, 'support')], true)) })
     await run(['agents', 'list'])
-    expect(stdout()).toBe('a\tclaude\tm1\tyes\nb\tcodex\t-\tno\n')
+    expect(stdout()).toBe(`${ID}\tsupport\topenai/gpt-5\t2026-07-05 10:00\n`)
+    expect(stderr()).toContain(`--after ${ID}`)
   })
 
-  it('degrades the published column when the endpoint fails', async () => {
-    stubFetch({
-      'GET /api/profiles?limit=10': jsonResponse([{ name: 'a', runtime: 'claude' }]),
-      'GET /api/published?limit=200': jsonResponse({ error: 'boom' }, { status: 500 }),
-    })
-    await run(['agents', 'list'])
-    expect(stdout()).toBe('a\tclaude\t-\t?\n')
-  })
-
-  it('shows the "Showing X of Y" hint on stderr when the server has more', async () => {
-    stubFetch({
-      'GET /api/profiles?limit=10': jsonResponse([{ name: 'a', runtime: 'claude' }], {
-        headers: { 'X-Total-Count': '130' },
-      }),
-      'GET /api/published?limit=200': jsonResponse({ publishedAgents: [], total: 0 }),
-    })
-    await run(['agents', 'list'])
-    // Rows land on stdout; the hint lands on stderr only.
-    expect(stdout()).toBe('a\tclaude\t-\tno\n')
-    expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('Showing 1 of 130')
-  })
-
-  it('pages the published set so a badge for an agent past the first page resolves', async () => {
-    const firstPub = Array.from({ length: 200 }, (_, i) => ({
-      profileName: `x${i}`,
-      publicUrl: 'https://x',
-    }))
-    stubFetch({
-      'GET /api/profiles?limit=10': jsonResponse([{ name: 'late', runtime: 'claude' }]),
-      'GET /api/published?limit=200': jsonResponse({ publishedAgents: firstPub, total: 201 }),
-      'GET /api/published?limit=200&offset=200': jsonResponse({
-        publishedAgents: [{ profileName: 'late', publicUrl: 'https://x' }],
-        total: 201,
-      }),
-    })
-    await run(['agents', 'list'])
-    expect(stdout()).toBe('late\tclaude\t-\tyes\n')
-  })
-
-  it('names the create command in the empty state, keeping stdout clean', async () => {
-    stubFetch({
-      'GET /api/profiles?limit=10': jsonResponse([]),
-      'GET /api/published?limit=200': jsonResponse({ publishedAgents: [], total: 0 }),
-    })
-    await run(['agents', 'list'])
-    // Empty state is a stderr hint (never stdout, so piping stays clean).
-    expect(stdout()).toBe('')
-    expect(vi.mocked(console.error).mock.calls.join(' ')).toContain('orca agents create')
-  })
-
-  it('--all pages through every profile and concatenates', async () => {
-    const first = Array.from({ length: 200 }, (_, i) => ({ name: `p${i}`, runtime: 'claude' }))
-    const calls = stubFetch({
-      'GET /api/profiles?limit=200': jsonResponse(first, { headers: { 'X-Total-Count': '201' } }),
-      'GET /api/profiles?limit=200&offset=200': jsonResponse([{ name: 'p200', runtime: 'codex' }], {
-        headers: { 'X-Total-Count': '201' },
-      }),
-    })
-    await run(['--json', 'agents', 'list', '--all'])
-    expect(JSON.parse(stdout())).toHaveLength(201)
-    expect(calls.map((c) => c.path)).toEqual([
-      '/api/profiles?limit=200',
-      '/api/profiles?limit=200&offset=200',
-    ])
+  it('passes --limit and --after through', async () => {
+    const calls = stubFetch({ [`GET /v1/agents?limit=5&after=${OTHER}`]: jsonResponse(list([])) })
+    await run(['agents', 'list', '--limit', '5', '--after', OTHER])
+    expect(calls).toHaveLength(1)
+    expect(stderr()).toContain('No agents yet')
   })
 })
 
 describe('agents get', () => {
-  it('maps a 404 to the not-found exit code', async () => {
+  it('resolves a name to its id', async () => {
+    const calls = stubFetch({
+      'GET /v1/agents?limit=100': jsonResponse(list([agent(OTHER, 'other'), agent(ID, 'support')])),
+      [`GET /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')),
+    })
+    await run(['agents', 'get', 'support'])
+    expect(calls.map((c) => c.path)).toEqual(['/v1/agents?limit=100', `/v1/agents/${ID}`])
+    expect(stdout()).toContain(`id\t${ID}`)
+  })
+
+  it('takes an id without a lookup', async () => {
+    const calls = stubFetch({ [`GET /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')) })
+    await run(['--json', 'agents', 'get', ID])
+    expect(calls).toHaveLength(1)
+    expect(JSON.parse(stdout()).id).toBe(ID)
+  })
+
+  it('refuses a name two agents share', async () => {
+    stubFetch({ 'GET /v1/agents?limit=100': jsonResponse(list([agent(ID, 'twin'), agent(OTHER, 'twin')])) })
+    await expect(run(['agents', 'get', 'twin'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+  })
+
+  it('reports an unknown name as not found', async () => {
+    stubFetch({ 'GET /v1/agents?limit=100': jsonResponse(list([])) })
+    await expect(run(['agents', 'get', 'ghost'])).rejects.toMatchObject({ exitCode: ExitCode.NotFound })
+  })
+})
+
+describe('agents create and update', () => {
+  it('posts the file as the agent body', async () => {
+    const file = await agentFile('model: openai/gpt-5\nname: support\ninstructions: Be brief.\n')
+    const calls = stubFetch({ 'POST /v1/agents': jsonResponse(agent(ID, 'support')) })
+    await run(['agents', 'create', '-f', file])
+    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({
+      model: 'openai/gpt-5',
+      name: 'support',
+      instructions: 'Be brief.',
+    })
+    expect(stdout()).toContain(`Created agent "support" (${ID})`)
+  })
+
+  it('needs a model before any request', async () => {
+    const file = await agentFile('name: support\n')
+    const calls = stubFetch({})
+    await expect(run(['agents', 'create', '-f', file])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('updates only the fields in the file', async () => {
+    const file = await agentFile('instructions: Be thorough.\n')
+    const calls = stubFetch({ [`POST /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')) })
+    await run(['agents', 'update', ID, '-f', file])
+    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ instructions: 'Be thorough.' })
+  })
+
+  it('maps a server validation error to its message', async () => {
+    const file = await agentFile('model: openai/gpt-5\ncolor: blue\n')
     stubFetch({
-      'GET /api/profiles/nope': jsonResponse({ error: 'unknown_profile: nope' }, { status: 404 }),
+      'POST /v1/agents': jsonResponse(
+        { error: { message: 'Unknown agent field: color', type: 'invalid_request_error', param: 'color', code: 'invalid_request' } },
+        { status: 400 },
+      ),
     })
-    await expect(run(['agents', 'get', 'nope'])).rejects.toMatchObject({
-      exitCode: ExitCode.NotFound,
+    await expect(run(['agents', 'create', '-f', file])).rejects.toMatchObject({
+      message: '400: Unknown agent field: color',
     })
-  })
-
-  // The name is now an optional positional so an interactive TTY can open the
-  // picker. Non-TTY (the test harness) must keep the byte-identical usage error
-  // and never touch the network — the picker only mounts in a real terminal.
-  it('requires the agent name in non-interactive mode and hits no endpoint', async () => {
-    const calls = stubFetch({})
-    await expect(run(['agents', 'get'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
-    expect(calls).toHaveLength(0)
-  })
-})
-
-describe('agents create', () => {
-  it('posts the validated profile from YAML', async () => {
-    const calls = stubFetch({
-      'POST /api/profiles': jsonResponse({ name: 'support-bot', runtime: 'claude' }),
-    })
-    await run(['agents', 'create', '-f', path.join(fixtures, 'agent.yaml')])
-    const body = JSON.parse(calls[0].body ?? '{}')
-    expect(body.name).toBe('support-bot')
-    expect(body.sandbox.provider).toBe('e2b')
-  })
-
-  it('fails validation before any network call', async () => {
-    const calls = stubFetch({})
-    await expect(
-      run(['agents', 'create', '-f', path.join(fixtures, 'agent-bad.yaml')]),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
-    expect(calls).toHaveLength(0)
-  })
-})
-
-describe('agents update', () => {
-  it('targets the positional name to support rename', async () => {
-    const calls = stubFetch({
-      'PUT /api/profiles/old-bot': jsonResponse({ name: 'support-bot', runtime: 'claude' }),
-    })
-    await run(['agents', 'update', 'old-bot', '-f', path.join(fixtures, 'agent.yaml')])
-    expect(calls).toHaveLength(1)
-  })
-
-  it('defaults the target to the document name', async () => {
-    const calls = stubFetch({
-      'PUT /api/profiles/support-bot': jsonResponse({ name: 'support-bot', runtime: 'claude' }),
-    })
-    await run(['agents', 'update', '-f', path.join(fixtures, 'agent.yaml')])
-    expect(calls).toHaveLength(1)
   })
 })
 
 describe('agents delete', () => {
   it('refuses without --yes when not interactive', async () => {
     stubFetch({})
-    await expect(run(['agents', 'delete', 'a'])).rejects.toMatchObject({
-      exitCode: ExitCode.Usage,
-    })
+    await expect(run(['agents', 'delete', ID])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
   })
 
   it('deletes with --yes', async () => {
     const calls = stubFetch({
-      'DELETE /api/profiles/a': () => new Response(null, { status: 204 }),
+      [`DELETE /v1/agents/${ID}`]: jsonResponse({ id: ID, object: 'agent.deleted', deleted: true }),
     })
-    await run(['agents', 'delete', 'a', '--yes'])
+    await run(['agents', 'delete', ID, '--yes'])
     expect(calls).toHaveLength(1)
-  })
-
-  // Omitting the name opens the picker in a TTY; non-TTY keeps the usage error.
-  it('requires the agent name in non-interactive mode', async () => {
-    const calls = stubFetch({})
-    await expect(run(['agents', 'delete', '--yes'])).rejects.toMatchObject({
-      exitCode: ExitCode.Usage,
-    })
-    expect(calls).toHaveLength(0)
-  })
-})
-
-describe('agents publish / unpublish', () => {
-  it('requires the agent name for publish in non-interactive mode', async () => {
-    const calls = stubFetch({})
-    await expect(run(['agents', 'publish'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
-    expect(calls).toHaveLength(0)
-  })
-
-  it('requires the agent name for unpublish in non-interactive mode', async () => {
-    const calls = stubFetch({})
-    await expect(run(['agents', 'unpublish', '--yes'])).rejects.toMatchObject({
-      exitCode: ExitCode.Usage,
-    })
-    expect(calls).toHaveLength(0)
   })
 })

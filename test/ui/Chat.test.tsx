@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { Chat, type SendTurn } from '../../src/ui/Chat.js'
-import type { ChatTurnResult } from '../../src/lib/gateway.js'
+import type { ChatTurnResult } from '../../src/lib/sessions.js'
 import { glyphs } from '../../src/ui/theme.js'
 
 // Ink's first yoga layout can block the worker for hundreds of ms, so poll
@@ -33,22 +33,22 @@ describe('Chat REPL', () => {
   it('renders the intro, a submitted turn with tool chips, and the assistant reply', async () => {
     const send: SendTurn = async (_message, handlers) => {
       handlers.onEvent({ type: 'tool', id: 't1', name: 'web_search', status: 'running' })
-      // The gateway's completion event intentionally omits the tool name.
+      // A completion event without the tool name keeps the running one's.
       handlers.onEvent({ type: 'tool', id: 't1', status: 'ok' })
       handlers.onEvent({ type: 'delta', text: 'Hi ' })
       handlers.onEvent({ type: 'delta', text: 'there' })
-      return { terminated: 'done', message: 'Hi there', conversationId: 'conv_1' }
+      return { terminated: 'done', message: 'Hi there', sessionId: 'sess_1' }
     }
 
     let exitCalled = false
-    let exitConv: string | undefined
+    let exitSession: string | undefined
     const { stdin, frames } = render(
       <Chat
         agentLabel="support"
         send={send}
         onExit={(c) => {
           exitCalled = true
-          exitConv = c
+          exitSession = c
         }}
       />,
     )
@@ -73,10 +73,10 @@ describe('Chat REPL', () => {
     expect(out).not.toContain('web_search ok')
     expect(out).toContain('Hi there') // assistant reply committed to the transcript
 
-    // Ctrl-C from idle exits cleanly, reporting the carried conversation id.
+    // Ctrl-C from idle exits cleanly, reporting the session the turn ran in.
     stdin.write('\x03')
     await waitFor(() => exitCalled)
-    expect(exitConv).toBe('conv_1')
+    expect(exitSession).toBe('sess_1')
   }, 20000)
 
   it('shows an active work phase and open status marker while a tool is running', async () => {
@@ -108,9 +108,9 @@ describe('Chat REPL', () => {
     await waitFor(() => lastFrame()?.includes('Project read.') ?? false)
   }, 20000)
 
-  it('renders a gateway error turn but keeps the REPL alive', async () => {
+  it('renders a failed turn but keeps the REPL alive', async () => {
     const send: SendTurn = async () =>
-      ({ terminated: 'error', message: 'conductor failed mid-run' }) as ChatTurnResult
+      ({ terminated: 'error', message: 'the turn failed mid-run' }) as ChatTurnResult
 
     let exitCalled = false
     const { stdin, frames } = render(<Chat agentLabel="support" send={send} onExit={() => (exitCalled = true)} />)
@@ -121,7 +121,7 @@ describe('Chat REPL', () => {
     stdin.write('go')
     await waitFor(() => frames.join('\n').includes('go'))
     stdin.write('\r')
-    await waitFor(() => frames.join('\n').includes('conductor failed mid-run'))
+    await waitFor(() => frames.join('\n').includes('the turn failed mid-run'))
     expect(frames.join('\n')).toContain('error:')
     expect(exitCalled).toBe(false) // an error turn does not tear down the session
   }, 20000)
