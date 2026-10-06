@@ -11,6 +11,7 @@ import type OpenAI from 'openai'
 import { APIConnectionError, APIError } from 'openai/error'
 import type {
   AgentOutputItem,
+  AgentSession,
   AgentSessionEvent,
   AgentSessionItem,
   EnvironmentParam,
@@ -19,7 +20,10 @@ import type {
 import { resolveAgentId } from './agents.js'
 import type { ApiClient } from './api.js'
 import { CliError, ExitCode } from './errors.js'
+import { formatCount } from './format.js'
 import { stripControlSequences } from './markdown.js'
+import { usdMicro } from './money.js'
+import type { UsageSummary } from './types.js'
 
 export type ChatToolStatus = 'running' | 'ok' | 'error'
 
@@ -271,4 +275,54 @@ export function sessionCreateParams(agentId: string, flags: SessionCreateFlags, 
     return { agent_id: agentId, environment: scope.environment, ...(scope.vaultIds.length ? { vault_ids: scope.vaultIds } : {}) }
   }
   return { agent_id: agentId, environment: sessionEnvironment(flags), ...(flags.vault.length ? { vault_ids: flags.vault } : {}) }
+}
+
+// SessionView is a session as the CLI shows it: the /v1 object without its
+// own usage field, and `usage`, the session's all-time /api/usage summary by
+// model (decision 0017), or null for a published agent's key, which cannot
+// read usage.
+export type SessionView = Omit<AgentSession, 'usage'> & { usage: UsageSummary | null }
+
+// sessionView reads one session and its usage from their one source each.
+// `sessions get` and the MCP server's get_session both answer with it.
+export async function sessionView(client: ApiClient, id: string): Promise<SessionView> {
+  const session = await (await client.v1()).beta.agents.sessions.retrieve(id)
+  const scope = await publishedScope(client)
+  const usage = scope ? null : await client.usage({ start: 0, session: id, group_by: 'model' })
+  // `usage` replaces the /v1 object's own field.
+  return { ...session, usage }
+}
+
+// SessionUsageRow is one line of a session's usage: a stable key and raw
+// quantity for plain output, and a label and formatted figure for a person.
+export type SessionUsageRow = { key: string; plain: string; label: string; shown: string }
+
+// The meters a session view shows, in order (money-payments, Session view):
+// tokens, web searches, machine time. Each carries its server cost.
+const SESSION_METERS: { meter: string; label: string; unit: string }[] = [
+  { meter: 'model_tokens', label: 'tokens', unit: 'tokens' },
+  { meter: 'web_searches', label: 'web searches', unit: 'searches' },
+  { meter: 'compute_seconds', label: 'machine time', unit: 'seconds' },
+]
+
+// sessionUsageRows renders a session's /api/usage summary (grouped by model):
+// the total cost, then each meter's quantity and cost, then tokens per model.
+// Every figure is the server's.
+export function sessionUsageRows(summary: UsageSummary): SessionUsageRow[] {
+  const figure = (quantity: number, unit: string, cost: number) =>
+    cost ? `${formatCount(quantity)} ${unit}, ${usdMicro(cost)}` : `${formatCount(quantity)} ${unit}`
+  const rows: SessionUsageRow[] = [
+    { key: 'cost', plain: usdMicro(summary.cost_micro_usd), label: 'cost', shown: usdMicro(summary.cost_micro_usd) },
+  ]
+  for (const { meter, label, unit } of SESSION_METERS) {
+    const m = summary.meters.find((x) => x.meter === meter)
+    const quantity = m?.quantity ?? 0
+    rows.push({ key: meter, plain: String(quantity), label, shown: figure(quantity, m?.unit ?? unit, m?.cost_micro_usd ?? 0) })
+    if (meter !== 'model_tokens') continue
+    for (const g of (summary.groups ?? []).filter((x) => x.meter === 'model_tokens')) {
+      const model = g.key ?? 'unknown'
+      rows.push({ key: `model_tokens:${model}`, plain: String(g.quantity), label: `  ${model}`, shown: figure(g.quantity, 'tokens', g.cost_micro_usd) })
+    }
+  }
+  return rows
 }

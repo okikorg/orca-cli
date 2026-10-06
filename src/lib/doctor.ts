@@ -21,6 +21,7 @@ import {
 } from './config.js'
 import { DEFAULT_API_URL, DEFAULT_DASHBOARD_URL } from './defaults.js'
 import { usdMicro } from './money.js'
+import type { Wallet } from './types.js'
 
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'skip'
 
@@ -463,16 +464,21 @@ export async function checkBilling(o: {
   }
   if (st === 403) return { name, status: 'skip', message: 'this key cannot read the wallet' }
   if (st !== 200) return { name, status: 'warn', message: `billing check got HTTP ${st}` }
-  const body = (await readJson(r.res)) as { balance_micro_usd?: number; tier?: string } | undefined
-  if (typeof body?.balance_micro_usd !== 'number') {
+  const body = (await readJson(r.res)) as Partial<Wallet> | undefined
+  if (
+    typeof body?.balance_micro_usd !== 'number' ||
+    typeof body.min_balance_micro_usd !== 'number' ||
+    typeof body.paid_work_paused !== 'boolean'
+  ) {
     return { name, status: 'warn', message: 'billing wallet returned an unreadable body' }
   }
   const balance = usdMicro(body.balance_micro_usd)
-  if (body.balance_micro_usd <= 0) {
+  // The server's verdict, the same one its gate refuses paid work with.
+  if (body.paid_work_paused) {
     return {
       name,
       status: 'warn',
-      message: `out of credit (balance ${balance}); turns on Orca's model keys will be refused`,
+      message: `paid work paused (balance ${balance}, under the ${usdMicro(body.min_balance_micro_usd)} minimum); turns on Orca's model keys will be refused`,
       fix: 'buy credit with: orca billing buy pack:<cents>, or save your own provider key in the dashboard',
     }
   }

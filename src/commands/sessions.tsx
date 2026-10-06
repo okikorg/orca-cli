@@ -13,6 +13,8 @@ import {
   publishedScope,
   sessionAgent,
   sessionCreateParams,
+  sessionUsageRows,
+  sessionView,
   type SessionCreateFlags,
 } from '../lib/sessions.js'
 import { accentVerb, hintText } from '../ui/theme.js'
@@ -115,13 +117,13 @@ export function registerSessions(program: Command): void {
     .action(async (id: string, _opts: Record<string, never>, cmd: Command) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
-      const session = await withApi(api, async (c) => (await c.v1()).beta.agents.sessions.retrieve(id))
+      const session = await withApi(api, (c) => sessionView(c, id))
       const mode = outputMode(flags)
       if (mode === 'json') {
         printJson(session)
         return
       }
-      const tokens = session.usage ? `${session.usage.input_tokens} in, ${session.usage.output_tokens} out` : '-'
+      const rows = session.usage ? sessionUsageRows(session.usage) : []
       if (mode === 'plain') {
         printPlainRows([
           ['id', session.id],
@@ -130,7 +132,7 @@ export function registerSessions(program: Command): void {
           ['environment', session.environment.type],
           ['created', formatTime(session.created_at)],
           ['lastActive', formatTime(session.last_active_at)],
-          ['tokens', tokens],
+          ...rows.map((row) => [row.key, row.plain]),
           ['error', session.error ?? '-'],
         ])
         return
@@ -143,7 +145,9 @@ export function registerSessions(program: Command): void {
           <Field label="environment" value={session.environment.type} />
           <Field label="created" value={formatTime(session.created_at)} />
           <Field label="last active" value={formatTime(session.last_active_at)} />
-          <Field label="tokens" value={tokens} />
+          {rows.map((row) => (
+            <Field key={row.key} label={row.label} value={row.shown} />
+          ))}
           {session.vault_ids.length ? <Field label="vaults" value={session.vault_ids.join(', ')} /> : null}
           {session.error ? <Field label="error" value={session.error} valueColor={theme.destructive} /> : null}
         </Panel>,

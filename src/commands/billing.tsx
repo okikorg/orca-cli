@@ -30,7 +30,11 @@ async function renderWallet(w: Wallet): Promise<void> {
       <Field
         label="balance"
         value={usdMicro(w.balance_micro_usd)}
-        valueColor={w.balance_micro_usd <= 0 ? theme.destructive : theme.accent}
+        valueColor={w.paid_work_paused ? theme.destructive : theme.accent}
+      />
+      <Field
+        label="paid work"
+        value={w.paid_work_paused ? `paused under the ${usdMicro(w.min_balance_micro_usd)} minimum, until a top-up` : 'running'}
       />
       <Field label="credited" value={usdMicro(w.credited_micro_usd)} />
       <Field label="charged" value={usdMicro(w.charged_micro_usd)} />
@@ -84,6 +88,8 @@ export function registerBilling(program: Command): void {
       if (mode === 'plain') {
         printPlainRows([
           ['balance', usdMicro(wallet.balance_micro_usd)],
+          ['min_balance', usdMicro(wallet.min_balance_micro_usd)],
+          ['paid_work_paused', String(wallet.paid_work_paused)],
           ['tier', wallet.tier],
           ['period_start', formatDate(wallet.period_start)],
           ['period_end', formatDate(wallet.period_end)],

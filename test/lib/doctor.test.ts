@@ -285,7 +285,7 @@ describe('checkBilling', () => {
   it('passes with the formatted balance when the wallet has credit', async () => {
     const r = await checkBilling({
       ...base,
-      fetchImpl: router({ '/api/billing/wallet': () => jsonRes({ balance_micro_usd: 12_500_000, tier: 'pro' }) }),
+      fetchImpl: router({ '/api/billing/wallet': () => jsonRes({ balance_micro_usd: 12_500_000, min_balance_micro_usd: 500_000, paid_work_paused: false, tier: 'pro' }) }),
     })
     expect(r.status).toBe('pass')
     expect(r.message).toBe('credit available (balance $12.50, pro plan)')
@@ -294,10 +294,32 @@ describe('checkBilling', () => {
   it('warns with a fix when the balance is spent', async () => {
     const r = await checkBilling({
       ...base,
-      fetchImpl: router({ '/api/billing/wallet': () => jsonRes({ balance_micro_usd: -200, tier: 'free' }) }),
+      fetchImpl: router({
+        '/api/billing/wallet': () => jsonRes({ balance_micro_usd: -200, min_balance_micro_usd: 500_000, paid_work_paused: true, tier: 'free' }),
+      }),
     })
     expect(r.status).toBe('warn')
     expect(r.fix).toContain('orca billing buy')
+  })
+
+  it('takes paused from the server, not from the balance\'s sign', async () => {
+    const paused = await checkBilling({
+      ...base,
+      fetchImpl: router({
+        '/api/billing/wallet': () => jsonRes({ balance_micro_usd: 250_000, min_balance_micro_usd: 500_000, paid_work_paused: true, tier: 'free' }),
+      }),
+    })
+    expect(paused.status).toBe('warn')
+    expect(paused.message).toBe("paid work paused (balance $0.25, under the $0.50 minimum); turns on Orca's model keys will be refused")
+  })
+
+  it('warns when the wallet lacks the server\'s verdict', async () => {
+    const r = await checkBilling({
+      ...base,
+      fetchImpl: router({ '/api/billing/wallet': () => jsonRes({ balance_micro_usd: 12_500_000, tier: 'pro' }) }),
+    })
+    expect(r.status).toBe('warn')
+    expect(r.message).toBe('billing wallet returned an unreadable body')
   })
 
   it('warns on a server error', async () => {
@@ -481,7 +503,7 @@ describe('runDoctor (orchestration)', () => {
     const fetchImpl = router({
       '/health': () => jsonRes({ status: 'ok' }),
       '/api/whoami': () => jsonRes({ tenant: 'org_1', role: 'admin', agent: null }),
-      '/api/billing/wallet': () => jsonRes({ balance_micro_usd: 5_000_000, tier: 'free' }),
+      '/api/billing/wallet': () => jsonRes({ balance_micro_usd: 5_000_000, min_balance_micro_usd: 500_000, paid_work_paused: false, tier: 'free' }),
     })
     const results = await runDoctor({
       ctx,
