@@ -28,22 +28,34 @@ describe('formatCount', () => {
   })
 })
 
-describe('usdMicro', () => {
-  it('formats micro-USD as dollars and cents', () => {
-    expect(usdMicro(20_000_000)).toBe('$20.00')
-    expect(usdMicro(-1_500_000)).toBe('-$1.50')
-    expect(usdMicro(0)).toBe('$0.00')
+// money-payments "Money display": the table both clients test, unchanged.
+const MICRO_USD: [number, string][] = [
+  [0, '$0.00'],
+  [1, '$0.000001'],
+  [47, '$0.000047'],
+  [9990, '$0.00999'],
+  [9999, '$0.009999'],
+  [10000, '$0.01'],
+  [14999, '$0.01'],
+  [15000, '$0.02'],
+  [12345678, '$12.35'],
+  [1234567890, '$1,234.57'],
+  [1000000000000, '$1,000,000.00'],
+  [-47, '-$0.000047'],
+  [-1500000, '-$1.50'],
+]
+const CENTS: [number, string][] = [
+  [0, '$0.00'],
+  [83, '$0.83'],
+  [2000, '$20.00'],
+]
+
+describe('money display', () => {
+  it.each(MICRO_USD)('%d micro-USD is %s', (micro, shown) => {
+    expect(usdMicro(micro)).toBe(shown)
   })
 
-  it('keeps sub-cent charges visible', () => {
-    expect(usdMicro(400)).toBe('$0.0004')
-    expect(usdMicro(8)).toBe('<$0.0001')
-    expect(usdMicro(-8)).toBe('-<$0.0001')
-  })
-})
-
-describe('usdCents', () => {
-  it('formats cents as dollars', () => {
-    expect(usdCents(2000)).toBe('$20.00')
+  it.each(CENTS)('%d cents is %s', (cents, shown) => {
+    expect(usdCents(cents)).toBe(shown)
   })
 })

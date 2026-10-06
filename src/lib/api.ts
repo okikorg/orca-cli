@@ -29,14 +29,30 @@ import type {
   Whoami,
 } from './types.js'
 
+// ApiError is a refused /api request. Callers decide on `code`, the
+// server's machine-readable reason, never on the HTTP status alone.
 export class ApiError extends Error {
   status: number
   body?: unknown
+  code: string | null
   constructor(message: string, status: number, body?: unknown) {
     super(message)
     this.status = status
     this.body = body
+    this.code = errorCode(body)
   }
+}
+
+// errorCode is the server's machine-readable reason: `error.code` in
+// {"error": {"message", "type", "param", "code"}}, or the device login
+// routes' {"error": "<code>"}.
+export function errorCode(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null
+  const error = (body as Record<string, unknown>).error
+  if (typeof error === 'string') return error || null
+  if (!error || typeof error !== 'object') return null
+  const code = (error as Record<string, unknown>).code
+  return typeof code === 'string' && code ? code : null
 }
 
 // Page is the CLI's view of one cursor page: the rows, whether the server has

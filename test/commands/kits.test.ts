@@ -197,6 +197,19 @@ describe('kits copy', () => {
     })
   })
 
+  it('reports another conflict as itself, not as a taken name', async () => {
+    stubFetch({
+      [`GET /api/public/kits/${PUBLIC_ID}`]: jsonResponse(PUBLIC),
+      [`POST /api/kits/${PUBLIC_ID}/copy`]: jsonResponse(
+        { error: { message: 'Idempotency-Key was used for a different request', code: 'conflict' } },
+        { status: 409 },
+      ),
+    })
+    const failure = run(['kits', 'copy', PUBLIC_ID, '--yes'])
+    await expect(failure).rejects.toMatchObject({ exitCode: ExitCode.Failure })
+    await expect(failure).rejects.not.toMatchObject({ detail: [expect.stringContaining('Choose another name')] })
+  })
+
   it('refuses a key the kit does not have, or renaming and skipping one asset', async () => {
     stubFetch({ [`GET /api/public/kits/${PUBLIC_ID}`]: jsonResponse(PUBLIC) })
     await expect(run(['kits', 'copy', PUBLIC_ID, '--skip', 'template-1', '--yes'])).rejects.toMatchObject({

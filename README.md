@@ -302,7 +302,15 @@ the turn on the server and exits 130.
 ## Usage and billing
 
 Every money figure is the server's: usage rows are priced when they are written,
-in micro-USD, and the CLI formats them without any arithmetic of its own.
+in micro-USD, and the CLI formats them without any arithmetic of its own, by the
+same rule as the dashboard: dollars and cents at a cent or more (`$1,234.57`),
+every digit under a cent (`$0.000047`). Every usage figure comes from
+`/api/usage`, a session's included: `orca sessions get` shows its cost, tokens
+by model, web searches and machine time from there, never from the session
+object. Whether paid work is paused is the server's verdict too: `orca billing
+wallet` shows `paid_work_paused` and the plan's minimum balance, and `orca
+doctor` warns on it, so a balance above zero but under the minimum reads as
+paused, as the server treats it.
 
 ```sh
 orca usage                                   # last 30 days: cost, meters, daily chart

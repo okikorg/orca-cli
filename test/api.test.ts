@@ -91,6 +91,13 @@ describe('helpers', () => {
     expect(extractErrorBody({ message: 'plain' })).toBe('plain')
     expect(extractErrorBody(undefined)).toBe('')
   })
+
+  it('carries the server\'s error code, which callers decide on', () => {
+    expect(new ApiError('409', 409, { error: { message: 'Name taken: a', code: 'name_taken' } }).code).toBe('name_taken')
+    expect(new ApiError('400', 400, { error: 'authorization_pending' }).code).toBe('authorization_pending')
+    expect(new ApiError('409', 409, { error: { message: 'x', code: null } }).code).toBeNull()
+    expect(new ApiError('502', 502, undefined).code).toBeNull()
+  })
 })
 
 describe('mapApiError', () => {

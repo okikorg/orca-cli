@@ -92,7 +92,7 @@ It exposes one tool per CLI action: whoami and keys, agents, sessions, `chat` (s
 ## Troubleshooting
 
 - Exit 3 or 401: run `orca login` again (or check `ORCA_API_KEY`).
-- "Out of Orca credit" (HTTP 429, or a turn that fails with it): the organization is out of credit; check `orca billing wallet`, add credit, then continue the session.
+- "Out of Orca credit" (HTTP 429, or a turn that fails with it): paid work is paused because the balance is under the plan's minimum; `orca billing wallet --json` shows `paid_work_paused` and `min_balance_micro_usd`. Add credit, then continue the session.
 - With a published agent's key, `orca chat` runs only that agent, with the environment and vaults its publisher chose; don't pass `--sandbox`, `--template` or `--vault`.
 - "does not support device login": the API URL does not point at an Orca server; check `orca auth status`, or use `orca login --with-token <key>` with a key minted in the dashboard.
 - Anything else: `orca doctor --json` names the failing check and the fix.

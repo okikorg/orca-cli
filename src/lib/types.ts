@@ -120,6 +120,11 @@ export type Wallet = {
   balance_micro_usd: number
   credited_micro_usd: number
   charged_micro_usd: number
+  // The tier's minimum balance for paid work.
+  min_balance_micro_usd: number
+  // The gate's own verdict: paid work is refused until a top-up. The CLI
+  // shows it and never compares the balance with a threshold.
+  paid_work_paused: boolean
   tier: string
   period_start: number
   period_end: number

@@ -375,7 +375,7 @@ export function registerKits(program: Command): void {
           try {
             return await c.copyKit(publicId, assets)
           } catch (err) {
-            if (err instanceof ApiError && err.status === 409) {
+            if (err instanceof ApiError && err.code === 'name_taken') {
               throw new CliError(extractErrorBody(err.body) || 'a name is taken', ExitCode.Failure, [
                 'Nothing was copied. Choose another name with --name <key>=<name> and run it again.',
               ])

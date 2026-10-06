@@ -27,7 +27,7 @@ function healthyRoutes(overrides?: Record<string, ReturnType<typeof jsonResponse
   return {
     'GET /health': jsonResponse({ status: 'ok', release: 'test' }),
     'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'user_1', role: 'admin', agent: null }),
-    'GET /api/billing/wallet': jsonResponse({ balance_micro_usd: 9_000_000, tier: 'free' }),
+    'GET /api/billing/wallet': jsonResponse({ balance_micro_usd: 9_000_000, min_balance_micro_usd: 500_000, paid_work_paused: false, tier: 'free' }),
     ...overrides,
   }
 }
@@ -93,7 +93,7 @@ describe('orca doctor (plain output)', () => {
     // No /health route -> stubFetch throws TypeError (network error).
     stubFetch({
       'GET /api/whoami': jsonResponse({ role: 'admin' }),
-      'GET /api/billing/wallet': jsonResponse({ balance_micro_usd: 9_000_000 }),
+      'GET /api/billing/wallet': jsonResponse({ balance_micro_usd: 9_000_000, min_balance_micro_usd: 500_000, paid_work_paused: false }),
     })
     await run(['doctor'])
     expect(process.exitCode).toBe(1)
@@ -115,7 +115,7 @@ describe('orca doctor (json output)', () => {
   })
 
   it('warns, with a fix, when the wallet is empty', async () => {
-    stubFetch(healthyRoutes({ 'GET /api/billing/wallet': jsonResponse({ balance_micro_usd: 0, tier: 'free' }) }))
+    stubFetch(healthyRoutes({ 'GET /api/billing/wallet': jsonResponse({ balance_micro_usd: 0, min_balance_micro_usd: 500_000, paid_work_paused: true, tier: 'free' }) }))
     await run(['--json', 'doctor'])
     const arr = JSON.parse(stdout()) as { name: string; status: string; fix?: string }[]
     const billing = arr.find((r) => r.name === 'billing')!
@@ -127,7 +127,7 @@ describe('orca doctor (json output)', () => {
 
 describe('orca doctor --strict', () => {
   it('promotes the empty-wallet warn to a failure and exits 1', async () => {
-    stubFetch(healthyRoutes({ 'GET /api/billing/wallet': jsonResponse({ balance_micro_usd: 0, tier: 'free' }) }))
+    stubFetch(healthyRoutes({ 'GET /api/billing/wallet': jsonResponse({ balance_micro_usd: 0, min_balance_micro_usd: 500_000, paid_work_paused: true, tier: 'free' }) }))
     await run(['--json', 'doctor', '--strict'])
     const arr = JSON.parse(stdout()) as { name: string; status: string }[]
     expect(arr.find((r) => r.name === 'billing')!.status).toBe('fail')

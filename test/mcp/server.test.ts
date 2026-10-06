@@ -129,7 +129,22 @@ describe('orca mcp serve', () => {
       environment: { type: 'none' },
       input: 'triage',
     })
-    expect(JSON.parse(firstText(res))).toMatchObject({ sessionId: SESSION_ID, done: true, status: 'completed', reply: 'Done.' })
+    const reply = JSON.parse(firstText(res))
+    expect(reply).toMatchObject({ sessionId: SESSION_ID, done: true, status: 'completed', reply: 'Done.' })
+    // Per-turn token figures are not shown (decision 0017); get_session has the session's.
+    expect(reply).not.toHaveProperty('usage')
+  })
+
+  it('get_session answers with its usage from /api/usage, not the session object\'s', async () => {
+    const summary = { object: 'usage.summary', start: 0, end: 1, session_id: SESSION_ID, cost_micro_usd: 47, meters: [], daily: [], groups: [] }
+    stubFetch({
+      ...orgKeyRoutes(),
+      [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(session('completed', { usage: { input_tokens: 12, output_tokens: 3 } })),
+      [`GET /api/usage?start=0&session=${SESSION_ID}&group_by=model`]: jsonResponse(summary),
+    })
+    const client = await connect()
+    const payload = JSON.parse(firstText(await client.callTool({ name: 'get_session', arguments: { id: SESSION_ID } })))
+    expect(payload).toMatchObject({ id: SESSION_ID, status: 'completed', usage: summary })
   })
 
   it('copy_kit posts the chosen assets', async () => {

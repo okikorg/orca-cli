@@ -12,6 +12,8 @@ const WALLET = {
   balance_micro_usd: 18_500_000,
   credited_micro_usd: 20_000_000,
   charged_micro_usd: 1_500_000,
+  min_balance_micro_usd: 500_000,
+  paid_work_paused: false,
   tier: 'pro',
   period_start: 1_783_245_600,
   period_end: 1_785_837_600,
@@ -32,11 +34,20 @@ describe('billing wallet', () => {
     stubFetch({ 'GET /api/billing/wallet': jsonResponse(WALLET) })
     await run(['billing', 'wallet'])
     expect(stdout()).toContain('balance\t$18.50')
+    expect(stdout()).toContain('min_balance\t$0.50')
+    expect(stdout()).toContain('paid_work_paused\tfalse')
     expect(stdout()).toContain('tier\tpro')
     expect(stdout()).toContain('packs\tpack:2000')
     // Field names as the server spells them, for grep and cut.
     expect(stdout()).toContain('period_start\t')
     expect(stdout()).toContain('included_compute_seconds\t36000')
+  })
+
+  it('shows paused as the server says, even with a positive balance', async () => {
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...WALLET, balance_micro_usd: 250_000, paid_work_paused: true }) })
+    await run(['billing', 'wallet'])
+    expect(stdout()).toContain('balance\t$0.25')
+    expect(stdout()).toContain('paid_work_paused\ttrue')
   })
 
   it('passes the wallet through with --json', async () => {

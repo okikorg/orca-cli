@@ -28,7 +28,7 @@ import { resolveAgentId } from '../lib/agents.js'
 import { ApiClient, mapApiError, toPage } from '../lib/api.js'
 import { resolveContext, type GlobalFlags } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { itemText, publishedScope, sessionAgent, sessionCreateParams } from '../lib/sessions.js'
+import { itemText, publishedScope, sessionAgent, sessionCreateParams, sessionView } from '../lib/sessions.js'
 import { collectSkillFiles } from '../lib/skills.js'
 import type { KitInput } from '../lib/types.js'
 import { VERSION } from '../version.js'
@@ -228,8 +228,11 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     },
   )
 
-  tool('get_session', 'Fetch one session: status, environment, usage, error.', { id: z.string() }, async (client, args) =>
-    (await client.v1()).beta.agents.sessions.retrieve(args.id as string),
+  tool(
+    'get_session',
+    'Fetch one session: status, environment, error, and usage: its all-time usage summary by model with cost in micro-USD (null for a published agent\'s key).',
+    { id: z.string() },
+    async (client, args) => sessionView(client, args.id as string),
   )
 
   tool(
@@ -314,7 +317,6 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
         status: turn.status,
         reply: await replyText(v1, sessionId, turn.id),
         ...(turn.error ? { error: turn.error } : {}),
-        usage: turn.usage,
       }
     },
   )
