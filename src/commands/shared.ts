@@ -1,6 +1,6 @@
 import type { Command } from 'commander'
 
-import { ApiClient, mapApiError, type Page, type PageParams } from '../lib/api.js'
+import { ApiClient, FETCH_ALL_MAX_ROWS, FETCH_ALL_PAGE_SIZE, mapApiError, type Page, type PageParams } from '../lib/api.js'
 import {
   requireApiKey,
   requireApiUrl,
@@ -26,10 +26,6 @@ export function globalFlags(cmd: Command): GlobalFlags {
 
 export const DEFAULT_PAGE_LIMIT = 10
 
-// The server returns at most 100 rows per request; --all pages through in
-// windows of this size, up to a hard safety ceiling.
-export const FETCH_ALL_PAGE_SIZE = 100
-export const FETCH_ALL_MAX_ROWS = 10_000
 
 export type PageFlags = { limit: number; after?: string; all?: boolean }
 
@@ -122,6 +118,7 @@ export async function apiContext(cmd: Command): Promise<ApiContext> {
     apiUrl: requireApiUrl(resolved),
     apiKey: requireApiKey(resolved),
     contextName: resolved.name,
+    dashboardUrl: resolved.dashboardUrl,
   })
   return { client, resolved }
 }

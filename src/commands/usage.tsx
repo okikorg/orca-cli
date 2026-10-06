@@ -77,6 +77,7 @@ export function registerUsage(program: Command): void {
             (summary.groups ?? []).map((g) => [groupKey(g), g.meter, g.quantity, usdMicro(g.cost_micro_usd)]),
           )
         } else {
+          if (used.length === 0) console.error(hintText('No usage in this window.'))
           printPlainRows(used.map((m) => [m.meter, m.quantity, m.unit, usdMicro(m.cost_micro_usd)]))
         }
         return

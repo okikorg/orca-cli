@@ -1,7 +1,7 @@
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { registerUpdate, type UpdateDeps } from '../../src/commands/update.js'
+import { mapUpdateError, registerUpdate, type UpdateDeps } from '../../src/commands/update.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import type { ReleaseInfo, UpdateEnv } from '../../src/lib/release.js'
 import { VERSION } from '../../src/version.js'
@@ -173,5 +173,19 @@ describe('orca update', () => {
       },
     })
     await expect(run(['update'], d)).rejects.toMatchObject({ exitCode: ExitCode.Failure })
+  })
+})
+
+describe('an update that fails', () => {
+  const env = { standalone: true, execPath: '/usr/local/bin/orca' } as UpdateEnv
+  const errno = (message: string, path: string) => Object.assign(new Error(message), { code: 'ENOENT', path })
+
+  it('names a missing tar by the command that failed, not by the message', () => {
+    expect(mapUpdateError(errno('spawn ENOENT', 'tar'), env).message).toContain('`tar` is required')
+  })
+
+  it('does not take a missing download for a missing tar', () => {
+    const err = errno("ENOENT: no such file or directory, open '/tmp/stage/orca-darwin-arm64.tar.gz'", '/tmp/stage/orca-darwin-arm64.tar.gz')
+    expect(mapUpdateError(err, env).message).toMatch(/^update failed:/)
   })
 })

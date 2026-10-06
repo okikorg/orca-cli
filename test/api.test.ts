@@ -133,9 +133,17 @@ describe('mapApiError', () => {
     expect(mapApiError(new APIConnectionError({ message: 'Connection error.' }), CTX).message).toContain('cannot reach')
   })
 
-  it('hides 5xx bodies behind a retry hint', () => {
-    expect(mapApiError(new ApiError('502', 502, { error: { message: 'internal' } }), CTX).message).toContain(
-      'returned 502',
+  it('keeps a 5xx answer\'s message, which the server writes for people, with a retry hint', () => {
+    const err = mapApiError(new ApiError('503', 503, { error: { message: 'No sandbox is free right now', code: 'sandbox_capacity' } }), CTX)
+    expect(err.message).toContain('returned 503')
+    expect(err.message).toContain('No sandbox is free right now')
+  })
+
+  it('names the field a refusal is about', () => {
+    const err = mapApiError(
+      new ApiError('400', 400, { error: { message: 'Expected a boolean', param: 'multi_agent.enabled', code: 'invalid_value' } }),
+      CTX,
     )
+    expect(err.message).toBe('400: Expected a boolean (multi_agent.enabled)')
   })
 })

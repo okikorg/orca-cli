@@ -85,10 +85,10 @@ export function registerBilling(program: Command): void {
         printPlainRows([
           ['balance', usdMicro(wallet.balance_micro_usd)],
           ['tier', wallet.tier],
-          ['periodStart', formatDate(wallet.period_start)],
-          ['periodEnd', formatDate(wallet.period_end)],
-          ['computeUsedSeconds', wallet.used_compute_seconds],
-          ['computeIncludedSeconds', wallet.included_compute_seconds],
+          ['period_start', formatDate(wallet.period_start)],
+          ['period_end', formatDate(wallet.period_end)],
+          ['used_compute_seconds', wallet.used_compute_seconds],
+          ['included_compute_seconds', wallet.included_compute_seconds],
           ['packs', wallet.packs.map((p) => `pack:${p.cents}`).join(',') || '-'],
         ])
         return

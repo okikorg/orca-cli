@@ -2,16 +2,18 @@ import type { Command } from 'commander'
 import type OpenAI from 'openai'
 import type { AgentSessionEvent } from 'openai/resources/beta/agents/agents'
 
-import { resolveAgentId } from '../lib/agents.js'
 import { mapApiError, toPage } from '../lib/api.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { stripControlSequences } from '../lib/markdown.js'
 import { interactive } from '../lib/output.js'
 import {
   addSessionCreateOptions,
-  sessionEnvironment,
+  publishedScope,
+  sessionAgent,
+  sessionCreateParams,
   streamTurn,
   type ChatEvent,
+  type PublishedScope,
   type SessionCreateFlags,
 } from '../lib/sessions.js'
 import { ansi, glyphs } from '../ui/theme.js'
@@ -46,26 +48,33 @@ function noteTool(event: Extract<ChatEvent, { type: 'tool' }>): void {
 }
 
 // openSession returns the session to talk to: the one --session names, or a
-// new session of the agent with the environment and vaults the flags ask for.
-async function openSession(client: OpenAI, agentId: string | undefined, opts: ChatOpts): Promise<string> {
+// new session of the agent, with the environment and vaults the flags ask
+// for, or a published key's own.
+async function openSession(client: OpenAI, agentId: string | undefined, opts: ChatOpts, scope: PublishedScope | null): Promise<string> {
   if (opts.session) return opts.session
-  const session = await client.beta.agents.sessions.create({
-    agent_id: agentId as string,
-    environment: sessionEnvironment(opts),
-    ...(opts.vault.length ? { vault_ids: opts.vault } : {}),
-  })
+  const session = await client.beta.agents.sessions.create(sessionCreateParams(agentId as string, opts, scope))
   return session.id
 }
 
 async function runSingleShot(
   api: ApiContext,
   agentId: string | undefined,
+  scope: PublishedScope | null,
   message: string,
   opts: ChatOpts,
   json: boolean,
 ): Promise<void> {
   const client = await api.client.v1()
-  const sessionId = await withApi(api, () => openSession(client, agentId, opts))
+  const sessionId = await withApi(api, () => openSession(client, agentId, opts, scope))
+  // The session id goes to stderr so scripts can capture it and resume
+  // (stdout is reserved for the answer or the NDJSON events), however the
+  // turn ends, a refusal included.
+  let named = false
+  const nameSession = () => {
+    if (named) return
+    named = true
+    process.stderr.write(`session ${sessionId}\n`)
+  }
   const controller = new AbortController()
   const onSigint = () => controller.abort()
   process.once('SIGINT', onSigint)
@@ -92,16 +101,14 @@ async function runSingleShot(
 
     if (result.terminated === 'aborted') {
       if (!json && wroteText) process.stdout.write('\n')
-      process.stderr.write(`session ${sessionId}\n`)
+      nameSession()
       throw new CliError('interrupted', ExitCode.Interrupt)
     }
     if (!json) {
       if (!wroteText && result.message) process.stdout.write(stripControlSequences(result.message))
       process.stdout.write('\n')
     }
-    // The session id goes to stderr so scripts can capture it and resume
-    // (stdout is reserved for the answer or the NDJSON events).
-    process.stderr.write(`session ${sessionId}\n`)
+    nameSession()
     if (result.terminated === 'error') {
       throw new CliError(result.message || result.errorCode || 'the turn failed', ExitCode.Failure)
     }
@@ -111,11 +118,18 @@ async function runSingleShot(
       ])
     }
   } finally {
+    nameSession()
     process.removeListener('SIGINT', onSigint)
   }
 }
 
-async function runRepl(api: ApiContext, agentId: string | undefined, label: string, opts: ChatOpts): Promise<void> {
+async function runRepl(
+  api: ApiContext,
+  agentId: string | undefined,
+  scope: PublishedScope | null,
+  label: string,
+  opts: ChatOpts,
+): Promise<void> {
   const client = await api.client.v1()
   const { render } = await import('ink')
   const { Chat } = await import('../ui/Chat.js')
@@ -124,18 +138,25 @@ async function runRepl(api: ApiContext, agentId: string | undefined, label: stri
   // to an error result so a bad turn keeps the REPL alive. The session is
   // created on the first message, so an empty REPL creates nothing.
   const send: SendTurn = async (message, handlers, sessionId) => {
+    // Kept across a failure: a session made before the turn failed is the
+    // one the next message continues.
+    let id = sessionId
     try {
-      const id = sessionId ?? (await openSession(client, agentId, opts))
+      id = id ?? (await openSession(client, agentId, opts, scope))
       const result = await streamTurn(client, id, message, { signal: handlers.signal, onEvent: handlers.onEvent })
       return { ...result, sessionId: id }
     } catch (err) {
       const mapped = mapApiError(err, { contextName: api.resolved.name, apiUrl: api.client.apiUrl })
-      return { terminated: 'error' as const, message: mapped.message, sessionId }
+      return { terminated: 'error' as const, message: mapped.message, sessionId: id }
     }
   }
 
+  // On leaving, the session is named so it can be continued with --session.
+  const onExit = (sessionId?: string) => {
+    if (sessionId) process.stderr.write(`session ${sessionId}\n`)
+  }
   const instance = render(
-    <Chat agentLabel={label} initialSessionId={opts.session} send={send} onExit={() => {}} />,
+    <Chat agentLabel={label} initialSessionId={opts.session} send={send} onExit={onExit} />,
     { exitOnCtrlC: false },
   )
   await instance.waitUntilExit()
@@ -174,9 +195,14 @@ export function registerChat(program: Command): void {
     // The agent names the session's agent for a new session. Continuing one
     // (--session) needs no agent; when both are given the agent is a label.
     let agentId: string | undefined
+    let scope: PublishedScope | null = null
     let label = agentArg ?? opts.session ?? ''
-    if (agentArg && !opts.session) {
-      agentId = await withApi(api, async (c) => resolveAgentId(await c.v1(), agentArg))
+    if (!opts.session) scope = await withApi(api, (c) => publishedScope(c))
+    if (!opts.session && (agentArg || scope)) {
+      agentId = await withApi(api, (c) => sessionAgent(c, agentArg ?? scope!.agent, scope))
+      // Refuses flags a published key may not pass, before anything is sent.
+      sessionCreateParams(agentId, opts, scope)
+      label ||= agentId
     } else if (!agentArg && !opts.session) {
       if (json || piped || !interactive()) {
         throw new CliError('agent required', ExitCode.Usage, [
@@ -191,7 +217,7 @@ export function registerChat(program: Command): void {
 
     const prompt = promptParts.join(' ').trim()
     if (!json && !prompt && !piped && interactive()) {
-      await runRepl(api, agentId, label, opts)
+      await runRepl(api, agentId, scope, label, opts)
       return
     }
 
@@ -203,6 +229,6 @@ export function registerChat(program: Command): void {
         'Or pipe stdin: echo hi | orca chat <agent>',
       ])
     }
-    await runSingleShot(api, agentId, message, opts, json)
+    await runSingleShot(api, agentId, scope, message, opts, json)
   })
 }

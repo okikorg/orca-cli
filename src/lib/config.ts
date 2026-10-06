@@ -36,7 +36,6 @@ export type ResolvedContext = {
   apiUrl?: string
   apiKey?: string
   dashboardUrl?: string
-  keyId?: string
   // Fields whose value came from the baked-in production default (not a flag,
   // env var, or config file), so commands can mark them "(default)".
   defaulted: Set<DefaultableField>
@@ -154,7 +153,6 @@ export async function resolveContext(flags: GlobalFlags): Promise<ResolvedContex
     ),
     apiKey: process.env.ORCA_API_KEY || base.apiKey,
     dashboardUrl: withDefault('dashboardUrl', process.env.ORCA_DASHBOARD_URL || base.dashboardUrl, DEFAULT_DASHBOARD_URL),
-    keyId: base.keyId,
     defaulted,
     configPath: configPath(),
   }

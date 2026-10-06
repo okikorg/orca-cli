@@ -4,10 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiClient } from '../../src/lib/api.js'
 import { CliError, ExitCode } from '../../src/lib/errors.js'
-import { buildMcpServer, type ClientSource } from '../../src/mcp/server.js'
+import { buildMcpServer, makeClientSource, type ClientSource } from '../../src/mcp/server.js'
+import { saveConfig } from '../../src/lib/config.js'
+import { useTmpConfigDir } from '../helpers/tmp-config.js'
 import { list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
-import { AGENT_ID, SESSION_ID, session } from '../helpers/session-events.js'
+import { AGENT_ID, SESSION_ID, orgKeyRoutes, session } from '../helpers/session-events.js'
 
 // connect builds the server against a ClientSource and returns a connected
 // MCP client over an in-memory transport pair: the same wire protocol a
@@ -110,6 +112,7 @@ describe('orca mcp serve', () => {
   it('chat starts a session with the message and returns the reply once the turn ends', async () => {
     const turn = { id: 'turn_1', status: 'completed', error: null, usage: { input_tokens: 12, output_tokens: 3 } }
     const calls = stubFetch({
+      ...orgKeyRoutes(),
       'POST /v1/agents/sessions': jsonResponse(session('in_progress')),
       [`GET /v1/agents/sessions/${SESSION_ID}/turns?limit=1`]: jsonResponse(list([turn])),
       [`GET /v1/agents/sessions/${SESSION_ID}/items?limit=50&order=desc`]: jsonResponse(
@@ -121,7 +124,7 @@ describe('orca mcp serve', () => {
     })
     const client = await connect()
     const res = await client.callTool({ name: 'chat', arguments: { agent: AGENT_ID, message: 'triage' } })
-    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}')).toEqual({
       agent_id: AGENT_ID,
       environment: { type: 'none' },
       input: 'triage',
@@ -158,5 +161,43 @@ describe('orca mcp serve', () => {
     const res = await client.callTool({ name: 'list_agents', arguments: {} })
     expect((res as ToolText).isError).toBe(true)
     expect(firstText(res)).toContain('orca auth login')
+  })
+})
+
+describe('the MCP server\'s credentials', () => {
+  it('follows a new login without a restart', async () => {
+    const tmp = await useTmpConfigDir()
+    try {
+      delete process.env.ORCA_API_KEY
+      delete process.env.ORCA_API_URL
+      const whoami = { object: 'whoami', tenant: 'org_1', actor: 'key_1', role: 'admin', agent: null }
+      await saveConfig({ currentContext: 'default', contexts: { default: { apiUrl: 'http://test:8080', apiKey: 'orca_sk_first' } } })
+      const calls = stubFetch({ 'GET /api/whoami': jsonResponse(whoami) })
+      const client = await connect(makeClientSource({}))
+      await client.callTool({ name: 'whoami', arguments: {} })
+      await saveConfig({ currentContext: 'default', contexts: { default: { apiUrl: 'http://test:8080', apiKey: 'orca_sk_second' } } })
+      await client.callTool({ name: 'whoami', arguments: {} })
+      expect(calls.map((c) => c.headers.Authorization)).toEqual(['Bearer orca_sk_first', 'Bearer orca_sk_second'])
+    } finally {
+      await tmp.cleanup()
+    }
+  })
+})
+
+describe('show_kit', () => {
+  it('reads a public kit before any login, as orca kits show does', async () => {
+    const tmp = await useTmpConfigDir()
+    try {
+      delete process.env.ORCA_API_KEY
+      delete process.env.ORCA_API_URL
+      await saveConfig({ currentContext: 'default', contexts: { default: { apiUrl: 'http://test:8080' } } })
+      const calls = stubFetch({ 'GET /api/public/kits/kit-AbCdEfGhIjKlMnOpQ': jsonResponse({ object: 'kit.public', public_id: 'kit-AbCdEfGhIjKlMnOpQ' }) })
+      const client = await connect(makeClientSource({}))
+      const res = await client.callTool({ name: 'show_kit', arguments: { publicId: 'kit-AbCdEfGhIjKlMnOpQ' } })
+      expect((res as ToolText).isError).toBeFalsy()
+      expect(calls[0].headers.Authorization).toBeUndefined()
+    } finally {
+      await tmp.cleanup()
+    }
   })
 })

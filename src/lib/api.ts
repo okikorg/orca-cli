@@ -71,6 +71,9 @@ export type ApiClientOptions = {
   apiUrl: string
   apiKey: string
   contextName: string
+  // The dashboard this context logged in from, sent as Origin where the
+  // server returns the user to the dashboard (checkout, portal).
+  dashboardUrl?: string
   // JSON request timeout in milliseconds. Streaming requests manage their own.
   timeoutMs?: number
 }
@@ -93,6 +96,15 @@ export function extractErrorBody(body: unknown): string {
   return ''
 }
 
+// errorParam is the field a refusal is about: the server's `param`.
+function errorParam(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null
+  const error = (body as Record<string, unknown>).error
+  if (!error || typeof error !== 'object') return null
+  const param = (error as Record<string, unknown>).param
+  return typeof param === 'string' && param ? param : null
+}
+
 // mapApiError converts a failure from either client into the CliError the
 // top-level trap renders, distinguishing auth, not-found, server, and
 // connectivity failures so the user knows which one to fix.
@@ -110,13 +122,17 @@ export function mapApiError(err: unknown, opts: { contextName: string; apiUrl: s
   }
   let status: number | undefined
   let reason = ''
+  let param: string | null = null
   if (err instanceof ApiError) {
     status = err.status
     reason = extractErrorBody(err.body)
+    param = errorParam(err.body)
   } else if (err instanceof OpenAIAPIError && err.status !== undefined) {
     status = err.status
     reason = extractErrorBody({ error: err.error })
+    param = errorParam({ error: err.error })
   }
+  if (reason && param) reason = `${reason} (${param})`
   if (status !== undefined) {
     if (status === 401) {
       return new CliError(
@@ -140,7 +156,10 @@ export function mapApiError(err: unknown, opts: { contextName: string; apiUrl: s
       return new CliError(reason || 'gone', ExitCode.NotFound)
     }
     if (status >= 500) {
-      return new CliError(`the API server returned ${status}; try again in a moment`, ExitCode.Failure)
+      return new CliError(
+        reason ? `the API server returned ${status}: ${reason}; try again in a moment` : `the API server returned ${status}; try again in a moment`,
+        ExitCode.Failure,
+      )
     }
     return new CliError(reason ? `${status}: ${reason}` : `request failed (${status})`, ExitCode.Failure)
   }
@@ -152,11 +171,17 @@ export function mapApiError(err: unknown, opts: { contextName: string; apiUrl: s
     : new CliError('unknown error', ExitCode.Failure)
 }
 
+// The server returns at most 100 rows per request; --all pages through in
+// windows of this size, up to a hard safety ceiling.
+export const FETCH_ALL_PAGE_SIZE = 100
+export const FETCH_ALL_MAX_ROWS = 10_000
+
 const enc = encodeURIComponent
 
 export class ApiClient {
   readonly apiUrl: string
   readonly contextName: string
+  private readonly dashboardUrl?: string
   private readonly apiKey: string
   private readonly timeoutMs: number
   private openai: OpenAI | null = null
@@ -165,6 +190,7 @@ export class ApiClient {
     this.apiUrl = opts.apiUrl.replace(/\/+$/, '')
     this.apiKey = opts.apiKey
     this.contextName = opts.contextName
+    this.dashboardUrl = opts.dashboardUrl?.replace(/\/+$/, '')
     this.timeoutMs = opts.timeoutMs ?? 30_000
   }
 
@@ -248,8 +274,14 @@ export class ApiClient {
 
   // -- Publishing ---------------------------------------------------------------
 
-  publishAgent(agentId: string, label: string): Promise<APIKeyIssued> {
-    return this.post<APIKeyIssued>(`/api/agents/${enc(agentId)}/publish`, { label })
+  // publishAgent mints a key scoped to the agent; its sessions run with the
+  // template and vaults given here, and the key holder can choose neither.
+  publishAgent(agentId: string, publish: { label: string; template?: string; vaults: string[] }): Promise<APIKeyIssued> {
+    return this.post<APIKeyIssued>(`/api/agents/${enc(agentId)}/publish`, {
+      label: publish.label,
+      ...(publish.template ? { environment_template_id: publish.template } : {}),
+      ...(publish.vaults.length ? { vault_ids: publish.vaults } : {}),
+    })
   }
 
   async publishedKeys(agentId: string): Promise<APIKey[]> {
@@ -271,11 +303,21 @@ export class ApiClient {
   }
 
   checkout(offer: string): Promise<BillingURL> {
-    return this.post<BillingURL>('/api/billing/checkout', { offer })
+    return this.request<BillingURL>('/api/billing/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ offer }),
+      headers: this.returnTo(),
+    })
   }
 
   portal(): Promise<BillingURL> {
-    return this.post<BillingURL>('/api/billing/portal')
+    return this.request<BillingURL>('/api/billing/portal', { method: 'POST', headers: this.returnTo() })
+  }
+
+  // returnTo names the dashboard to send the user back to; the server keeps
+  // it only when it is one of its dashboard origins.
+  private returnTo(): Record<string, string> {
+    return this.dashboardUrl ? { Origin: this.dashboardUrl } : {}
   }
 
   // -- Kits ---------------------------------------------------------------------

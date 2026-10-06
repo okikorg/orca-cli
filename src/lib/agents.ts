@@ -5,7 +5,10 @@ import { readFile } from 'node:fs/promises'
 
 import { load as parseYaml, YAMLException } from 'js-yaml'
 import type OpenAI from 'openai'
+import type { Agent } from 'openai/resources/beta/agents/agents'
+import { NotFoundError } from 'openai/error'
 
+import { FETCH_ALL_MAX_ROWS, FETCH_ALL_PAGE_SIZE } from './api.js'
 import { CliError, ExitCode } from './errors.js'
 
 async function readSource(file: string): Promise<string> {
@@ -57,24 +60,34 @@ export async function loadAgentFile(
   return doc
 }
 
-// An agent id, as the server mints them.
-const AGENT_ID = /^agent_[0-9a-f]{32}$/
-
-// resolveAgentId turns what the user typed into an agent id. An id passes
-// through unchecked (the call that uses it reports a missing agent); anything
-// else is matched against agent names. A name two agents share is ambiguous,
-// so the error lists their ids.
-export async function resolveAgentId(client: OpenAI, ref: string): Promise<string> {
-  if (AGENT_ID.test(ref)) return ref
-  const matches: string[] = []
-  for await (const agent of client.beta.agents.list({ limit: 100 })) {
-    if (agent.name === ref) matches.push(agent.id)
+// findAgent turns what the user typed into an agent: the agent with that id,
+// else the one agent with that name. The server says which, never the
+// text's shape. A name two agents share is ambiguous, so the error lists
+// their ids; the name scan stops at the same cap as every --all list.
+export async function findAgent(client: OpenAI, ref: string): Promise<Agent> {
+  try {
+    return await client.beta.agents.retrieve(ref)
+  } catch (err) {
+    if (!(err instanceof NotFoundError)) throw err
+  }
+  const matches: Agent[] = []
+  let seen = 0
+  for await (const agent of client.beta.agents.list({ limit: FETCH_ALL_PAGE_SIZE })) {
+    if (++seen > FETCH_ALL_MAX_ROWS) {
+      throw new CliError(`too many agents to find "${ref}" by name`, ExitCode.Usage, ['Pass its id instead.'])
+    }
+    if (agent.name === ref) matches.push(agent)
   }
   if (matches.length === 1) return matches[0]
   if (matches.length === 0) {
     throw new CliError(`no agent named "${ref}"`, ExitCode.NotFound, ['List agents with: orca agents list'])
   }
   throw new CliError(`${matches.length} agents are named "${ref}"`, ExitCode.Usage, [
-    `Pass an id instead: ${matches.join(', ')}`,
+    `Pass an id instead: ${matches.map((agent) => agent.id).join(', ')}`,
   ])
+}
+
+// resolveAgentId is findAgent's id.
+export async function resolveAgentId(client: OpenAI, ref: string): Promise<string> {
+  return (await findAgent(client, ref)).id
 }

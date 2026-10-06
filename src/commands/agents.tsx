@@ -2,7 +2,7 @@ import type { Command } from 'commander'
 import type { Agent, AgentCreateParams, AgentUpdateParams } from 'openai/resources/beta/agents/agents'
 
 import { toPage } from '../lib/api.js'
-import { loadAgentFile, resolveAgentId } from '../lib/agents.js'
+import { findAgent, loadAgentFile, resolveAgentId } from '../lib/agents.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatTime } from '../lib/format.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
@@ -124,8 +124,10 @@ export function registerAgents(program: Command): void {
     .action(async (ref: string | undefined, _opts: Record<string, never>, cmd: Command) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
-      const id = await resolveAgent(ref, 'get', api)
-      const agent = await withApi(api, async (c) => (await c.v1()).beta.agents.retrieve(id))
+      // A reference is looked up once; the picker's choice is read by id.
+      const agent = ref
+        ? await withApi(api, async (c) => findAgent(await c.v1(), ref))
+        : await withApi(api, async (c) => (await c.v1()).beta.agents.retrieve(await resolveAgent(undefined, 'get', api)))
       const mode = outputMode(flags)
       if (mode === 'json') {
         printJson(agent)

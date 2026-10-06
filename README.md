@@ -112,9 +112,17 @@ orca auth logout --revoke                    # revoke the key server-side, then 
 ```
 
 `orca login` defaults to the production API (`https://api.orcapods.ai`); pass
-`--api-url` for a self-hosted or local server. The dashboard origin comes from
-the server's verification link and is stored with the context, for kit share
-links.
+`--api-url` for a self-hosted or local server. The login is named after this
+machine ("CLI on laptop", or "Claude Code on laptop" when a coding agent drives
+it): the dashboard's approval page shows that name, and the minted key carries
+it. The dashboard origin comes from the server's verification link and is
+stored with the context; `billing buy` and `billing manage` send it so the
+checkout returns there. Kit share links come from the server.
+
+`orca auth logout --revoke` revokes the key on the server before forgetting it.
+If the server refuses (a member's CLI key may not be theirs to revoke) or
+cannot be reached, the key keeps working, so the CLI keeps it too and says so;
+plain `orca auth logout` forgets it here only.
 
 Contexts work like kubectl contexts, and are local only: `orca context list`,
 `orca context use prod`, or per-invocation `orca --context prod agents list`.
@@ -159,8 +167,10 @@ CI needs no config file: `ORCA_API_KEY=... ORCA_API_URL=... orca agents list --j
 ## Commands
 
 `[x]` marks a positional that opens an interactive picker when omitted in a
-terminal; in a script it is required (exit 2). An `<agent>` is an agent id
-(`agent_...`) or a unique agent name.
+terminal; in a script it is required (exit 2). An `<agent>` is an agent id or
+the name of exactly one agent: the CLI asks the server for an agent with that
+id first, then matches names. A name several agents share is refused with
+their ids (exit 2); an unknown one is not found (exit 4).
 
 ```
 orca login | orca auth login [--api-url u] [--label l] [--no-browser] [--with-token orca_sk_...]
@@ -206,7 +216,7 @@ orca kits publish|withdraw <kit-id>
 orca kits show <link|public-id>            # no login needed
 orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run] [--yes]
 
-orca publish create <agent> --label l      # admin; the scoped key's secret is shown once
+orca publish create <agent> --label l [--template id] [--vault id]...   # admin; the secret is shown once
 orca publish list <agent>
 orca publish revoke <key-id> [--yes]       # revoking the last key unpublishes the agent
 
@@ -256,12 +266,19 @@ reasoning: { effort: medium }
 ```
 
 Only the shape is checked locally; the server validates every field and the
-CLI prints its message.
+CLI prints its message and the field it is about.
 
 `orca chat <agent> [prompt]` runs a turn on a `/v1` session with your API key.
 Without `--session` it creates a session of the agent first (no environment by
 default; `--sandbox` for a hosted sandbox, `--template id` to build it from an
 environment template, `--vault id` to let it use a vault's credentials).
+
+With a published agent's key, chat runs that one agent as its publisher set it
+up: the CLI asks the server (`whoami`) for the environment and vaults the key's
+sessions must name and sends exactly those. It refuses `--sandbox`,
+`--template` and `--vault`, and any other agent. With a prompt, pass the
+agent's id first (`orca chat agent_... "hi"`); the REPL and piped stdin need
+no agent argument.
 
 ```sh
 orca chat support                            # interactive REPL
@@ -278,8 +295,9 @@ exits from idle, printing the command that resumes the session.
 
 With a prompt argument or piped stdin it runs one turn: the answer streams to
 stdout as plain text and the session id is printed to stderr (`session
-sess_...`), so scripts can resume with `--session`. A failed turn exits 1 after
-printing what arrived; Ctrl-C exits 130.
+sess_...`), so scripts can resume with `--session`, also when the turn fails or
+is refused. A failed turn exits 1 after printing what arrived; Ctrl-C cancels
+the turn on the server and exits 130.
 
 ## Usage and billing
 
@@ -317,10 +335,15 @@ orca kits copy kit-xxxxxxxxxxxxxxxxx --name agent-1=my-support --skip skill-1 --
 ```
 
 `copy` copies every asset under its own name unless renamed with `--name
-key=name` or left out with `--skip key` (keys come from `kits show`). A name
-already used by the same kind fails the whole copy with "Name taken" and
-nothing is copied; rename and run it again. In a script, pass `--yes` (without
-it, a non-interactive run exits 2).
+key=name` or left out with `--skip key` (keys come from `kits show`). A skill
+renamed this way has its `SKILL.md` renamed too; skill names use only letters,
+digits, `_` and `-`. A name already used by the same kind fails the whole copy
+with "Name taken" and nothing is copied; rename and run it again. In a script,
+pass `--yes` (without it, a non-interactive run exits 2).
+
+Each credential a copy needs says where it goes: an MCP server's credential in
+a vault (`orca vaults credentials add`), an environment variable on the copied
+template, which the copy names.
 
 ## Publishing
 
@@ -331,9 +354,15 @@ them a monthly request quota.
 
 ```sh
 orca publish create support --label website  # prints the scoped key once
-orca publish list support
+orca publish create support --label widget --template envtmpl_123 --vault vault_123
+orca publish list support                    # each key, and what its sessions run with
 orca publish revoke key_abc                  # the last key's revocation unpublishes
 ```
+
+The publisher fixes the environment template and vaults a key's sessions run
+with; with neither, its sessions have no environment and no vaults. The key
+holder cannot change them: each session must name the published environment,
+which the key's `whoami` returns.
 
 `orca keys list` shows scoped keys too, with the agent they reach.
 

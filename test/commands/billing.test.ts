@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { parseOffer, registerBilling } from '../../src/commands/billing.js'
 import { setBrowserOpener } from '../../src/lib/browser.js'
 import { ExitCode } from '../../src/lib/errors.js'
-import { commandHarness } from '../helpers/cli.js'
+import { API, commandHarness, KEY } from '../helpers/cli.js'
+import { saveConfig } from '../../src/lib/config.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
 
 const WALLET = {
@@ -33,6 +34,9 @@ describe('billing wallet', () => {
     expect(stdout()).toContain('balance\t$18.50')
     expect(stdout()).toContain('tier\tpro')
     expect(stdout()).toContain('packs\tpack:2000')
+    // Field names as the server spells them, for grep and cut.
+    expect(stdout()).toContain('period_start\t')
+    expect(stdout()).toContain('included_compute_seconds\t36000')
   })
 
   it('passes the wallet through with --json', async () => {
@@ -54,6 +58,13 @@ describe('billing buy', () => {
     expect(stdout()).toBe('https://sandbox.polar.sh/checkout/abc\n')
     // Not a terminal: nothing is opened.
     expect(opened).toEqual([])
+  })
+
+  it('tells the server which dashboard to send the buyer back to', async () => {
+    await saveConfig({ currentContext: 'default', contexts: { default: { apiUrl: API, apiKey: KEY, dashboardUrl: 'http://localhost:5173' } } })
+    const calls = stubFetch({ 'POST /api/billing/checkout': jsonResponse({ url: 'https://x' }) })
+    await run(['billing', 'buy', 'pro'])
+    expect(calls[0].headers.Origin).toBe('http://localhost:5173')
   })
 
   it('sends a pack by its cents', async () => {

@@ -128,6 +128,16 @@ describe('auth login --with-token', () => {
     expect(cfg.contexts.default).toBeUndefined()
   })
 
+  it('forgets a dashboard origin saved for another server', async () => {
+    await saveConfig({
+      currentContext: 'default',
+      contexts: { default: { apiUrl: 'http://old:8080', apiKey: KEY, dashboardUrl: 'http://old-dashboard' } },
+    })
+    stubFetch({ 'GET /api/whoami': jsonResponse(WHOAMI) })
+    await run(['auth', 'login', '--with-token', KEY, '--api-url', 'http://test:8080'])
+    expect((await loadConfig()).contexts.default.dashboardUrl).toBeUndefined()
+  })
+
   it('writes to a named context via --context', async () => {
     stubFetch({ 'GET /api/whoami': jsonResponse(WHOAMI) })
     await run(['--context', 'prod', 'auth', 'login', '--api-url', 'https://prod.example', '--with-token', KEY])
@@ -181,7 +191,7 @@ describe('auth login (device flow)', () => {
       const calls = stubDeviceFlow()
       await run(['login', '--api-url', 'http://test:8080'])
       // The login label says which agent drove it.
-      expect(calls.find((c) => c.path === '/api/device/code')?.body).toContain('claude-code-')
+      expect(calls.find((c) => c.path === '/api/device/code')?.body).toContain('Claude Code on ')
     })
     expect(opened).toEqual([])
   }, 15_000)
@@ -229,6 +239,46 @@ describe('auth login (device flow)', () => {
   })
 })
 
+describe('auth login (device flow) under strain', () => {
+  it('names the login after the host, as the approval page shows it', async () => {
+    const calls = stubDeviceFlow()
+    await run(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
+    const start = calls.find((c) => c.path === '/api/device/code')!
+    expect(JSON.parse(start.body!).client_label).toMatch(/^CLI on .+/)
+  })
+
+  it('waits out a rate-limited poll instead of giving up', async () => {
+    let polls = 0
+    stubFetch({
+      'POST /api/device/code': jsonResponse(DEVICE_CODE),
+      'POST /api/device/token': (call) => {
+        polls++
+        if (polls === 1)
+          return jsonResponse({ error: { message: 'Too many requests', code: 'rate_limit_exceeded' } }, { status: 429, headers: { 'Retry-After': '1' } })(call)
+        return jsonResponse({ access_token: KEY, token_type: 'bearer', key_id: 'key_dev', role: 'admin', tenant_id: 'org_1' })(call)
+      },
+      'GET /api/whoami': jsonResponse(WHOAMI),
+    })
+    await run(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
+    expect((await loadConfig()).contexts.default.apiKey).toBe(KEY)
+  })
+
+  it('keeps polling through a request that got no answer', async () => {
+    let polls = 0
+    stubFetch({
+      'POST /api/device/code': jsonResponse(DEVICE_CODE),
+      'POST /api/device/token': (call) => {
+        polls++
+        if (polls === 1) throw new TypeError('fetch failed')
+        return jsonResponse({ access_token: KEY, token_type: 'bearer', key_id: 'key_dev', role: 'admin', tenant_id: 'org_1' })(call)
+      },
+      'GET /api/whoami': jsonResponse(WHOAMI),
+    })
+    await run(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
+    expect((await loadConfig()).contexts.default.apiKey).toBe(KEY)
+  })
+})
+
 describe('auth status', () => {
   it('reports a valid key with its role', async () => {
     await saveConfig({ currentContext: 'default', contexts: { default: { apiUrl: 'http://test:8080', apiKey: KEY } } })
@@ -266,7 +316,7 @@ describe('auth logout', () => {
     expect(cfg.contexts.default.keyId).toBeUndefined()
   })
 
-  it('--revoke still clears locally when the server delete fails', async () => {
+  it('--revoke clears locally a key the server no longer accepts', async () => {
     await saveConfig({
       currentContext: 'default',
       contexts: { default: { apiUrl: 'http://test:8080', apiKey: KEY, keyId: 'key_9' } },
@@ -275,6 +325,34 @@ describe('auth logout', () => {
     await run(['auth', 'logout', '--revoke'])
     const cfg = await loadConfig()
     expect(cfg.contexts.default.apiKey).toBeUndefined()
+  })
+
+  it('--revoke reports a refused revoke and keeps the key, which still works', async () => {
+    await saveConfig({
+      currentContext: 'default',
+      contexts: { default: { apiUrl: 'http://test:8080', apiKey: KEY, keyId: 'key_9' } },
+    })
+    stubFetch({
+      'DELETE /api/keys/key_9': jsonResponse(
+        { error: { message: 'This action requires the admin role', type: 'invalid_request_error', param: null, code: 'permission_denied' } },
+        { status: 403 },
+      ),
+    })
+    await expect(run(['auth', 'logout', '--revoke'])).rejects.toMatchObject({ exitCode: ExitCode.Auth })
+    const cfg = await loadConfig()
+    expect(cfg.contexts.default.apiKey).toBe(KEY)
+    expect(cfg.contexts.default.keyId).toBe('key_9')
+  })
+
+  it('--revoke keeps the key when the server cannot be reached', async () => {
+    await saveConfig({
+      currentContext: 'default',
+      contexts: { default: { apiUrl: 'http://test:8080', apiKey: KEY, keyId: 'key_9' } },
+    })
+    stubFetch({})
+    await expect(run(['auth', 'logout', '--revoke'])).rejects.toMatchObject({ exitCode: ExitCode.Failure })
+    const cfg = await loadConfig()
+    expect(cfg.contexts.default.apiKey).toBe(KEY)
   })
 
   it('--revoke without a stored key id warns and clears locally, no DELETE', async () => {

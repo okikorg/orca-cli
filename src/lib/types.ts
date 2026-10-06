@@ -18,6 +18,9 @@ export type Whoami = {
   actor: string
   role: string
   agent: string | null
+  // A published agent's key: what its sessions must name.
+  environment?: Record<string, unknown>
+  vault_ids?: string[]
 }
 
 // An API key, without its secret. `agent` is the agent a published agent's
@@ -32,6 +35,16 @@ export type APIKey = {
   created_at: number
   last_used_at: number | null
   agent: string | null
+  // What a published agent's sessions run with, fixed by its publisher.
+  environment_template_id: string | null
+  vault_ids: string[]
+}
+
+// runsWith says what a published key's sessions run with, in a few words.
+export function runsWith(key: Pick<APIKey, 'environment_template_id' | 'vault_ids'>): string {
+  const environment = key.environment_template_id ?? 'no environment'
+  const vaults = key.vault_ids.length === 0 ? 'no vaults' : `${key.vault_ids.length === 1 ? 'vault' : 'vaults'} ${key.vault_ids.join(', ')}`
+  return `${environment}, ${vaults}`
 }
 
 // POST /api/keys and POST /api/agents/{id}/publish: the only responses that
@@ -128,6 +141,8 @@ export type Kit = {
   id: string
   object: 'kit'
   public_id: string | null
+  // The share link, from the server, which knows the dashboard's origin.
+  url: string | null
   name: string
   description: string
   readme: string
@@ -150,7 +165,15 @@ export type PublicKitAsset = { key: string; name: string } & Record<string, unkn
 
 // A credential the copying organization must add: an MCP server, an MCP
 // header, or a template environment variable.
-export type KitCredential = { kind: string; name: string; used_by: string } & Record<string, unknown>
+// A credential a copied kit needs: an MCP server's goes in a vault, a
+// variable is set on the copied template. `asset` is the kit key needing it.
+export type KitCredential = {
+  kind: 'mcp_server' | 'environment_variable'
+  name: string
+  used_by: string
+  asset: string
+  server_url?: string | null
+}
 
 // GET /api/public/kits/{public_id}: names and descriptions, never bytes.
 export type PublicKit = {

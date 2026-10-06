@@ -46,9 +46,9 @@ describe('Table', () => {
 
   it('renders a subtle next: hint footer', () => {
     const { lastFrame } = render(
-      <Table<Row> columns={cols} rows={data} hint="orca run <name>" />,
+      <Table<Row> columns={cols} rows={data} hint="orca chat <agent>" />,
     )
-    expect(lastFrame() ?? '').toContain('next: orca run <name>')
+    expect(lastFrame() ?? '').toContain('next: orca chat <agent>')
   })
 
   it('truncates cells that exceed the column cap', () => {

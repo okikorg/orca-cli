@@ -37,7 +37,10 @@ const PUBLIC = {
     skills: [{ key: 'skill-1', name: 'triage', description: 'Sort tickets' }],
     templates: [],
   },
-  credentials: [{ kind: 'mcp_server', name: 'docs', server_url: 'https://mcp.example.com', used_by: 'support' }],
+  credentials: [
+    { kind: 'mcp_server', name: 'docs', server_url: 'https://mcp.example.com', used_by: 'support', asset: 'agent-1' },
+    { kind: 'environment_variable', name: 'GITHUB_TOKEN', used_by: 'triage-env', asset: 'template-1' },
+  ],
 }
 
 const { run, stdout, stderr } = commandHarness(registerKits)
@@ -65,6 +68,7 @@ describe('kits list, make, edit', () => {
 
   it('makes a kit from a selection, resolving agent names', async () => {
     const calls = stubFetch({
+      'GET /v1/agents/support': jsonResponse({ error: { message: 'Agent not found' } }, { status: 404 }),
       'GET /v1/agents?limit=100': jsonResponse(list([{ id: AGENT, name: 'support' }])),
       'POST /api/kits': jsonResponse(KIT),
     })
@@ -90,17 +94,24 @@ describe('kits list, make, edit', () => {
 })
 
 describe('kits publish and withdraw', () => {
-  it('publishes and prints the share link on the context\'s dashboard', async () => {
+  it('publishes and prints the share link the server gives', async () => {
+    // The server owns the dashboard's origin; whatever the context saved does not matter.
     await saveConfig({
       currentContext: 'default',
-      contexts: { default: { apiUrl: API, apiKey: 'orca_sk_' + 'a'.repeat(52), dashboardUrl: 'http://localhost:5173' } },
+      contexts: { default: { apiUrl: API, apiKey: 'orca_sk_' + 'a'.repeat(52), dashboardUrl: 'http://stale.example' } },
     })
     stubFetch({
-      'POST /api/kits/kit_1/publish': jsonResponse({ ...KIT, status: 'published', public_id: PUBLIC_ID, latest_version: 1 }),
+      'POST /api/kits/kit_1/publish': jsonResponse({
+        ...KIT,
+        status: 'published',
+        public_id: PUBLIC_ID,
+        url: `https://app.example.test/kits/${PUBLIC_ID}`,
+        latest_version: 1,
+      }),
     })
     await run(['kits', 'publish', 'kit_1'])
     expect(stdout()).toContain(`version 1 as ${PUBLIC_ID}`)
-    expect(stdout()).toContain(`Share it: http://localhost:5173/kits/${PUBLIC_ID}`)
+    expect(stdout()).toContain(`Share it: https://app.example.test/kits/${PUBLIC_ID}`)
   })
 
   it('withdraws', async () => {
@@ -144,6 +155,7 @@ describe('kits copy', () => {
         created: [
           { key: 'skill-1', kind: 'skill', id: 'skill_9', name: 'triage' },
           { key: 'agent-1', kind: 'agent', id: 'agent_9', name: 'support' },
+          { key: 'template-1', kind: 'template', id: 'envtmpl_9', name: 'triage-env' },
         ],
         credentials: PUBLIC.credentials,
       }),
@@ -155,8 +167,10 @@ describe('kits copy', () => {
         { key: 'skill-1', name: 'triage' },
       ],
     })
-    expect(stdout()).toBe('skill\tskill_9\ttriage\nagent\tagent_9\tsupport\n')
-    expect(stderr()).toContain('mcp server docs (https://mcp.example.com), used by support')
+    expect(stdout()).toBe('skill\tskill_9\ttriage\nagent\tagent_9\tsupport\ntemplate\tenvtmpl_9\ttriage-env\n')
+    // Each credential says where it is added.
+    expect(stderr()).toContain('MCP server credential docs (https://mcp.example.com), used by support: add it to a vault')
+    expect(stderr()).toContain('Environment variable GITHUB_TOKEN, used by triage-env: set it on template triage-env (envtmpl_9)')
   })
 
   it('renames with --name and leaves out with --skip', async () => {

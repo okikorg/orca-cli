@@ -100,14 +100,16 @@ function parseRename(spec: string): [string, string] {
   return [key, name]
 }
 
-function credentialLine(c: KitCredential): string {
-  const extra = typeof c.server_url === 'string' ? ` (${c.server_url})` : ''
-  return `${c.kind.replace(/_/g, ' ')} ${c.name}${extra}, used by ${c.used_by}`
-}
-
-// shareLink is a published kit's public page on the dashboard.
-function shareLink(dashboardUrl: string | undefined, publicId: string): string | null {
-  return dashboardUrl ? `${dashboardUrl.replace(/\/+$/, '')}/kits/${publicId}` : null
+// credentialLine names a credential and where it is added: an MCP server's
+// in a vault, a variable on the copied template (named once copied).
+function credentialLine(c: KitCredential, copy?: KitCopyResult): string {
+  if (c.kind === 'mcp_server') {
+    const url = c.server_url ? ` (${c.server_url})` : ''
+    return `MCP server credential ${c.name}${url}, used by ${c.used_by}: add it to a vault`
+  }
+  const template = copy?.created.find((item) => item.key === c.asset)
+  const where = template ? `template ${template.name} (${template.id})` : 'the template once copied'
+  return `Environment variable ${c.name}, used by ${c.used_by}: set it on ${where}`
 }
 
 // fetchPublicKit reads a kit's public page. It needs no credential, so it
@@ -291,13 +293,12 @@ export function registerKits(program: Command): void {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
       const kit = await withApi(api, (c) => c.publishKit(id))
-      const link = kit.public_id ? shareLink(api.resolved.dashboardUrl, kit.public_id) : null
       if (outputMode(flags) === 'json') {
-        printJson({ ...kit, link })
+        printJson(kit)
         return
       }
       console.log(`${accentVerb('Published')} kit "${kit.name}" version ${kit.latest_version} as ${kit.public_id}.`)
-      if (link) console.log(`Share it: ${link}`)
+      if (kit.url) console.log(`Share it: ${kit.url}`)
     })
 
   kits
@@ -409,6 +410,6 @@ function reportCopy(result: KitCopyResult, mode: 'json' | 'plain' | 'ink'): void
   }
   if (result.credentials.length) {
     console.error(hintText('Add these credentials before the copied agents use them:'))
-    for (const c of result.credentials) console.error(hintText(`  ${credentialLine(c)}`))
+    for (const c of result.credentials) console.error(hintText(`  ${credentialLine(c, result)}`))
   }
 }

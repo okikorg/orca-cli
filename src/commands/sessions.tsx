@@ -10,7 +10,9 @@ import {
   addSessionCreateOptions,
   itemRole,
   itemText,
-  sessionEnvironment,
+  publishedScope,
+  sessionAgent,
+  sessionCreateParams,
   type SessionCreateFlags,
 } from '../lib/sessions.js'
 import { accentVerb, hintText } from '../ui/theme.js'
@@ -155,16 +157,11 @@ export function registerSessions(program: Command): void {
       .requiredOption('--agent <agent>', 'the agent (id or name)'),
   ).action(async (opts: SessionCreateFlags & { agent: string }, cmd: Command) => {
     const flags = globalFlags(cmd)
-    const environment = sessionEnvironment(opts)
     const api = await apiContext(cmd)
-    const agentId = await withApi(api, async (c) => resolveAgentId(await c.v1(), opts.agent))
-    const session = await withApi(api, async (c) =>
-      (await c.v1()).beta.agents.sessions.create({
-        agent_id: agentId,
-        environment,
-        ...(opts.vault.length ? { vault_ids: opts.vault } : {}),
-      }),
-    )
+    const scope = await withApi(api, (c) => publishedScope(c))
+    const agentId = await withApi(api, (c) => sessionAgent(c, opts.agent, scope))
+    const params = sessionCreateParams(agentId, opts, scope)
+    const session = await withApi(api, async (c) => (await c.v1()).beta.agents.sessions.create(params))
     if (outputMode(flags) === 'json') {
       printJson(session)
       return

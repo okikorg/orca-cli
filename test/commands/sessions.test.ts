@@ -4,7 +4,7 @@ import { registerSessions } from '../../src/commands/sessions.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import { commandHarness, list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
-import { AGENT_ID, SESSION_ID, session } from '../helpers/session-events.js'
+import { AGENT_ID, SESSION_ID, orgKeyRoutes, session } from '../helpers/session-events.js'
 
 const { run, stdout, stderr } = commandHarness(registerSessions)
 
@@ -17,10 +17,11 @@ describe('sessions', () => {
 
   it('filters by agent', async () => {
     const calls = stubFetch({
+      ...orgKeyRoutes(),
       [`GET /v1/agents/sessions?limit=10&agent_id=${AGENT_ID}`]: jsonResponse(list([])),
     })
     await run(['sessions', 'list', '--agent', AGENT_ID])
-    expect(calls).toHaveLength(1)
+    expect(calls.filter((c) => c.path.startsWith('/v1/agents/sessions'))).toHaveLength(1)
     expect(stderr()).toContain('No sessions yet')
   })
 
@@ -37,9 +38,12 @@ describe('sessions', () => {
   })
 
   it('creates a session and prints its id when piped', async () => {
-    const calls = stubFetch({ 'POST /v1/agents/sessions': jsonResponse(session()) })
+    const calls = stubFetch({ ...orgKeyRoutes(), 'POST /v1/agents/sessions': jsonResponse(session()) })
     await run(['sessions', 'create', '--agent', AGENT_ID, '--sandbox'])
-    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ agent_id: AGENT_ID, environment: { type: 'openai_hosted' } })
+    expect(JSON.parse(calls.find((c) => c.method === 'POST')?.body ?? '{}')).toEqual({
+      agent_id: AGENT_ID,
+      environment: { type: 'openai_hosted' },
+    })
     expect(stdout()).toBe(`${SESSION_ID}\n`)
   })
 

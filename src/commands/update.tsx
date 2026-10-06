@@ -137,16 +137,17 @@ function updateGuidance(env: UpdateEnv): Guidance | null {
 }
 
 // Turns a raw filesystem/tar failure into a CliError with an actionable hint.
-function mapUpdateError(err: unknown, env: UpdateEnv): CliError {
+// A missing program is told apart by the command the spawn error names.
+export function mapUpdateError(err: unknown, env: UpdateEnv): CliError {
   const msg = err instanceof Error ? err.message : String(err)
-  const code = (err as NodeJS.ErrnoException)?.code
+  const { code, path: failedPath } = (err ?? {}) as NodeJS.ErrnoException
   if (code === 'EACCES' || code === 'EPERM') {
     return new CliError(`cannot write to ${env.execPath}: permission denied`, ExitCode.Failure, [
       'The install directory is not writable by your user.',
       `Re-run with elevated permissions, or reinstall: curl -fsSL ${INSTALL_SCRIPT_URL} | sh`,
     ])
   }
-  if (code === 'ENOENT' && /\btar\b/.test(msg)) {
+  if (code === 'ENOENT' && failedPath === 'tar') {
     return new CliError('`tar` is required to unpack the update but was not found on PATH.', ExitCode.Failure)
   }
   return new CliError(`update failed: ${msg}`, ExitCode.Failure)

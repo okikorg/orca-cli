@@ -28,7 +28,7 @@ import { resolveAgentId } from '../lib/agents.js'
 import { ApiClient, mapApiError, toPage } from '../lib/api.js'
 import { resolveContext, type GlobalFlags } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { itemText, sessionEnvironment } from '../lib/sessions.js'
+import { itemText, publishedScope, sessionAgent, sessionCreateParams } from '../lib/sessions.js'
 import { collectSkillFiles } from '../lib/skills.js'
 import type { KitInput } from '../lib/types.js'
 import { VERSION } from '../version.js'
@@ -57,27 +57,30 @@ function errorResult(message: string, detail?: string[]): ToolResult {
   return { content: [{ type: 'text', text }], isError: true }
 }
 
-// clientSource resolves the CLI context lazily and caches the result. A
-// missing key is reported per-call with the exact fix, not at startup, so
-// registering the server before first login works.
-export type ClientSource = () => Promise<ApiClient>
+// clientSource resolves the CLI context on every call, so a new login or
+// context switch applies to a running server. A missing key is reported
+// per-call with the exact fix, not at startup, so registering the server
+// before first login works.
+// A tool marked anonymous (a public kit page) needs only the server URL.
+export type ClientSource = (opts?: { anonymous?: boolean }) => Promise<ApiClient>
 
 export function makeClientSource(flags: GlobalFlags): ClientSource {
-  let cached: ApiClient | null = null
-  return async () => {
-    if (cached) return cached
+  return async (opts) => {
     const ctx = await resolveContext(flags)
+    if (opts?.anonymous && ctx.apiUrl) {
+      return new ApiClient({ apiUrl: ctx.apiUrl.replace(/\/+$/, ''), apiKey: ctx.apiKey ?? '', contextName: ctx.name })
+    }
     if (!ctx.apiUrl || !ctx.apiKey) {
       throw new CliError('not logged in to Orca.', ExitCode.Auth, [
         'Run: orca auth login   (or set ORCA_API_KEY and ORCA_API_URL)',
       ])
     }
-    cached = new ApiClient({
+    return new ApiClient({
       apiUrl: ctx.apiUrl.replace(/\/+$/, ''),
       apiKey: ctx.apiKey,
       contextName: ctx.name,
+      dashboardUrl: ctx.dashboardUrl,
     })
-    return cached
   }
 }
 
@@ -125,11 +128,12 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     description: string,
     inputSchema: z.ZodRawShape,
     handler: (client: ApiClient, args: Record<string, unknown>) => Promise<unknown>,
+    opts: { anonymous?: boolean } = {},
   ): void => {
     server.registerTool(name, { description, inputSchema }, async (args: Record<string, unknown>) => {
       let client: ApiClient
       try {
-        client = await getClient()
+        client = await getClient(opts)
       } catch (err) {
         return err instanceof CliError ? errorResult(err.message, err.detail) : errorResult(String(err))
       }
@@ -238,16 +242,13 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
       vaults: z.array(z.string()).optional().describe('vault ids the session may use'),
     },
     async (client, args) => {
-      const vaults = (args.vaults as string[] | undefined) ?? []
-      return (await client.v1()).beta.agents.sessions.create({
-        agent_id: await agentId(client, args.agent),
-        environment: sessionEnvironment({
-          sandbox: args.sandbox as boolean | undefined,
-          template: args.template as string | undefined,
-          vault: vaults,
-        }),
-        ...(vaults.length ? { vault_ids: vaults } : {}),
-      })
+      const scope = await publishedScope(client)
+      const params = sessionCreateParams(await sessionAgent(client, args.agent as string, scope), {
+        sandbox: args.sandbox as boolean | undefined,
+        template: args.template as string | undefined,
+        vault: (args.vaults as string[] | undefined) ?? [],
+      }, scope)
+      return (await client.v1()).beta.agents.sessions.create(params)
     },
   )
 
@@ -294,10 +295,11 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
           ],
         })
       } else {
-        if (!args.agent) throw new CliError('pass agent for a new session, or session to continue one', ExitCode.Usage)
+        const scope = await publishedScope(client)
+        const ref = (args.agent as string | undefined) ?? scope?.agent
+        if (!ref) throw new CliError('pass agent for a new session, or session to continue one', ExitCode.Usage)
         const session = await v1.beta.agents.sessions.create({
-          agent_id: await agentId(client, args.agent),
-          environment: { type: 'none' },
+          ...sessionCreateParams(await sessionAgent(client, ref, scope), { vault: [] }, scope),
           input: message,
         })
         sessionId = session.id
@@ -535,6 +537,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     'Read a published kit by its public id (kit-...): contents, each asset\'s key, and the credentials a copy needs.',
     { publicId: z.string() },
     async (client, args) => client.publicKit(args.publicId as string),
+    { anonymous: true },
   )
 
   tool(
@@ -551,9 +554,19 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'publish_agent',
-    'Publish an agent (admin): mint an API key scoped to it. The secret is in this one response. Unpublish with revoke_key.',
-    { agent: z.string().describe('agent id or name'), label: z.string().describe('where the key is used') },
-    async (client, args) => client.publishAgent(await agentId(client, args.agent), args.label as string),
+    'Publish an agent (admin): mint an API key scoped to it. Its sessions run with the template and vaults given here, which the key holder cannot change. The secret is in this one response. Unpublish with revoke_key.',
+    {
+      agent: z.string().describe('agent id or name'),
+      label: z.string().describe('where the key is used'),
+      template: z.string().optional().describe('environment template its sessions run in (default: no environment)'),
+      vaults: z.array(z.string()).optional().describe('vault ids its sessions may use'),
+    },
+    async (client, args) =>
+      client.publishAgent(await agentId(client, args.agent), {
+        label: args.label as string,
+        template: args.template as string | undefined,
+        vaults: (args.vaults as string[] | undefined) ?? [],
+      }),
   )
 
   tool(

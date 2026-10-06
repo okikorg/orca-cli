@@ -54,15 +54,16 @@ describe('agents list', () => {
 describe('agents get', () => {
   it('resolves a name to its id', async () => {
     const calls = stubFetch({
+      'GET /v1/agents/support': jsonResponse({ error: { message: 'Agent not found' } }, { status: 404 }),
       'GET /v1/agents?limit=100': jsonResponse(list([agent(OTHER, 'other'), agent(ID, 'support')])),
-      [`GET /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')),
     })
     await run(['agents', 'get', 'support'])
-    expect(calls.map((c) => c.path)).toEqual(['/v1/agents?limit=100', `/v1/agents/${ID}`])
+    // Not an id, so the server is asked for the name; the match is shown as listed.
+    expect(calls.map((c) => c.path)).toEqual(['/v1/agents/support', '/v1/agents?limit=100'])
     expect(stdout()).toContain(`id\t${ID}`)
   })
 
-  it('takes an id without a lookup', async () => {
+  it('looks an id up once and shows it', async () => {
     const calls = stubFetch({ [`GET /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')) })
     await run(['--json', 'agents', 'get', ID])
     expect(calls).toHaveLength(1)
@@ -70,12 +71,18 @@ describe('agents get', () => {
   })
 
   it('refuses a name two agents share', async () => {
-    stubFetch({ 'GET /v1/agents?limit=100': jsonResponse(list([agent(ID, 'twin'), agent(OTHER, 'twin')])) })
+    stubFetch({
+      'GET /v1/agents/twin': jsonResponse({ error: { message: 'Agent not found' } }, { status: 404 }),
+      'GET /v1/agents?limit=100': jsonResponse(list([agent(ID, 'twin'), agent(OTHER, 'twin')])),
+    })
     await expect(run(['agents', 'get', 'twin'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
   })
 
   it('reports an unknown name as not found', async () => {
-    stubFetch({ 'GET /v1/agents?limit=100': jsonResponse(list([])) })
+    stubFetch({
+      'GET /v1/agents/ghost': jsonResponse({ error: { message: 'Agent not found' } }, { status: 404 }),
+      'GET /v1/agents?limit=100': jsonResponse(list([])),
+    })
     await expect(run(['agents', 'get', 'ghost'])).rejects.toMatchObject({ exitCode: ExitCode.NotFound })
   })
 })
@@ -102,9 +109,12 @@ describe('agents create and update', () => {
 
   it('updates only the fields in the file', async () => {
     const file = await agentFile('instructions: Be thorough.\n')
-    const calls = stubFetch({ [`POST /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')) })
+    const calls = stubFetch({
+      [`GET /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')),
+      [`POST /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')),
+    })
     await run(['agents', 'update', ID, '-f', file])
-    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ instructions: 'Be thorough.' })
+    expect(JSON.parse(calls.find((c) => c.method === 'POST')?.body ?? '{}')).toEqual({ instructions: 'Be thorough.' })
   })
 
   it('maps a server validation error to its message', async () => {
@@ -116,22 +126,23 @@ describe('agents create and update', () => {
       ),
     })
     await expect(run(['agents', 'create', '-f', file])).rejects.toMatchObject({
-      message: '400: Unknown agent field: color',
+      message: '400: Unknown agent field: color (color)',
     })
   })
 })
 
 describe('agents delete', () => {
   it('refuses without --yes when not interactive', async () => {
-    stubFetch({})
+    stubFetch({ [`GET /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')) })
     await expect(run(['agents', 'delete', ID])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
   })
 
   it('deletes with --yes', async () => {
     const calls = stubFetch({
+      [`GET /v1/agents/${ID}`]: jsonResponse(agent(ID, 'support')),
       [`DELETE /v1/agents/${ID}`]: jsonResponse({ id: ID, object: 'agent.deleted', deleted: true }),
     })
     await run(['agents', 'delete', ID, '--yes'])
-    expect(calls).toHaveLength(1)
+    expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(1)
   })
 })

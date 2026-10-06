@@ -23,7 +23,7 @@ const SUMMARY = {
   daily: [{ date: '2026-07-04', meter: 'model_tokens', quantity: 4200, cost_micro_usd: 1_200_000 }],
 }
 
-const { run, stdout } = commandHarness(registerUsage)
+const { run, stdout, stderr } = commandHarness(registerUsage)
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
@@ -40,6 +40,13 @@ describe('usage summary', () => {
     await run(['usage'])
     expect(calls).toHaveLength(1)
     expect(stdout()).toBe('model_tokens\t4200\ttokens\t$1.20\nweb_searches\t2\tcalls\t$0.05\n')
+  })
+
+  it('says so when nothing was used, rather than printing nothing', async () => {
+    stubFetch({ [`GET /api/usage?start=${START}&end=${END}`]: jsonResponse({ ...SUMMARY, meters: SUMMARY.meters.map((m) => ({ ...m, quantity: 0, cost_micro_usd: 0 })) }) })
+    await run(['usage'])
+    expect(stdout()).toBe('')
+    expect(stderr()).toContain('No usage in this window.')
   })
 
   it('groups by agent and narrows to a session', async () => {

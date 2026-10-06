@@ -2,7 +2,7 @@ import os from 'node:os'
 
 import type { Command } from 'commander'
 
-import { ApiClient, mapApiError } from '../lib/api.js'
+import { ApiClient, ApiError, mapApiError } from '../lib/api.js'
 import { openBrowser } from '../lib/browser.js'
 import {
   DEFAULT_CONTEXT,
@@ -54,24 +54,26 @@ function agentContext(): string | null {
   return null
 }
 
-// defaultKeyLabel names the login after the local user + host, gh-style, so
-// the dashboard's approval page is legible ("cli-ada@laptop";
-// "claude-code-ada@laptop" when a coding agent is driving).
+// Who is logging in, as the approval page and the key's name say it.
+const AGENT_LABELS: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  cursor: 'Cursor',
+  ci: 'CI',
+  ssh: 'CLI over SSH',
+}
+
+// defaultKeyLabel names the login after the host, the label the dashboard's
+// approval page shows and the minted key is named after ("CLI on laptop";
+// "Claude Code on laptop" when a coding agent is driving).
 function defaultKeyLabel(): string {
-  let user = 'user'
+  let host = 'this machine'
   try {
-    user = os.userInfo().username || 'user'
-  } catch {
-    // os.userInfo can throw when there's no passwd entry; keep the default.
-  }
-  let host = 'cli'
-  try {
-    host = os.hostname() || 'cli'
+    host = os.hostname() || host
   } catch {
     // Keep the default hostname.
   }
-  const prefix = agentContext() ?? 'cli'
-  return `${prefix}-${user}@${host}`
+  const context = agentContext()
+  return `${context ? AGENT_LABELS[context] : 'CLI'} on ${host}`
 }
 
 // Handoff carries whatever the login path resolved: always a token, plus the
@@ -136,6 +138,8 @@ async function runLogin(opts: LoginOpts, cmd: Command): Promise<void> {
 
   const ctxOut: ContextConfig = { ...existing, apiUrl, apiKey: token }
   if (handoff.dashboardUrl) ctxOut.dashboardUrl = handoff.dashboardUrl
+  // An origin saved for another server no longer applies.
+  else if (existing?.apiUrl && existing.apiUrl !== apiUrl) delete ctxOut.dashboardUrl
   if (handoff.keyId) ctxOut.keyId = handoff.keyId
   else delete ctxOut.keyId
   cfg.contexts[name] = ctxOut
@@ -365,11 +369,18 @@ export function registerAuth(program: Command): void {
           try {
             await client.revokeKey(ctx.keyId)
             console.log(`${accentVerb('Revoked')} key ${ctx.keyId} on the server.`)
-          } catch {
-            // Best-effort: a 401 (already revoked), 404 (already gone), or
-            // unreachable server must not strand the local key. Warn and
-            // clear anyway so the user is never stuck logged in locally.
-            console.error(hintText(`warning: could not revoke ${ctx.keyId} on the server; clearing locally anyway`))
+          } catch (err) {
+            // A key the server no longer accepts (401) or knows (404) is dead
+            // already: clear it. Any other failure leaves it working on the
+            // server, so it is kept here and the failure reported.
+            if (!(err instanceof ApiError && (err.status === 401 || err.status === 404))) {
+              const failure = mapApiError(err, { contextName: name, apiUrl: ctx.apiUrl })
+              throw new CliError(`could not revoke ${ctx.keyId}: ${failure.message}`, failure.exitCode, [
+                'The key still works and is still stored here.',
+                'Ask an admin to revoke it in the dashboard, or run orca auth logout without --revoke to forget it here only.',
+              ])
+            }
+            console.error(hintText(`${ctx.keyId} no longer works on the server; clearing it here.`))
           }
         } else {
           console.error(hintText('warning: no server-side key id stored; clearing locally only'))

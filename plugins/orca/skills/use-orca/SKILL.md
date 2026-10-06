@@ -53,7 +53,7 @@ orca chat <agent> --session <id> "and the oldest?"  # continue the same session
 orca sessions items <id> --json              # the conversation so far
 ```
 
-`<agent>` is an id (`agent_...`) or a unique name. Add `--sandbox` (or `--template <id>`) to `chat` for a hosted sandbox, and `--vault <id>` to let the session use a vault's MCP credentials (`orca vaults credentials add`).
+`<agent>` is an agent id or the name of exactly one agent (the server says which; a shared name is refused with the ids). Add `--sandbox` (or `--template <id>`) to `chat` for a hosted sandbox, and `--vault <id>` to let the session use a vault's MCP credentials (`orca vaults credentials add`).
 
 Share and reuse setups as kits, and publish an agent as an API:
 
@@ -61,7 +61,7 @@ Share and reuse setups as kits, and publish an agent as an API:
 orca kits make --name "Support desk" --agent support --json
 orca kits publish <kit-id> --json            # prints the public id and share link
 orca kits copy <link-or-public-id> --dry-run --json
-orca publish create <agent> --label website --json   # admin; a key scoped to the agent, shown once
+orca publish create <agent> --label website [--template <id>] [--vault <id>] --json   # admin; a key scoped to the agent, shown once
 ```
 
 Account status (every figure is the server's, in micro-USD; never recompute costs):
@@ -92,6 +92,7 @@ It exposes one tool per CLI action: whoami and keys, agents, sessions, `chat` (s
 ## Troubleshooting
 
 - Exit 3 or 401: run `orca login` again (or check `ORCA_API_KEY`).
-- 429 `insufficient_quota`: the organization is out of credit; check `orca billing wallet`.
+- "Out of Orca credit" (HTTP 429, or a turn that fails with it): the organization is out of credit; check `orca billing wallet`, add credit, then continue the session.
+- With a published agent's key, `orca chat` runs only that agent, with the environment and vaults its publisher chose; don't pass `--sandbox`, `--template` or `--vault`.
 - "does not support device login": the API URL does not point at an Orca server; check `orca auth status`, or use `orca login --with-token <key>` with a key minted in the dashboard.
 - Anything else: `orca doctor --json` names the failing check and the fix.

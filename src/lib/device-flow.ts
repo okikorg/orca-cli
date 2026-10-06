@@ -34,10 +34,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// Unreachable is a request that got no answer: a poll retries it, since the
+// handshake has its own deadline.
+class Unreachable extends CliError {}
+
 async function postJson(
   url: string,
   body: unknown,
-): Promise<{ status: number; json: unknown }> {
+): Promise<{ status: number; json: unknown; retryAfterSec: number | null }> {
   let res: Response
   try {
     res = await fetch(url, {
@@ -48,9 +52,9 @@ async function postJson(
     })
   } catch (err) {
     if (err instanceof Error && err.name === 'TimeoutError') {
-      throw new CliError(`request to ${url} timed out`, ExitCode.Failure)
+      throw new Unreachable(`request to ${url} timed out`, ExitCode.Failure)
     }
-    throw new CliError(`cannot reach ${url}`, ExitCode.Failure, [
+    throw new Unreachable(`cannot reach ${url}`, ExitCode.Failure, [
       'Check the API URL and your connection.',
     ])
   }
@@ -60,7 +64,8 @@ async function postJson(
   } catch {
     json = undefined
   }
-  return { status: res.status, json }
+  const retryAfter = Number(res.headers.get('retry-after'))
+  return { status: res.status, json, retryAfterSec: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null }
 }
 
 // requestDeviceCode starts the handshake. 404 means the server predates
@@ -95,7 +100,9 @@ export async function requestDeviceCode(
 
 // pollDeviceToken polls until the user decides or the handshake expires.
 // Follows RFC 8628 section 3.5: sleep `interval` seconds between polls and
-// add 5 seconds whenever the server answers slow_down.
+// add 5 seconds whenever the server answers slow_down. A poll the server
+// rate-limits waits its Retry-After, and a poll that got no answer is
+// retried: both are transient, and the code's own expiry bounds them.
 export async function pollDeviceToken(
   apiUrl: string,
   grant: DeviceCodeResponse,
@@ -103,17 +110,30 @@ export async function pollDeviceToken(
   let intervalSec = Math.max(1, grant.interval || 5)
   const deadline = Date.now() + Math.max(30, grant.expires_in || 900) * 1000
 
+  let waitSec = intervalSec
   for (;;) {
-    await sleep(intervalSec * 1000)
+    await sleep(waitSec * 1000)
+    waitSec = intervalSec
     if (Date.now() > deadline) {
       throw new CliError('login timed out waiting for approval', ExitCode.Failure, [
         'Re-run: orca auth login',
       ])
     }
-    const { status, json } = await postJson(`${apiUrl}/api/device/token`, {
-      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-      device_code: grant.device_code,
-    })
+    let reply: Awaited<ReturnType<typeof postJson>>
+    try {
+      reply = await postJson(`${apiUrl}/api/device/token`, {
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: grant.device_code,
+      })
+    } catch (err) {
+      if (err instanceof Unreachable) continue
+      throw err
+    }
+    const { status, json, retryAfterSec } = reply
+    if (status === 429) {
+      waitSec = Math.max(intervalSec, retryAfterSec ?? intervalSec + 5)
+      continue
+    }
     if (status === 200 && json && typeof json === 'object') {
       const tok = json as DeviceTokenSuccess
       if (!tok.access_token) {

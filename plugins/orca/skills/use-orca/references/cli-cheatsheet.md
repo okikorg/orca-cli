@@ -8,7 +8,7 @@ Global contract, gh-style:
 - Config: contexts in `~/.config/orca/config.json` (kubectl-style, local only). Precedence: flag > env > config file > baked-in production default.
 - Env: `ORCA_API_KEY`, `ORCA_API_URL`, `ORCA_CONTEXT`, `ORCA_DASHBOARD_URL`, `ORCA_CONFIG_DIR`.
 - CI needs no config file: `ORCA_API_KEY=... orca agents list --json`.
-- `<agent>` is an agent id (`agent_...`) or a unique agent name.
+- `<agent>` is an agent id or the name of exactly one agent: the CLI asks the server for the id first, then matches names (a shared name exits 2 with the ids).
 - Lists: `--limit n` (1 to 100), `--after <id>` (the cursor the previous page printed), `--all`.
 
 ## Setup
@@ -16,13 +16,15 @@ Global contract, gh-style:
 ```bash
 orca login                          # device login: a code + dashboard link to approve
 orca login --no-browser             # print the code and link only
+orca login --api-url http://localhost:8080 --label "CLI on build-box"   # another server; name the login
 orca login --with-token <orca_sk_key>   # CI / pre-minted key
-orca whoami --json                  # tenant, actor, role (and agent, for a published agent's key)
+orca whoami --json                  # tenant, actor, role (and, for a published agent's key, its agent, environment and vaults)
+orca auth whoami --json             # the same
 orca auth status --json             # context + key validity
-orca auth logout [--revoke]         # clear (and optionally revoke) the stored key
-orca context use <name>             # switch contexts (e.g. prod vs local)
+orca auth logout [--revoke] [--yes] # forget the stored key; --revoke revokes it first, and keeps it if the server refuses
+orca context list | show | use <name>   # local contexts (e.g. prod vs local)
 orca doctor --json                  # health checks with fixes; --strict promotes warnings
-orca update                         # self-update the standalone binary
+orca update [--check] [--tag t] [--force]   # self-update the standalone binary
 ```
 
 ## Agents, sessions, chat
@@ -54,12 +56,13 @@ orca skills delete <id> --yes
 
 orca vaults list --json
 orca vaults create <name>                       # admin
+orca vaults delete <id> --yes                   # admin
 orca vaults credentials list <vault> --json
-printf %s "$TOKEN" | orca vaults credentials add <vault> --name n --server https://mcp.example.com
+printf %s "$TOKEN" | orca vaults credentials add <vault> --name n --server https://mcp.example.com   # or --token t
 orca vaults credentials delete <vault> <id> --yes
 
 orca files list --json
-orca files upload <path> --json
+orca files upload <path> [--name filename] --json
 orca files download <id> -o <path>              # -o - for stdout
 orca files delete <id> --yes
 ```
@@ -67,16 +70,16 @@ orca files delete <id> --yes
 ## Kits and publishing
 
 ```bash
-orca kits list --json
-orca kits make --name n [--agent a]... [--skill id]... [--template id]... [--readme file]
+orca kits list --json                           # `kit` works as well as `kits`
+orca kits make --name n [--description d] [--agent a]... [--skill id]... [--template id]... [--readme file]
 orca kits edit <kit-id> [--name n] [--description d] [--agent a]...
 orca kits publish <kit-id> --json               # public id + share link
 orca kits withdraw <kit-id>
-orca kits show <link|public-id> --json          # contents, asset keys, credentials to add
+orca kits show <link|public-id> --json          # contents, asset keys, credentials to add (no login needed)
 orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run] --yes
 
-orca publish create <agent> --label l           # admin; scoped key secret shown once
-orca publish list <agent> --json
+orca publish create <agent> --label l [--template id] [--vault id]...   # admin; secret shown once; its sessions run with these
+orca publish list <agent> --json                # each key, with what its sessions run with
 orca publish revoke <key-id> --yes              # the last key's revocation unpublishes
 ```
 
@@ -84,9 +87,9 @@ orca publish revoke <key-id> --yes              # the last key's revocation unpu
 
 ```bash
 orca billing wallet --json                      # balance (micro-USD), plan, period, packs
-orca billing buy pro|max|pack:<cents>           # admin; prints the checkout link
-orca billing manage                             # admin; prints the billing portal link
-orca usage [--days n] [--group-by model|provider|credential|session|agent] [--session id] --json
+orca billing buy pro|max|plan:pro|plan:max|pack:<cents> [--no-open]   # admin; prints the checkout link
+orca billing manage [--no-open]                 # admin; prints the billing portal link
+orca usage [summary] [--days n] [--group-by model|provider|credential|session|agent] [--session id] [--meter m] --json
 orca usage events [--meter m] --json            # raw rows with cost_micro_usd
 orca keys list --json                           # API keys, with the agent a scoped key reaches
 orca keys create <name>                         # secret on stdout when piped
@@ -97,4 +100,10 @@ orca keys revoke <id> --yes
 
 ```bash
 ORCA_API_KEY=$(orca keys create ci </dev/null)   # the secret alone on stdout when piped
+```
+
+## MCP server
+
+```bash
+orca mcp serve                                  # stdio MCP server: one tool per action above
 ```

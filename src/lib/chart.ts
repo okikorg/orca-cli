@@ -5,8 +5,8 @@
 //
 // This module is deliberately free of any Ink import so it stays a pure,
 // unit-testable `(series, opts) => string`. The Ink views embed its output
-// verbatim in a <Text> block. A later stats command is expected to reuse it,
-// so keep the surface generic (no usage-specific vocabulary leaks in here).
+// verbatim in a <Text> block. Keep the surface generic (no usage-specific
+// vocabulary leaks in here).
 
 import { ansi, colorEnabled } from '../ui/theme.js'
 
