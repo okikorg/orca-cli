@@ -210,8 +210,8 @@ orca files download <id> [-o path|-]
 orca files delete <id> [--yes]
 
 orca kits list
-orca kits make --name n [--description d] [--readme file] [--agent a]... [--skill id]... [--template id]...
-orca kits edit <kit-id> [same flags]       # any selection flag replaces the whole selection
+orca kits make --name n [--description d] [--author who] [--readme file] [--agent a]... [--skill id]... [--template id]...
+orca kits edit <kit-id> [same flags]       # any selection flag replaces the whole selection; publish again to update the page
 orca kits publish|withdraw <kit-id>
 orca kits show <link|public-id>            # no login needed
 orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run] [--yes]
@@ -334,8 +334,13 @@ versioned snapshot. Publishing mints a public id (`kit-...`) and a share link on
 the dashboard; no secret ever enters a kit, so a copy lists the credentials to
 add.
 
+`--author` sets who the kit's page says it is by (up to 100 characters; pass
+`--author ""` to clear it). Like every other edit, a changed author reaches the
+public page on the next publish, and `kits show` prints the author and the share
+link the server gives.
+
 ```sh
-orca kits make --name "Support desk" --agent support --skill skill_123
+orca kits make --name "Support desk" --author "Okik Labs" --agent support --skill skill_123
 orca kits publish kit_abc                    # prints the share link
 orca kits show https://app.orcapods.ai/kits/kit-xxxxxxxxxxxxxxxxx
 orca kits copy kit-xxxxxxxxxxxxxxxxx --dry-run

@@ -1,10 +1,26 @@
-import { describe, expect, it } from 'vitest'
+import type { ReactElement } from 'react'
+import { describe, expect, it, vi } from 'vitest'
 
 import { parseKitLink, registerKits } from '../../src/commands/kits.js'
 import { saveConfig } from '../../src/lib/config.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import { API, commandHarness, list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
+
+// Ink cannot mount on vitest's console, so a terminal view is drawn with
+// ink-testing-library and its frame written to stdout instead.
+vi.mock('../../src/lib/output.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/lib/output.js')>()
+  const { render } = await import('ink-testing-library')
+  return {
+    ...actual,
+    renderStatic: async (element: ReactElement) => {
+      const view = render(element)
+      process.stdout.write(`${view.lastFrame() ?? ''}\n`)
+      view.unmount()
+    },
+  }
+})
 
 const PUBLIC_ID = 'kit-AbCdEfGhIjKlMnOpQ'
 const AGENT = 'agent_' + '1'.repeat(32)
@@ -13,8 +29,10 @@ const KIT = {
   id: 'kit_1',
   object: 'kit',
   public_id: null as string | null,
+  url: null as string | null,
   name: 'Support desk',
   description: 'Answers tickets',
+  author: 'Okik Labs',
   readme: '',
   status: 'draft',
   selection: { agents: [AGENT], skills: ['skill_1'], templates: [] },
@@ -27,8 +45,10 @@ const KIT = {
 const PUBLIC = {
   object: 'kit.public',
   public_id: PUBLIC_ID,
+  url: `https://app.example.test/kits/${PUBLIC_ID}`,
   name: 'Support desk',
   description: 'Answers tickets',
+  author: 'Okik Labs',
   readme: '# Support desk',
   version: 1,
   published_at: 1_783_245_600,
@@ -44,6 +64,7 @@ const PUBLIC = {
 }
 
 const { run, stdout, stderr } = commandHarness(registerKits)
+const TTY = process.stdout.isTTY
 
 describe('parseKitLink', () => {
   it('accepts the share URL, any origin, and a bare id', () => {
@@ -63,7 +84,13 @@ describe('kits list, make, edit', () => {
   it('lists own kits', async () => {
     stubFetch({ 'GET /api/kits': jsonResponse(list([{ ...KIT, status: 'published', latest_version: 2, public_id: PUBLIC_ID }])) })
     await run(['kits', 'list'])
-    expect(stdout()).toBe(`kit_1\tSupport desk\tpublished\t2\t${PUBLIC_ID}\n`)
+    expect(stdout()).toBe(`kit_1\tSupport desk\tpublished\t2\t${PUBLIC_ID}\tOkik Labs\n`)
+  })
+
+  it('lists a kit with no author as -', async () => {
+    stubFetch({ 'GET /api/kits': jsonResponse(list([{ ...KIT, author: '' }])) })
+    await run(['kits', 'list'])
+    expect(stdout()).toBe('kit_1\tSupport desk\tdraft\t-\t-\t-\n')
   })
 
   it('makes a kit from a selection, resolving agent names', async () => {
@@ -72,10 +99,14 @@ describe('kits list, make, edit', () => {
       'GET /v1/agents?limit=100': jsonResponse(list([{ id: AGENT, name: 'support' }])),
       'POST /api/kits': jsonResponse(KIT),
     })
-    await run(['kits', 'make', '--name', 'Support desk', '--description', 'Answers tickets', '--agent', 'support', '--skill', 'skill_1'])
+    await run([
+      'kits', 'make', '--name', 'Support desk', '--description', 'Answers tickets', '--author', 'Okik Labs',
+      '--agent', 'support', '--skill', 'skill_1',
+    ])
     expect(JSON.parse(calls.find((c) => c.path === '/api/kits')?.body ?? '{}')).toEqual({
       name: 'Support desk',
       description: 'Answers tickets',
+      author: 'Okik Labs',
       selection: { agents: [AGENT], skills: ['skill_1'], templates: [] },
     })
   })
@@ -84,6 +115,14 @@ describe('kits list, make, edit', () => {
     const calls = stubFetch({ 'PATCH /api/kits/kit_1': jsonResponse({ ...KIT, name: 'Desk' }) })
     await run(['kits', 'edit', 'kit_1', '--name', 'Desk'])
     expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ name: 'Desk' })
+  })
+
+  it('sets or clears the author, which the public page shows from the next publish', async () => {
+    const calls = stubFetch({ 'PATCH /api/kits/kit_1': jsonResponse({ ...KIT, public_id: PUBLIC_ID, author: 'Okik' }) })
+    await run(['kits', 'edit', 'kit_1', '--author', 'Okik'])
+    await run(['kits', 'edit', 'kit_1', '--author', ''])
+    expect(calls.map((c) => JSON.parse(c.body ?? '{}'))).toEqual([{ author: 'Okik' }, { author: '' }])
+    expect(stderr()).toContain('The public page changes when you publish again: orca kits publish kit_1')
   })
 
   it('refuses an edit with nothing to change', async () => {
@@ -128,6 +167,30 @@ describe('kits show', () => {
     await run(['kits', 'show', `https://app.orcapods.ai/kits/${PUBLIC_ID}`])
     expect(calls[0].headers.Authorization).toBeUndefined()
     expect(stdout()).toBe('agent-1\tagent\tsupport\nskill-1\tskill\ttriage\n')
+  })
+
+  it('shows the author and the server\'s share link on a terminal', async () => {
+    stubFetch({ [`GET /api/public/kits/${PUBLIC_ID}`]: jsonResponse(PUBLIC) })
+    process.stdout.isTTY = true
+    try {
+      await run(['kits', 'show', PUBLIC_ID])
+    } finally {
+      process.stdout.isTTY = TTY
+    }
+    expect(stdout()).toMatch(/^\s*by\s+Okik Labs$/m)
+    expect(stdout()).toMatch(new RegExp(`link\\s+https://app\\.example\\.test/kits/${PUBLIC_ID}`))
+  })
+
+  it('leaves out the author line when the kit has none', async () => {
+    stubFetch({ [`GET /api/public/kits/${PUBLIC_ID}`]: jsonResponse({ ...PUBLIC, author: '' }) })
+    process.stdout.isTTY = true
+    try {
+      await run(['kits', 'show', PUBLIC_ID])
+    } finally {
+      process.stdout.isTTY = TTY
+    }
+    expect(stdout()).toContain('Support desk')
+    expect(stdout()).not.toMatch(/^\s*by\s/m)
   })
 
   it('names a withdrawn kit', async () => {

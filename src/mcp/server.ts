@@ -483,6 +483,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
   const kitFields = {
     name: z.string().optional(),
     description: z.string().optional(),
+    author: z.string().optional().describe('who the kit\'s public page says it is by, up to 100 characters'),
     readme: z.string().optional().describe('markdown'),
     agents: z.array(z.string()).optional().describe('agent ids or names'),
     skills: z.array(z.string()).optional().describe('skill ids'),
@@ -502,6 +503,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     return {
       ...(args.name !== undefined ? { name: args.name as string } : {}),
       ...(args.description !== undefined ? { description: args.description as string } : {}),
+      ...(args.author !== undefined ? { author: args.author as string } : {}),
       ...(args.readme !== undefined ? { readme: args.readme as string } : {}),
       ...selection,
     }
@@ -521,7 +523,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'edit_kit',
-    'Change a kit. Passing agents, skills, or templates replaces the whole selection.',
+    'Change a kit. Passing agents, skills, or templates replaces the whole selection. The public page changes on the next publish_kit.',
     { id: z.string().describe('kit id'), ...kitFields },
     async (client, args) => client.updateKit(args.id as string, await kitInput(client, args)),
   )
@@ -536,7 +538,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'show_kit',
-    'Read a published kit by its public id (kit-...): contents, each asset\'s key, and the credentials a copy needs.',
+    'Read a published kit by its public id (kit-...): its author, share link, contents, each asset\'s key, and the credentials a copy needs.',
     { publicId: z.string() },
     async (client, args) => client.publicKit(args.publicId as string),
     { anonymous: true },

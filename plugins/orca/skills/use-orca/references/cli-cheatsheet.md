@@ -71,11 +71,11 @@ orca files delete <id> --yes
 
 ```bash
 orca kits list --json                           # `kit` works as well as `kits`
-orca kits make --name n [--description d] [--agent a]... [--skill id]... [--template id]... [--readme file]
-orca kits edit <kit-id> [--name n] [--description d] [--agent a]...
+orca kits make --name n [--description d] [--author who] [--agent a]... [--skill id]... [--template id]... [--readme file]
+orca kits edit <kit-id> [--name n] [--description d] [--author who] [--agent a]...   # the page changes on the next publish
 orca kits publish <kit-id> --json               # public id + share link
 orca kits withdraw <kit-id>
-orca kits show <link|public-id> --json          # contents, asset keys, credentials to add (no login needed)
+orca kits show <link|public-id> --json          # author, share link, contents, asset keys, credentials to add (no login needed)
 orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run] --yes
 
 orca publish create <agent> --label l [--template id] [--vault id]...   # admin; secret shown once; its sessions run with these
