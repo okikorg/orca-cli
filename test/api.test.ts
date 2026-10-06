@@ -15,7 +15,7 @@ afterEach(() => {
 describe('ApiClient.request', () => {
   it('sends the bearer key to /api and parses JSON', async () => {
     const calls = stubFetch({
-      'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'user_1', role: 'admin', agent: null }),
+      'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'user_1', role: 'admin' }),
     })
     const who = await new ApiClient(OPTS).whoami()
     expect(who.tenant).toBe('org_1')

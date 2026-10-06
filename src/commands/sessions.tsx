@@ -10,8 +10,6 @@ import {
   addSessionCreateOptions,
   itemRole,
   itemText,
-  publishedScope,
-  sessionAgent,
   sessionCreateParams,
   sessionUsageRows,
   sessionView,
@@ -123,7 +121,7 @@ export function registerSessions(program: Command): void {
         printJson(session)
         return
       }
-      const rows = session.usage ? sessionUsageRows(session.usage) : []
+      const rows = sessionUsageRows(session.usage)
       if (mode === 'plain') {
         printPlainRows([
           ['id', session.id],
@@ -162,9 +160,8 @@ export function registerSessions(program: Command): void {
   ).action(async (opts: SessionCreateFlags & { agent: string }, cmd: Command) => {
     const flags = globalFlags(cmd)
     const api = await apiContext(cmd)
-    const scope = await withApi(api, (c) => publishedScope(c))
-    const agentId = await withApi(api, (c) => sessionAgent(c, opts.agent, scope))
-    const params = sessionCreateParams(agentId, opts, scope)
+    const agentId = await withApi(api, async (c) => resolveAgentId(await c.v1(), opts.agent))
+    const params = sessionCreateParams(agentId, opts)
     const session = await withApi(api, async (c) => (await c.v1()).beta.agents.sessions.create(params))
     if (outputMode(flags) === 'json') {
       printJson(session)

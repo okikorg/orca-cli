@@ -9,7 +9,7 @@ import { saveConfig } from '../../src/lib/config.js'
 import { useTmpConfigDir } from '../helpers/tmp-config.js'
 import { list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
-import { AGENT_ID, SESSION_ID, orgKeyRoutes, session } from '../helpers/session-events.js'
+import { AGENT_ID, SESSION_ID, agentRoute, session } from '../helpers/session-events.js'
 
 // connect builds the server against a ClientSource and returns a connected
 // MCP client over an in-memory transport pair: the same wire protocol a
@@ -91,9 +91,6 @@ describe('orca mcp serve', () => {
         'withdraw_kit',
         'show_kit',
         'copy_kit',
-        // publish
-        'publish_agent',
-        'list_published_keys',
       ].sort(),
     )
     // The old orca://openapi resource is gone: /api/openapi answers 410.
@@ -102,7 +99,7 @@ describe('orca mcp serve', () => {
 
   it('whoami returns the server\'s identity plus the context', async () => {
     stubFetch({
-      'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'key_1', role: 'admin', agent: null }),
+      'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'key_1', role: 'admin' }),
     })
     const client = await connect()
     const payload = JSON.parse(firstText(await client.callTool({ name: 'whoami', arguments: {} })))
@@ -112,7 +109,7 @@ describe('orca mcp serve', () => {
   it('chat starts a session with the message and returns the reply once the turn ends', async () => {
     const turn = { id: 'turn_1', status: 'completed', error: null, usage: { input_tokens: 12, output_tokens: 3 } }
     const calls = stubFetch({
-      ...orgKeyRoutes(),
+      ...agentRoute(),
       'POST /v1/agents/sessions': jsonResponse(session('in_progress')),
       [`GET /v1/agents/sessions/${SESSION_ID}/turns?limit=1`]: jsonResponse(list([turn])),
       [`GET /v1/agents/sessions/${SESSION_ID}/items?limit=50&order=desc`]: jsonResponse(
@@ -138,7 +135,6 @@ describe('orca mcp serve', () => {
   it('get_session answers with its usage from /api/usage, not the session object\'s', async () => {
     const summary = { object: 'usage.summary', start: 0, end: 1, session_id: SESSION_ID, cost_micro_usd: 47, meters: [], daily: [], groups: [] }
     stubFetch({
-      ...orgKeyRoutes(),
       [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(session('completed', { usage: { input_tokens: 12, output_tokens: 3 } })),
       [`GET /api/usage?start=0&session=${SESSION_ID}&group_by=model`]: jsonResponse(summary),
     })
@@ -185,7 +181,7 @@ describe('the MCP server\'s credentials', () => {
     try {
       delete process.env.ORCA_API_KEY
       delete process.env.ORCA_API_URL
-      const whoami = { object: 'whoami', tenant: 'org_1', actor: 'key_1', role: 'admin', agent: null }
+      const whoami = { object: 'whoami', tenant: 'org_1', actor: 'key_1', role: 'admin' }
       await saveConfig({ currentContext: 'default', contexts: { default: { apiUrl: 'http://test:8080', apiKey: 'orca_sk_first' } } })
       const calls = stubFetch({ 'GET /api/whoami': jsonResponse(whoami) })
       const client = await connect(makeClientSource({}))

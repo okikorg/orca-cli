@@ -17,7 +17,6 @@ import type {
   EnvironmentParam,
 } from 'openai/resources/beta/agents/agents'
 
-import { resolveAgentId } from './agents.js'
 import type { ApiClient } from './api.js'
 import { CliError, ExitCode } from './errors.js'
 import { formatCount } from './format.js'
@@ -234,61 +233,21 @@ export function sessionEnvironment(flags: SessionCreateFlags): EnvironmentParam 
   return { type: 'none' }
 }
 
-// A published agent's key: the one agent it runs, and the environment and
-// vaults its publisher fixed, which every session it creates must name.
-export type PublishedScope = { agent: string; environment: EnvironmentParam; vaultIds: string[] }
-
-// publishedScope asks the server whether the key is a published agent's.
-export async function publishedScope(client: ApiClient): Promise<PublishedScope | null> {
-  const me = await client.whoami()
-  if (!me.agent) return null
-  return {
-    agent: me.agent,
-    environment: (me.environment ?? { type: 'none' }) as unknown as EnvironmentParam,
-    vaultIds: me.vault_ids ?? [],
-  }
-}
-
-// sessionAgent is the agent a new session runs. A published key runs only
-// its own, which it may not read, so a reference must be that agent's id;
-// any other key resolves the reference by id, then by name.
-export async function sessionAgent(client: ApiClient, ref: string, scope: PublishedScope | null): Promise<string> {
-  if (scope) {
-    if (ref !== scope.agent) {
-      throw new CliError(`this key runs only its published agent ${scope.agent}`, ExitCode.Usage, ['Pass that id, or no agent.'])
-    }
-    return scope.agent
-  }
-  return resolveAgentId(await client.v1(), ref)
-}
-
 // sessionCreateParams is the one session-create body every command sends.
-// A published key's sessions name what its publisher fixed, and nothing
-// the user passes can change that.
-export function sessionCreateParams(agentId: string, flags: SessionCreateFlags, scope: PublishedScope | null) {
-  if (scope) {
-    if (flags.sandbox || flags.template !== undefined || flags.vault.length > 0) {
-      throw new CliError("a published agent's key runs its agent as published", ExitCode.Usage, [
-        'Drop --sandbox, --template and --vault: its publisher chose them.',
-      ])
-    }
-    return { agent_id: agentId, environment: scope.environment, ...(scope.vaultIds.length ? { vault_ids: scope.vaultIds } : {}) }
-  }
+export function sessionCreateParams(agentId: string, flags: SessionCreateFlags) {
   return { agent_id: agentId, environment: sessionEnvironment(flags), ...(flags.vault.length ? { vault_ids: flags.vault } : {}) }
 }
 
 // SessionView is a session as the CLI shows it: the /v1 object without its
 // own usage field, and `usage`, the session's all-time /api/usage summary by
-// model (decision 0017), or null for a published agent's key, which cannot
-// read usage.
-export type SessionView = Omit<AgentSession, 'usage'> & { usage: UsageSummary | null }
+// model (decision 0017).
+export type SessionView = Omit<AgentSession, 'usage'> & { usage: UsageSummary }
 
 // sessionView reads one session and its usage from their one source each.
 // `sessions get` and the MCP server's get_session both answer with it.
 export async function sessionView(client: ApiClient, id: string): Promise<SessionView> {
   const session = await (await client.v1()).beta.agents.sessions.retrieve(id)
-  const scope = await publishedScope(client)
-  const usage = scope ? null : await client.usage({ start: 0, session: id, group_by: 'model' })
+  const usage = await client.usage({ start: 0, session: id, group_by: 'model' })
   // `usage` replaces the /v1 object's own field.
   return { ...session, usage }
 }

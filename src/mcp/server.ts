@@ -28,7 +28,7 @@ import { resolveAgentId } from '../lib/agents.js'
 import { ApiClient, mapApiError, toPage } from '../lib/api.js'
 import { resolveContext, type GlobalFlags } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { itemText, publishedScope, sessionAgent, sessionCreateParams, sessionView } from '../lib/sessions.js'
+import { itemText, sessionCreateParams, sessionView } from '../lib/sessions.js'
 import { collectSkillFiles } from '../lib/skills.js'
 import type { KitInput } from '../lib/types.js'
 import { VERSION } from '../version.js'
@@ -173,7 +173,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'revoke_key',
-    'Revoke an API key. Revoking a published agent\'s last scoped key unpublishes the agent.',
+    'Revoke an API key.',
     { id: z.string().describe('key id') },
     async (client, args) => {
       await client.revokeKey(args.id as string)
@@ -230,7 +230,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'get_session',
-    'Fetch one session: status, environment, error, and usage: its all-time usage summary by model with cost in micro-USD (null for a published agent\'s key).',
+    'Fetch one session: status, environment, error, and usage: its all-time usage summary by model with cost in micro-USD.',
     { id: z.string() },
     async (client, args) => sessionView(client, args.id as string),
   )
@@ -245,12 +245,11 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
       vaults: z.array(z.string()).optional().describe('vault ids the session may use'),
     },
     async (client, args) => {
-      const scope = await publishedScope(client)
-      const params = sessionCreateParams(await sessionAgent(client, args.agent as string, scope), {
+      const params = sessionCreateParams(await agentId(client, args.agent), {
         sandbox: args.sandbox as boolean | undefined,
         template: args.template as string | undefined,
         vault: (args.vaults as string[] | undefined) ?? [],
-      }, scope)
+      })
       return (await client.v1()).beta.agents.sessions.create(params)
     },
   )
@@ -298,11 +297,9 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
           ],
         })
       } else {
-        const scope = await publishedScope(client)
-        const ref = (args.agent as string | undefined) ?? scope?.agent
-        if (!ref) throw new CliError('pass agent for a new session, or session to continue one', ExitCode.Usage)
+        if (!args.agent) throw new CliError('pass agent for a new session, or session to continue one', ExitCode.Usage)
         const session = await v1.beta.agents.sessions.create({
-          ...sessionCreateParams(await sessionAgent(client, ref, scope), { vault: [] }, scope),
+          ...sessionCreateParams(await agentId(client, args.agent), { vault: [] }),
           input: message,
         })
         sessionId = session.id
@@ -550,32 +547,6 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
       assets: z.array(z.object({ key: z.string(), name: z.string() })),
     },
     async (client, args) => client.copyKit(args.publicId as string, args.assets as { key: string; name: string }[]),
-  )
-
-  // -- Publishing -------------------------------------------------------------------
-
-  tool(
-    'publish_agent',
-    'Publish an agent (admin): mint an API key scoped to it. Its sessions run with the template and vaults given here, which the key holder cannot change. The secret is in this one response. Unpublish with revoke_key.',
-    {
-      agent: z.string().describe('agent id or name'),
-      label: z.string().describe('where the key is used'),
-      template: z.string().optional().describe('environment template its sessions run in (default: no environment)'),
-      vaults: z.array(z.string()).optional().describe('vault ids its sessions may use'),
-    },
-    async (client, args) =>
-      client.publishAgent(await agentId(client, args.agent), {
-        label: args.label as string,
-        template: args.template as string | undefined,
-        vaults: (args.vaults as string[] | undefined) ?? [],
-      }),
-  )
-
-  tool(
-    'list_published_keys',
-    'List the scoped keys an agent is published with.',
-    { agent: z.string().describe('agent id or name') },
-    async (client, args) => client.publishedKeys(await agentId(client, args.agent)),
   )
 
   return server

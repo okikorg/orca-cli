@@ -18,12 +18,6 @@ import {
   type PageFlags,
 } from './shared.js'
 
-// scopeCell says what a key reaches: the whole organization, or the one
-// published agent a scoped key belongs to.
-function scopeCell(k: APIKey): string {
-  return k.agent ? `agent ${k.agent}` : 'organization'
-}
-
 export function registerKeys(program: Command): void {
   const keys = program
     .command('keys')
@@ -50,7 +44,7 @@ export function registerKeys(program: Command): void {
     }
     if (mode === 'plain') {
       printPlainRows(
-        page.items.map((k) => [k.id, k.name, k.role, scopeCell(k), formatTime(k.created_at), formatTime(k.last_used_at)]),
+        page.items.map((k) => [k.id, k.name, k.role, formatTime(k.created_at), formatTime(k.last_used_at)]),
       )
       printPageHint(page)
       return
@@ -65,7 +59,6 @@ export function registerKeys(program: Command): void {
             { header: 'id', get: (k: APIKey) => k.id, color: () => theme.accent, bold: true },
             { header: 'name', get: (k: APIKey) => k.name },
             { header: 'role', get: (k: APIKey) => k.role },
-            { header: 'scope', get: scopeCell },
             { header: 'created', get: (k: APIKey) => formatTime(k.created_at) },
             { header: 'last used', get: (k: APIKey) => formatTime(k.last_used_at) },
           ]}
@@ -101,7 +94,7 @@ export function registerKeys(program: Command): void {
 
   keys
     .command('revoke <id>')
-    .description('revoke an API key (revoking a published agent\'s last key unpublishes it)')
+    .description('revoke an API key')
     .option('--yes', 'skip the confirmation prompt')
     .action(async (id: string, opts: { yes?: boolean }, cmd: Command) => {
       const flags = globalFlags(cmd)

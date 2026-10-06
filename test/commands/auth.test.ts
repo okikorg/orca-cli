@@ -10,7 +10,7 @@ import { useTmpConfigDir } from '../helpers/tmp-config.js'
 
 const KEY = 'orca_sk_abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstu'
 
-const WHOAMI = { object: 'whoami', tenant: 'org_1', actor: 'user_1', role: 'admin', agent: null }
+const WHOAMI = { object: 'whoami', tenant: 'org_1', actor: 'user_1', role: 'admin' }
 
 let cleanup: () => Promise<void>
 
@@ -378,15 +378,9 @@ describe('whoami', () => {
     const outputs = write.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
     expect(outputs).toHaveLength(2)
     for (const out of outputs) {
-      expect(out).toMatchObject({ tenant: 'org_1', actor: 'user_1', role: 'admin', agent: null })
+      expect(out).toMatchObject({ tenant: 'org_1', actor: 'user_1', role: 'admin' })
       expect(String(out.apiKey)).not.toContain(KEY)
     }
-  })
-
-  it('names the agent a published key is scoped to', async () => {
-    stubFetch({ 'GET /api/whoami': jsonResponse({ ...WHOAMI, role: 'member', agent: 'agent_1' }) })
-    await run(['whoami'])
-    expect(vi.mocked(console.log).mock.calls.flat().join('\n')).toContain('Agent:    agent_1')
   })
 
   it('fails with the auth exit code when no key is stored', async () => {

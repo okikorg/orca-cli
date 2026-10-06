@@ -1,6 +1,6 @@
 # orca CLI
 
-Manage agents, sessions, and publishing on the Orca platform from the terminal.
+Manage agents, sessions, and kits on the Orca platform from the terminal.
 TypeScript + commander for command routing, Ink (React) for TTY rendering, and
 the official [`openai`](https://www.npmjs.com/package/openai) package for
 Orca's OpenAI-compatible Agents API.
@@ -216,10 +216,6 @@ orca kits publish|withdraw <kit-id>
 orca kits show <link|public-id>            # no login needed
 orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run] [--yes]
 
-orca publish create <agent> --label l [--template id] [--vault id]...   # admin; the secret is shown once
-orca publish list <agent>
-orca publish revoke <key-id> [--yes]       # revoking the last key unpublishes the agent
-
 orca keys list
 orca keys create [name]
 orca keys revoke <id> [--yes]
@@ -235,8 +231,7 @@ orca update [--check] [--tag t] [--force]
 
 List commands share `--limit N` (1 to 100, default 10), `--after <id>` (the
 cursor a previous page printed), and `--all` (follow the cursor through every
-page, up to 10,000 rows). `kits list` and `publish list` return everything at
-once.
+page, up to 10,000 rows). `kits list` returns everything at once.
 
 Every list/get command supports `--json` (raw API payloads, stdout only).
 When stdout is not a TTY, output degrades to uncolored tab-separated lines,
@@ -272,13 +267,6 @@ CLI prints its message and the field it is about.
 Without `--session` it creates a session of the agent first (no environment by
 default; `--sandbox` for a hosted sandbox, `--template id` to build it from an
 environment template, `--vault id` to let it use a vault's credentials).
-
-With a published agent's key, chat runs that one agent as its publisher set it
-up: the CLI asks the server (`whoami`) for the environment and vaults the key's
-sessions must name and sends exactly those. It refuses `--sandbox`,
-`--template` and `--vault`, and any other agent. With a prompt, pass the
-agent's id first (`orca chat agent_... "hi"`); the REPL and piped stdin need
-no agent argument.
 
 ```sh
 orca chat support                            # interactive REPL
@@ -353,27 +341,6 @@ Each credential a copy needs says where it goes: an MCP server's credential in
 a vault (`orca vaults credentials add`), an environment variable on the copied
 template, which the copy names.
 
-## Publishing
-
-Publishing an agent mints an API key scoped to it: whoever holds the key can
-create sessions of that agent on `/v1` and talk to them, charged to your
-organization. Each plan publishes a set number of agents (409 past it) and gives
-them a monthly request quota.
-
-```sh
-orca publish create support --label website  # prints the scoped key once
-orca publish create support --label widget --template envtmpl_123 --vault vault_123
-orca publish list support                    # each key, and what its sessions run with
-orca publish revoke key_abc                  # the last key's revocation unpublishes
-```
-
-The publisher fixes the environment template and vaults a key's sessions run
-with; with neither, its sessions have no environment and no vaults. The key
-holder cannot change them: each session must name the published environment,
-which the key's `whoami` returns.
-
-`orca keys list` shows scoped keys too, with the agent they reach.
-
 ## Use from Claude Code (plugin, skill, MCP)
 
 The repo doubles as a Claude Code plugin marketplace. The `orca` plugin ships
@@ -393,7 +360,7 @@ claude mcp add orca -- orca mcp serve
 
 `orca mcp serve` speaks MCP over stdio with one tool per CLI action: identity
 and keys, agents, sessions and `chat` (which sends a message and waits for the
-reply), skills, vaults, files, usage and billing, kits, and publishing. The
+reply), skills, vaults, files, usage and billing, and kits. The
 commands that only touch this machine (login, logout, context, doctor, update)
 have no tool. Other MCP clients (Cursor, Codex) use `{"command": "orca",
 "args": ["mcp", "serve"]}`. Login for agent contexts is `orca login` (device

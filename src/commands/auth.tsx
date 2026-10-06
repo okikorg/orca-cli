@@ -243,7 +243,6 @@ async function runWhoami(_opts: Record<string, never>, cmd: Command): Promise<vo
       tenant: who.tenant,
       actor: who.actor,
       role: who.role,
-      agent: who.agent,
     })
     return
   }
@@ -253,7 +252,6 @@ async function runWhoami(_opts: Record<string, never>, cmd: Command): Promise<vo
     console.log(`Tenant:   ${who.tenant}`)
     console.log(`Actor:    ${who.actor}`)
     console.log(`Role:     ${who.role}`)
-    if (who.agent) console.log(`Agent:    ${who.agent}`)
     return
   }
   const { Panel, Field } = await import('../ui/Panel.js')
@@ -264,7 +262,6 @@ async function runWhoami(_opts: Record<string, never>, cmd: Command): Promise<vo
       <Field label="tenant" value={who.tenant} />
       <Field label="actor" value={who.actor} />
       <Field label="role" value={who.role} />
-      {who.agent ? <Field label="agent" value={who.agent} /> : null}
       <Field label="status" value="valid" valueColor={theme.accent} />
     </Panel>,
   )

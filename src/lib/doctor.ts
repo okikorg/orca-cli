@@ -426,15 +426,7 @@ export async function checkKeyRole(o: {
     return { name, status: 'warn', message: `server returned HTTP ${st} validating the key` }
   }
   if (st === 200) {
-    const body = (await readJson(r.res)) as { role?: string; tenant?: string; agent?: string | null } | undefined
-    if (body?.agent) {
-      return {
-        name,
-        status: 'warn',
-        message: `valid, but scoped to the published agent ${body.agent}; most commands are refused`,
-        fix: 'run orca auth login for an organization key',
-      }
-    }
+    const body = (await readJson(r.res)) as { role?: string; tenant?: string } | undefined
     return { name, status: 'pass', message: `valid; ${body?.role ?? 'member'} of ${body?.tenant ?? 'this tenant'}` }
   }
   return { name, status: 'warn', message: `unexpected HTTP ${st} validating the key` }

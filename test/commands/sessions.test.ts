@@ -4,7 +4,7 @@ import { registerSessions } from '../../src/commands/sessions.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import { commandHarness, list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
-import { AGENT_ID, SESSION_ID, orgKeyRoutes, publishedKeyRoutes, session } from '../helpers/session-events.js'
+import { AGENT_ID, SESSION_ID, agentRoute, session } from '../helpers/session-events.js'
 
 const { run, stdout, stderr } = commandHarness(registerSessions)
 
@@ -17,7 +17,7 @@ describe('sessions', () => {
 
   it('filters by agent', async () => {
     const calls = stubFetch({
-      ...orgKeyRoutes(),
+      ...agentRoute(),
       [`GET /v1/agents/sessions?limit=10&agent_id=${AGENT_ID}`]: jsonResponse(list([])),
     })
     await run(['sessions', 'list', '--agent', AGENT_ID])
@@ -27,7 +27,6 @@ describe('sessions', () => {
 
   it('shows one session with its usage from /api/usage only', async () => {
     const calls = stubFetch({
-      ...orgKeyRoutes(),
       [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(
         // The /v1 usage field is never shown (decision 0017).
         session('failed', { error: 'Out of credit', usage: { input_tokens: 12, output_tokens: 3 } }),
@@ -61,7 +60,6 @@ describe('sessions', () => {
   it('prints the session with its /api/usage summary as usage with --json', async () => {
     const summary = { object: 'usage.summary', start: 0, end: 1, session_id: SESSION_ID, cost_micro_usd: 0, meters: [], daily: [], groups: [] }
     stubFetch({
-      ...orgKeyRoutes(),
       [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(session('completed', { usage: { input_tokens: 12, output_tokens: 3 } })),
       [`GET /api/usage?start=0&session=${SESSION_ID}&group_by=model`]: jsonResponse(summary),
     })
@@ -69,19 +67,8 @@ describe('sessions', () => {
     expect(JSON.parse(stdout())).toMatchObject({ id: SESSION_ID, usage: summary })
   })
 
-  it('shows a session to a published agent\'s key without usage, which it cannot read', async () => {
-    const calls = stubFetch({
-      ...publishedKeyRoutes(),
-      [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(session('completed')),
-    })
-    await run(['sessions', 'get', SESSION_ID])
-    expect(stdout()).toContain('status\tcompleted')
-    expect(stdout()).not.toContain('cost\t')
-    expect(calls.some((c) => c.path.startsWith('/api/usage'))).toBe(false)
-  })
-
   it('creates a session and prints its id when piped', async () => {
-    const calls = stubFetch({ ...orgKeyRoutes(), 'POST /v1/agents/sessions': jsonResponse(session()) })
+    const calls = stubFetch({ ...agentRoute(), 'POST /v1/agents/sessions': jsonResponse(session()) })
     await run(['sessions', 'create', '--agent', AGENT_ID, '--sandbox'])
     expect(JSON.parse(calls.find((c) => c.method === 'POST')?.body ?? '{}')).toEqual({
       agent_id: AGENT_ID,

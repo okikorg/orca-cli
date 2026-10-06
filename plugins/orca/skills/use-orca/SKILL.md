@@ -1,6 +1,6 @@
 ---
 name: use-orca
-description: Run AI agents in the cloud with Orca (orcapods.ai). Use this skill whenever the user mentions Orca or orcapods, wants to deploy or run an agent in the cloud, create a cloud agent, chat with one, publish an agent as an API, share or copy a kit, check usage or credit, or manage Orca skills, vaults, or files, even if they do not say "Orca" explicitly but are clearly working against the Orca platform.
+description: Run AI agents in the cloud with Orca (orcapods.ai). Use this skill whenever the user mentions Orca or orcapods, wants to deploy or run an agent in the cloud, create a cloud agent, chat with one, share or copy a kit, check usage or credit, or manage Orca skills, vaults, or files, even if they do not say "Orca" explicitly but are clearly working against the Orca platform.
 ---
 
 # Use Orca
@@ -55,13 +55,12 @@ orca sessions items <id> --json              # the conversation so far
 
 `<agent>` is an agent id or the name of exactly one agent (the server says which; a shared name is refused with the ids). Add `--sandbox` (or `--template <id>`) to `chat` for a hosted sandbox, and `--vault <id>` to let the session use a vault's MCP credentials (`orca vaults credentials add`).
 
-Share and reuse setups as kits, and publish an agent as an API:
+Share and reuse setups as kits:
 
 ```bash
 orca kits make --name "Support desk" --agent support --json
 orca kits publish <kit-id> --json            # prints the public id and share link
 orca kits copy <link-or-public-id> --dry-run --json
-orca publish create <agent> --label website [--template <id>] [--vault <id>] --json   # admin; a key scoped to the agent, shown once
 ```
 
 Account status (every figure is the server's, in micro-USD; never recompute costs):
@@ -82,7 +81,7 @@ For extended work, register Orca's MCP server once:
 claude mcp add orca -- orca mcp serve
 ```
 
-It exposes one tool per CLI action: whoami and keys, agents, sessions, `chat` (sends a message and waits for the reply, returning the session id), skills, vaults, files, usage and billing, kits, and publishing.
+It exposes one tool per CLI action: whoami and keys, agents, sessions, `chat` (sends a message and waits for the reply, returning the session id), skills, vaults, files, usage and billing, and kits.
 
 ## References
 
@@ -93,6 +92,5 @@ It exposes one tool per CLI action: whoami and keys, agents, sessions, `chat` (s
 
 - Exit 3 or 401: run `orca login` again (or check `ORCA_API_KEY`).
 - "Out of Orca credit" (HTTP 429, or a turn that fails with it): paid work is paused because the balance is under the plan's minimum; `orca billing wallet --json` shows `paid_work_paused` and `min_balance_micro_usd`. Add credit, then continue the session.
-- With a published agent's key, `orca chat` runs only that agent, with the environment and vaults its publisher chose; don't pass `--sandbox`, `--template` or `--vault`.
 - "does not support device login": the API URL does not point at an Orca server; check `orca auth status`, or use `orca login --with-token <key>` with a key minted in the dashboard.
 - Anything else: `orca doctor --json` names the failing check and the fix.

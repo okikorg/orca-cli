@@ -1,7 +1,7 @@
 // Clients for the Orca server. Two surfaces, one bearer key:
 //
-// - /api: the server's own routes (whoami, keys, usage, billing, kits,
-//   publish), through the thin fetch helper below.
+// - /api: the server's own routes (whoami, keys, usage, billing, kits),
+//   through the thin fetch helper below.
 // - /v1: the OpenAI-compatible Agents API (agents, sessions, skills, vaults,
 //   files), through the official `openai` package, exactly as any OpenAI
 //   client calls it. v1() builds that client lazily so commands that never
@@ -286,22 +286,6 @@ export class ApiClient {
 
   revokeKey(id: string): Promise<void> {
     return this.request<void>(`/api/keys/${enc(id)}`, { method: 'DELETE' })
-  }
-
-  // -- Publishing ---------------------------------------------------------------
-
-  // publishAgent mints a key scoped to the agent; its sessions run with the
-  // template and vaults given here, and the key holder can choose neither.
-  publishAgent(agentId: string, publish: { label: string; template?: string; vaults: string[] }): Promise<APIKeyIssued> {
-    return this.post<APIKeyIssued>(`/api/agents/${enc(agentId)}/publish`, {
-      label: publish.label,
-      ...(publish.template ? { environment_template_id: publish.template } : {}),
-      ...(publish.vaults.length ? { vault_ids: publish.vaults } : {}),
-    })
-  }
-
-  async publishedKeys(agentId: string): Promise<APIKey[]> {
-    return (await this.request<ListPage<APIKey>>(`/api/agents/${enc(agentId)}/published-keys`)).data
   }
 
   // -- Usage and billing --------------------------------------------------------

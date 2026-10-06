@@ -73,27 +73,7 @@ export function agent(extra: Record<string, unknown> = {}) {
   return { id: AGENT_ID, object: 'agent', name: 'support', model: 'openai/gpt-5', created_at: 1_783_245_600, ...extra }
 }
 
-// orgKeyRoutes are what an organization key's session commands read first:
-// whoami (no published agent) and the agent by its id.
-export function orgKeyRoutes(): Record<string, RouteHandler> {
-  return {
-    'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'key_1', role: 'admin', agent: null }),
-    [`GET /v1/agents/${AGENT_ID}`]: jsonResponse(agent()),
-  }
-}
-
-// publishedKeyRoutes: a published agent's key, whose sessions must name the
-// environment and vaults its publisher fixed.
-export function publishedKeyRoutes(environment: Record<string, unknown> = { type: 'none' }, vaultIds: string[] = []): Record<string, RouteHandler> {
-  return {
-    'GET /api/whoami': jsonResponse({
-      object: 'whoami',
-      tenant: 'org_1',
-      actor: 'key_pub',
-      role: 'member',
-      agent: AGENT_ID,
-      environment,
-      vault_ids: vaultIds,
-    }),
-  }
+// agentRoute is the agent by its id, which a new session's agent resolves to.
+export function agentRoute(): Record<string, RouteHandler> {
+  return { [`GET /v1/agents/${AGENT_ID}`]: jsonResponse(agent()) }
 }

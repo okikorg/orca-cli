@@ -247,19 +247,10 @@ describe('checkKeyRole', () => {
   it('passes with the role and tenant from /api/whoami', async () => {
     const r = await checkKeyRole({
       ...base,
-      fetchImpl: router({ '/api/whoami': () => jsonRes({ tenant: 'org_1', role: 'member', agent: null }) }),
+      fetchImpl: router({ '/api/whoami': () => jsonRes({ tenant: 'org_1', role: 'member' }) }),
     })
     expect(r.status).toBe('pass')
     expect(r.message).toBe('valid; member of org_1')
-  })
-
-  it('warns for a key scoped to a published agent', async () => {
-    const r = await checkKeyRole({
-      ...base,
-      fetchImpl: router({ '/api/whoami': () => jsonRes({ tenant: 'org_1', role: 'member', agent: 'agent_1' }) }),
-    })
-    expect(r.status).toBe('warn')
-    expect(r.message).toContain('agent_1')
   })
 
   it('fails on 401 (invalid/revoked)', async () => {
@@ -502,7 +493,7 @@ describe('runDoctor (orchestration)', () => {
     const ctx = await gatherContext({}, process.env)
     const fetchImpl = router({
       '/health': () => jsonRes({ status: 'ok' }),
-      '/api/whoami': () => jsonRes({ tenant: 'org_1', role: 'admin', agent: null }),
+      '/api/whoami': () => jsonRes({ tenant: 'org_1', role: 'admin' }),
       '/api/billing/wallet': () => jsonRes({ balance_micro_usd: 5_000_000, min_balance_micro_usd: 500_000, paid_work_paused: false, tier: 'free' }),
     })
     const results = await runDoctor({
