@@ -2,7 +2,7 @@
   "name": "@agent-orc/cli",
   "version": "1.0.0",
   "private": true,
-  "description": "Orca CLI: manage agents, sessions, and publishing on the Orca platform",
+  "description": "Orca CLI: manage agents, sessions, and kits on the Orca platform",
   "type": "module",
   "bin": {
     "orca": "dist/cli.js"

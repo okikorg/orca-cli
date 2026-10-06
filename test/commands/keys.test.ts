@@ -1,42 +1,34 @@
 import { describe, expect, it } from 'vitest'
 
 import { registerKeys } from '../../src/commands/keys.js'
-import { registerPublish } from '../../src/commands/publish.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import { commandHarness, list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
 
-const AGENT = 'agent_' + '1'.repeat(32)
 const SECRET = 'orca_sk_' + 'z'.repeat(52)
 
-function key(id: string, agent: string | null = null) {
+function key(id: string, name = 'ci') {
   return {
     id,
     object: 'api_key',
-    name: agent ? 'website' : 'ci',
+    name,
     role: 'admin',
     hint: 'zzzz',
     created_by: 'user_1',
     created_at: 1_783_245_600,
     last_used_at: null,
-    agent,
-    environment_template_id: null,
-    vault_ids: [],
   }
 }
 
-// The agent a publish names, by its id.
-const agentRoute = { [`GET /v1/agents/${AGENT}`]: jsonResponse({ id: AGENT, object: 'agent', name: 'support', model: 'openai/gpt-5' }) }
-
-const { run, stdout, stderr } = commandHarness(registerKeys, registerPublish)
+const { run, stdout, stderr } = commandHarness(registerKeys)
 
 describe('keys', () => {
-  it('lists keys with their scope in plain mode', async () => {
-    stubFetch({ 'GET /api/keys?limit=10': jsonResponse(list([key('key_2', AGENT), key('key_1')])) })
+  it('lists keys in plain mode', async () => {
+    stubFetch({ 'GET /api/keys?limit=10': jsonResponse(list([key('key_2', 'website'), key('key_1')])) })
     await run(['keys', 'list'])
     expect(stdout()).toBe(
-      `key_2\twebsite\tadmin\tagent ${AGENT}\t2026-07-05 10:00\t-\n` +
-        'key_1\tci\tadmin\torganization\t2026-07-05 10:00\t-\n',
+      'key_2\twebsite\tadmin\t2026-07-05 10:00\t-\n' +
+        'key_1\tci\tadmin\t2026-07-05 10:00\t-\n',
     )
   })
 
@@ -66,76 +58,5 @@ describe('keys', () => {
     await run(['keys', 'list'])
     expect(stdout()).toBe('')
     expect(stderr()).toContain('orca keys create')
-  })
-})
-
-describe('publish', () => {
-  it('mints a scoped key with the label and prints the secret once', async () => {
-    const calls = stubFetch({
-      ...agentRoute,
-      [`POST /api/agents/${AGENT}/publish`]: jsonResponse({ ...key('key_4', AGENT), secret: SECRET }),
-    })
-    await run(['publish', 'create', AGENT, '--label', 'website'])
-    expect(JSON.parse(calls.find((c) => c.method === 'POST')?.body ?? '{}')).toEqual({ label: 'website' })
-    expect(stdout()).toBe(`${SECRET}\n`)
-  })
-
-  it('fixes the environment and vaults its sessions run with', async () => {
-    const calls = stubFetch({
-      ...agentRoute,
-      [`POST /api/agents/${AGENT}/publish`]: jsonResponse({ ...key('key_4', AGENT), secret: SECRET }),
-    })
-    await run(['publish', 'create', AGENT, '--label', 'website', '--template', 'envtmpl_1', '--vault', 'vault_1', '--vault', 'vault_2'])
-    expect(JSON.parse(calls.find((c) => c.method === 'POST')?.body ?? '{}')).toEqual({
-      label: 'website',
-      environment_template_id: 'envtmpl_1',
-      vault_ids: ['vault_1', 'vault_2'],
-    })
-  })
-
-  it('needs a label', async () => {
-    stubFetch({})
-    await expect(run(['publish', 'create', AGENT])).rejects.toThrow()
-  })
-
-  it('explains the plan limit on published agents', async () => {
-    stubFetch({
-      ...agentRoute,
-      [`POST /api/agents/${AGENT}/publish`]: jsonResponse(
-        { error: { message: 'Your plan publishes 1 agents', code: 'conflict' } },
-        { status: 409 },
-      ),
-    })
-    await expect(run(['publish', 'create', AGENT, '--label', 'website'])).rejects.toMatchObject({
-      message: '409: Your plan publishes 1 agents',
-    })
-  })
-
-  it('lists an agent\'s published keys', async () => {
-    stubFetch({
-      ...agentRoute,
-      [`GET /api/agents/${AGENT}/published-keys`]: jsonResponse(
-        list([key('key_4', AGENT), { ...key('key_5', AGENT), environment_template_id: 'envtmpl_1', vault_ids: ['vault_1'] }]),
-      ),
-    })
-    await run(['publish', 'list', AGENT])
-    expect(stdout()).toBe(
-      'key_4\twebsite\tno environment, no vaults\t2026-07-05 10:00\t-\n' +
-        'key_5\twebsite\tenvtmpl_1, vault vault_1\t2026-07-05 10:00\t-\n',
-    )
-  })
-
-  it('says so when an agent is not published', async () => {
-    stubFetch({ ...agentRoute, [`GET /api/agents/${AGENT}/published-keys`]: jsonResponse(list([])) })
-    await run(['publish', 'list', AGENT])
-    expect(stderr()).toContain('is not published')
-  })
-
-  it('unpublishes by revoking the key', async () => {
-    const calls = stubFetch({
-      'DELETE /api/keys/key_4': jsonResponse({ id: 'key_4', object: 'api_key.deleted', deleted: true }),
-    })
-    await run(['publish', 'revoke', 'key_4', '--yes'])
-    expect(calls[0].method).toBe('DELETE')
   })
 })

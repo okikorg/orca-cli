@@ -26,7 +26,7 @@ async function run(args: string[]): Promise<void> {
 function healthyRoutes(overrides?: Record<string, ReturnType<typeof jsonResponse> | Response>) {
   return {
     'GET /health': jsonResponse({ status: 'ok', release: 'test' }),
-    'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'user_1', role: 'admin', agent: null }),
+    'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'user_1', role: 'admin' }),
     'GET /api/billing/wallet': jsonResponse({ balance_micro_usd: 9_000_000, min_balance_micro_usd: 500_000, paid_work_paused: false, tier: 'free' }),
     ...overrides,
   }

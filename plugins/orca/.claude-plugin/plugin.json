@@ -1,7 +1,7 @@
 {
   "name": "orca",
   "version": "1.0.0",
-  "description": "Use Orca (orcapods.ai) from Claude Code: device login, agents, sessions and chat, kits, publishing, and an MCP server with one tool per CLI action.",
+  "description": "Use Orca (orcapods.ai) from Claude Code: device login, agents, sessions and chat, kits, and an MCP server with one tool per CLI action.",
   "author": {
     "name": "Orca",
     "url": "https://orcapods.ai"

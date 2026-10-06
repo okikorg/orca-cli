@@ -11,20 +11,15 @@ export type ListPage<T> = {
   last_id?: string | null
 }
 
-// GET /api/whoami. `agent` is set only for a key scoped to a published agent.
+// GET /api/whoami.
 export type Whoami = {
   object: 'whoami'
   tenant: string
   actor: string
   role: string
-  agent: string | null
-  // A published agent's key: what its sessions must name.
-  environment?: Record<string, unknown>
-  vault_ids?: string[]
 }
 
-// An API key, without its secret. `agent` is the agent a published agent's
-// key is scoped to, or null for an organization key.
+// An API key, without its secret.
 export type APIKey = {
   id: string
   object: 'api_key'
@@ -34,21 +29,9 @@ export type APIKey = {
   created_by: string
   created_at: number
   last_used_at: number | null
-  agent: string | null
-  // What a published agent's sessions run with, fixed by its publisher.
-  environment_template_id: string | null
-  vault_ids: string[]
 }
 
-// runsWith says what a published key's sessions run with, in a few words.
-export function runsWith(key: Pick<APIKey, 'environment_template_id' | 'vault_ids'>): string {
-  const environment = key.environment_template_id ?? 'no environment'
-  const vaults = key.vault_ids.length === 0 ? 'no vaults' : `${key.vault_ids.length === 1 ? 'vault' : 'vaults'} ${key.vault_ids.join(', ')}`
-  return `${environment}, ${vaults}`
-}
-
-// POST /api/keys and POST /api/agents/{id}/publish: the only responses that
-// ever carry the secret.
+// POST /api/keys: the only response that ever carries the secret.
 export type APIKeyIssued = APIKey & { secret: string }
 
 // -- Usage --------------------------------------------------------------------

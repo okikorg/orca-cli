@@ -64,7 +64,6 @@ describe('Chat REPL', () => {
     const out = frames.join('\n')
     expect(out).toContain('you') // user turn has an explicit role
     expect(out).toContain(`${glyphs.pointer} hello`)
-    expect(out).not.toContain('published agent')
     expect(out).toContain('stop or exit')
     expect(out).toContain('Researching') // tool activity is grouped by intent
     expect(out).toContain(`${glyphs.statusFilled} web_search`)

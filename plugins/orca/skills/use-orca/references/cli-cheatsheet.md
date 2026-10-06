@@ -18,7 +18,7 @@ orca login                          # device login: a code + dashboard link to a
 orca login --no-browser             # print the code and link only
 orca login --api-url http://localhost:8080 --label "CLI on build-box"   # another server; name the login
 orca login --with-token <orca_sk_key>   # CI / pre-minted key
-orca whoami --json                  # tenant, actor, role (and, for a published agent's key, its agent, environment and vaults)
+orca whoami --json                  # tenant, actor, role
 orca auth whoami --json             # the same
 orca auth status --json             # context + key validity
 orca auth logout [--revoke] [--yes] # forget the stored key; --revoke revokes it first, and keeps it if the server refuses
@@ -67,7 +67,7 @@ orca files download <id> -o <path>              # -o - for stdout
 orca files delete <id> --yes
 ```
 
-## Kits and publishing
+## Kits
 
 ```bash
 orca kits list --json                           # `kit` works as well as `kits`
@@ -77,10 +77,6 @@ orca kits publish <kit-id> --json               # public id + share link
 orca kits withdraw <kit-id>
 orca kits show <link|public-id> --json          # contents, asset keys, credentials to add (no login needed)
 orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run] --yes
-
-orca publish create <agent> --label l [--template id] [--vault id]...   # admin; secret shown once; its sessions run with these
-orca publish list <agent> --json                # each key, with what its sessions run with
-orca publish revoke <key-id> --yes              # the last key's revocation unpublishes
 ```
 
 ## Account
@@ -91,7 +87,7 @@ orca billing buy pro|max|plan:pro|plan:max|pack:<cents> [--no-open]   # admin; p
 orca billing manage [--no-open]                 # admin; prints the billing portal link
 orca usage [summary] [--days n] [--group-by model|provider|credential|session|agent] [--session id] [--meter m] --json
 orca usage events [--meter m] --json            # raw rows with cost_micro_usd
-orca keys list --json                           # API keys, with the agent a scoped key reaches
+orca keys list --json                           # API keys (no secrets)
 orca keys create <name>                         # secret on stdout when piped
 orca keys revoke <id> --yes
 ```

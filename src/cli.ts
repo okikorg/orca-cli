@@ -12,7 +12,6 @@ import { registerFiles } from './commands/files.js'
 import { registerKeys } from './commands/keys.js'
 import { registerKits } from './commands/kits.js'
 import { registerMcp } from './commands/mcp.js'
-import { registerPublish } from './commands/publish.js'
 import { registerSessions } from './commands/sessions.js'
 import { registerSkills } from './commands/skills.js'
 import { registerUpdate } from './commands/update.js'
@@ -29,7 +28,7 @@ const program = new Command()
 
 program
   .name('orca')
-  .description('Manage agents, sessions, and publishing on the Orca platform')
+  .description('Manage agents, sessions, and kits on the Orca platform')
   .version(VERSION, '-v, --version')
   .option('--context <name>', 'use a named context from the config file')
   .option('--api-url <url>', 'override the Orca server base URL')
@@ -61,7 +60,6 @@ const COMMAND_GROUP: Record<string, string> = {
   vaults: GROUP.MANAGE,
   files: GROUP.MANAGE,
   kits: GROUP.MANAGE,
-  publish: GROUP.MANAGE,
   keys: GROUP.MANAGE,
   billing: GROUP.MANAGE,
   mcp: GROUP.MANAGE,
@@ -87,7 +85,6 @@ registerSkills(program)
 registerVaults(program)
 registerFiles(program)
 registerKits(program)
-registerPublish(program)
 registerKeys(program)
 registerBilling(program)
 registerMcp(program)

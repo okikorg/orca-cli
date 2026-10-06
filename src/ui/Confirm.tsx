@@ -7,7 +7,7 @@ type ConfirmProps = {
   onDecision: (confirmed: boolean) => void
 }
 
-// Shared y/N confirm for destructive ops (delete/revoke/unpublish/cancel/rm):
+// Shared y/N confirm for destructive ops (delete/revoke/cancel/rm):
 // mint pointer + message + subtle `(y/N)`. Only `y`/`Y` confirms; anything
 // else (including Enter) declines, so the safe answer is the default. The
 // `--yes` bypass and non-TTY semantics live in the callers and stay unchanged;
