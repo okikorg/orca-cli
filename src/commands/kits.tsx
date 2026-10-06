@@ -137,6 +137,7 @@ const repeatable = (value: string, previous: string[]) => [...previous, value]
 function addKitFields(cmd: Command, nameRequired: boolean): Command {
   return (nameRequired ? cmd.requiredOption('--name <name>', 'kit name') : cmd.option('--name <name>', 'kit name'))
     .option('--description <text>', 'one-line description')
+    .option('--author <name>', 'who the kit\'s page says it is by')
     .option('--readme <path>', 'a markdown file for the kit page')
     .option('--agent <agent>', 'include an agent, by id or name (repeatable)', repeatable, [] as string[])
     .option('--skill <id>', 'include a skill (repeatable)', repeatable, [] as string[])
@@ -160,6 +161,7 @@ async function renderKits(kits: Kit[]): Promise<void> {
       hint="orca kits publish <kit id> · orca kits show <public id>"
       columns={[
         { header: 'name', get: (k: Kit) => k.name, color: () => theme.accent, bold: true },
+        { header: 'author', get: (k: Kit) => k.author || '-' },
         { header: 'status', get: (k: Kit) => k.status },
         { header: 'version', get: (k: Kit) => (k.latest_version == null ? '-' : String(k.latest_version)) },
         { header: 'public id', get: (k: Kit) => k.public_id ?? '-' },
@@ -178,6 +180,8 @@ async function renderPublicKit(kit: PublicKit): Promise<void> {
   await renderStatic(
     <Panel title={kit.name} subtitle={`${kit.public_id} · version ${kit.version}`}>
       {kit.description ? <Field label="about" value={kit.description} /> : null}
+      {kit.author ? <Field label="by" value={kit.author} /> : null}
+      {kit.url ? <Field label="link" value={kit.url} /> : null}
       <Field label="published" value={formatTime(kit.published_at)} />
       <Box marginTop={1} flexDirection="column">
         <Table
@@ -227,20 +231,26 @@ export function registerKits(program: Command): void {
         return
       }
       if (mode === 'plain') {
-        printPlainRows(list.map((k) => [k.id, k.name, k.status, k.latest_version ?? '-', k.public_id ?? '-']))
+        printPlainRows(
+          list.map((k) => [k.id, k.name, k.status, k.latest_version ?? '-', k.public_id ?? '-', k.author || '-']),
+        )
         return
       }
       await renderKits(list)
     })
 
   addKitFields(kits.command('make').description('make a kit from agents, skills, and templates'), true).action(
-    async (opts: SelectionFlags & { name: string; description?: string; readme?: string }, cmd: Command) => {
+    async (
+      opts: SelectionFlags & { name: string; description?: string; author?: string; readme?: string },
+      cmd: Command,
+    ) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
       const input: KitInput = {
         name: opts.name,
         selection: await selectionFrom(api, opts),
         ...(opts.description !== undefined ? { description: opts.description } : {}),
+        ...(opts.author !== undefined ? { author: opts.author } : {}),
         ...(opts.readme !== undefined ? { readme: await readReadme(opts.readme) } : {}),
       }
       const kit = await withApi(api, (c) => c.createKit(input))
@@ -260,7 +270,7 @@ export function registerKits(program: Command): void {
   ).action(
     async (
       id: string,
-      opts: SelectionFlags & { name?: string; description?: string; readme?: string },
+      opts: SelectionFlags & { name?: string; description?: string; author?: string; readme?: string },
       cmd: Command,
     ) => {
       const flags = globalFlags(cmd)
@@ -269,12 +279,13 @@ export function registerKits(program: Command): void {
       const input: Partial<KitInput> = {
         ...(opts.name !== undefined ? { name: opts.name } : {}),
         ...(opts.description !== undefined ? { description: opts.description } : {}),
+        ...(opts.author !== undefined ? { author: opts.author } : {}),
         ...(opts.readme !== undefined ? { readme: await readReadme(opts.readme) } : {}),
         ...(changesSelection ? { selection: await selectionFrom(api, opts) } : {}),
       }
       if (Object.keys(input).length === 0) {
         throw new CliError('nothing to change', ExitCode.Usage, [
-          'Pass --name, --description, --readme, or a new selection.',
+          'Pass --name, --description, --author, --readme, or a new selection.',
         ])
       }
       const kit = await withApi(api, (c) => c.updateKit(id, input))

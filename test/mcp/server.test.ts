@@ -143,6 +143,21 @@ describe('orca mcp serve', () => {
     expect(payload).toMatchObject({ id: SESSION_ID, status: 'completed', usage: summary })
   })
 
+  it('make_kit and edit_kit send the author', async () => {
+    const kit = { id: 'kit_1', object: 'kit', name: 'Support desk', author: 'Okik Labs' }
+    const calls = stubFetch({
+      'POST /api/kits': jsonResponse(kit),
+      'PATCH /api/kits/kit_1': jsonResponse({ ...kit, author: '' }),
+    })
+    const client = await connect()
+    await client.callTool({ name: 'make_kit', arguments: { name: 'Support desk', author: 'Okik Labs', skills: ['skill_1'] } })
+    await client.callTool({ name: 'edit_kit', arguments: { id: 'kit_1', author: '' } })
+    expect(calls.map((c) => JSON.parse(c.body ?? '{}'))).toEqual([
+      { name: 'Support desk', author: 'Okik Labs', selection: { agents: [], skills: ['skill_1'], templates: [] } },
+      { author: '' },
+    ])
+  })
+
   it('copy_kit posts the chosen assets', async () => {
     const calls = stubFetch({
       'POST /api/kits/kit-AbCdEfGhIjKlMnOpQ/copy': jsonResponse({ object: 'kit.copy', created: [], credentials: [] }),
@@ -202,11 +217,19 @@ describe('show_kit', () => {
       delete process.env.ORCA_API_KEY
       delete process.env.ORCA_API_URL
       await saveConfig({ currentContext: 'default', contexts: { default: { apiUrl: 'http://test:8080' } } })
-      const calls = stubFetch({ 'GET /api/public/kits/kit-AbCdEfGhIjKlMnOpQ': jsonResponse({ object: 'kit.public', public_id: 'kit-AbCdEfGhIjKlMnOpQ' }) })
+      const kit = {
+        object: 'kit.public',
+        public_id: 'kit-AbCdEfGhIjKlMnOpQ',
+        url: 'https://app.example.test/kits/kit-AbCdEfGhIjKlMnOpQ',
+        author: 'Okik Labs',
+      }
+      const calls = stubFetch({ 'GET /api/public/kits/kit-AbCdEfGhIjKlMnOpQ': jsonResponse(kit) })
       const client = await connect(makeClientSource({}))
       const res = await client.callTool({ name: 'show_kit', arguments: { publicId: 'kit-AbCdEfGhIjKlMnOpQ' } })
       expect((res as ToolText).isError).toBeFalsy()
       expect(calls[0].headers.Authorization).toBeUndefined()
+      // The author and the share link are the server's, passed through.
+      expect(JSON.parse(firstText(res))).toMatchObject({ author: 'Okik Labs', url: kit.url })
     } finally {
       await tmp.cleanup()
     }

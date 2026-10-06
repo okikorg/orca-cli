@@ -133,6 +133,8 @@ export type Kit = {
   url: string | null
   name: string
   description: string
+  // Who the kit's public page says it is by; empty when unset.
+  author: string
   readme: string
   status: string
   selection: KitSelection
@@ -145,6 +147,7 @@ export type Kit = {
 export type KitInput = {
   name: string
   description?: string
+  author?: string
   readme?: string
   selection: Partial<KitSelection>
 }
@@ -167,8 +170,12 @@ export type KitCredential = {
 export type PublicKit = {
   object: 'kit.public'
   public_id: string
+  // The share link, built by the server.
+  url: string
   name: string
   description: string
+  // The author the published version was snapshotted with; may be empty.
+  author: string
   readme: string
   version: number
   published_at: number

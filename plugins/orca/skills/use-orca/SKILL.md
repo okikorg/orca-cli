@@ -58,7 +58,7 @@ orca sessions items <id> --json              # the conversation so far
 Share and reuse setups as kits:
 
 ```bash
-orca kits make --name "Support desk" --agent support --json
+orca kits make --name "Support desk" --author "Okik Labs" --agent support --json
 orca kits publish <kit-id> --json            # prints the public id and share link
 orca kits copy <link-or-public-id> --dry-run --json
 ```
