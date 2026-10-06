@@ -85,7 +85,7 @@ describe('resolveContext precedence', () => {
     await saveConfig({
       currentContext: 'local',
       contexts: {
-        local: { apiUrl: 'http://file:8080', gatewayUrl: 'http://file:8090', apiKey: 'ao_dev_filekey0000000000000000' },
+        local: { apiUrl: 'http://file:8080', apiKey: 'ao_dev_filekey0000000000000000' },
         prod: { apiUrl: 'https://prod.example', apiKey: 'ao_live_prodkey0000000000000000' },
       },
     })
@@ -141,6 +141,7 @@ describe('resolveContext precedence', () => {
 describe('maskKey', () => {
   it('shows the prefix and last four characters', () => {
     expect(maskKey('ao_dev_abcdefghijklmnopqrstuv')).toBe('ao_dev_...stuv')
+    expect(maskKey('orca_sk_abcdefghijklmnopqrstuvwxyz234567abcdefghijklmn')).toBe('orca_sk_...klmn')
   })
 
   it('fully masks short strings', () => {

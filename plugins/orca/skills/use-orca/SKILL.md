@@ -1,11 +1,11 @@
 ---
 name: use-orca
-description: Run AI agents in the cloud with Orca (orcapods.ai). Use this skill whenever the user mentions Orca or orcapods, wants to deploy or run an agent in the cloud, create a cloud agent, publish an agent as an API, check agent runs or usage, or manage Orca skills, storage, or workflows, even if they do not say "Orca" explicitly but are clearly working against the Orca platform.
+description: Run AI agents in the cloud with Orca (orcapods.ai). Use this skill whenever the user mentions Orca or orcapods, wants to deploy or run an agent in the cloud, create a cloud agent, chat with one, publish an agent as an API, share or copy a kit, check usage or credit, or manage Orca skills, vaults, or files, even if they do not say "Orca" explicitly but are clearly working against the Orca platform.
 ---
 
 # Use Orca
 
-Orca is a cloud platform for running AI agents in production: define an agent as a profile, run it with sandboxed execution, spend controls, persistent sessions, and streaming output, behind one API. The `orca` CLI is the primary tool; an MCP server (`orca mcp serve`) exposes the same control plane as tools.
+Orca is a cloud platform for running AI agents in production: define an agent once, then talk to it in sessions with optional hosted sandboxes, MCP tools, skills, and credit-based billing, behind an OpenAI-compatible Agents API (`/v1`). The `orca` CLI is the primary tool; an MCP server (`orca mcp serve`) exposes the same actions as tools.
 
 ## Preflight
 
@@ -21,19 +21,21 @@ If `orca` is missing, install it (standalone binary, no Node required):
 curl -fsSL https://orcapods.ai/install.sh | sh
 ```
 
-Exit codes everywhere: 0 ok, 1 failure, 2 usage, 3 auth, 4 not found, 130 interrupt. All errors go to stderr; stdout stays machine-clean.
+If a command says "This CLI is too old for Orca", run `orca update`.
+
+Exit codes everywhere: 0 ok, 1 failure, 2 usage, 3 auth, 4 not found or gone, 130 interrupt. All errors go to stderr; stdout stays machine-clean.
 
 ## Authentication
 
-Interactive or headless, one command:
+One command, in a terminal or inside an agent:
 
 ```bash
 orca login
 ```
 
-In a headless or agent context this automatically uses the device flow: it prints a one-time code and a URL. Relay BOTH to the user verbatim and wait; the command keeps polling until they approve in the browser (on any device) and then stores the key itself. Do not paste or echo API keys.
+It prints a one-time code and a link to the Orca dashboard. Relay BOTH to the user verbatim and wait; the command keeps polling until they approve the code in the dashboard (signed in, on any device) and then stores the new key itself. Do not paste or echo API keys.
 
-For CI or when a key already exists, set environment variables instead: `ORCA_API_KEY` (and `ORCA_API_URL` for self-hosted). Verify auth with:
+For CI or when a key already exists, set environment variables instead: `ORCA_API_KEY` (an `orca_sk_...` key) and `ORCA_API_URL` for self-hosted. Verify auth with:
 
 ```bash
 orca whoami --json
@@ -41,25 +43,36 @@ orca whoami --json
 
 ## Golden paths (always pass --json when parsing)
 
-Create an agent, run it, follow the output:
+Create an agent and talk to it:
 
 ```bash
 orca agents list --json
-orca agents create -f agent.yaml --json        # YAML or JSON profile; use - for stdin
-orca run my-agent "summarize the open issues" --json --detach   # prints the run id and exits
-orca runs tail <runId> --json                  # NDJSON, one event per line, exits with the run
-orca runs get <runId> --json
+orca agents create -f agent.yaml --json      # the POST /v1/agents body: model (with a provider prefix, e.g. openai/gpt-5), name, instructions, tools
+orca chat <agent> "summarize the open issues"     # one turn; the reply on stdout, "session <id>" on stderr
+orca chat <agent> --session <id> "and the oldest?"  # continue the same session
+orca sessions items <id> --json              # the conversation so far
 ```
 
-Without `--detach`, `orca run` streams the run to completion; with it, poll via `runs get` or `runs tail`. Reuse a conversation with `orca run my-agent "..." --session <sessionId>`. Skills extend agents (`orca skills list`, `orca skills attach <agent> <skill>`). Storage is a per-tenant object store (`orca storage ls`, `get <key>`, `put <key> <file>`). Publish an agent as a public chat endpoint with `orca agents publish <name>`.
+`<agent>` is an agent id or the name of exactly one agent (the server says which; a shared name is refused with the ids). Add `--sandbox` (or `--template <id>`) to `chat` for a hosted sandbox, and `--vault <id>` to let the session use a vault's MCP credentials (`orca vaults credentials add`).
 
-Account status:
+Share and reuse setups as kits, and publish an agent as an API:
 
 ```bash
-orca billing wallet --json     # credit balance
-orca billing cap --json        # monthly spend cap
-orca usage --json              # usage timeseries
+orca kits make --name "Support desk" --agent support --json
+orca kits publish <kit-id> --json            # prints the public id and share link
+orca kits copy <link-or-public-id> --dry-run --json
+orca publish create <agent> --label website [--template <id>] [--vault <id>] --json   # admin; a key scoped to the agent, shown once
 ```
+
+Account status (every figure is the server's, in micro-USD; never recompute costs):
+
+```bash
+orca billing wallet --json                   # balance, plan, packs on sale
+orca usage --json                            # cost per meter over the last 30 days
+orca usage --group-by agent --json
+```
+
+Buying credit or a plan (`orca billing buy pro|max|pack:<cents>`) returns a checkout link: give it to the user to open; never try to pay.
 
 ## MCP server (richer sessions)
 
@@ -69,15 +82,17 @@ For extended work, register Orca's MCP server once:
 claude mcp add orca -- orca mcp serve
 ```
 
-This exposes tools for everything above (whoami, list/create/update agents, run_agent, wait_for_run long-polling, skills, storage, publish, get_usage) plus `api_request`, a raw authenticated escape hatch to any `/api/*` operation, documented by the live OpenAPI spec at the `orca://openapi` resource or https://api.orcapods.ai/api/openapi.yaml.
+It exposes one tool per CLI action: whoami and keys, agents, sessions, `chat` (sends a message and waits for the reply, returning the session id), skills, vaults, files, usage and billing, kits, and publishing.
 
 ## References
 
-- `references/cli-cheatsheet.md`: the full command surface with flags and JSON output shapes.
-- `references/api-cookbook.md`: api_request and curl recipes for operations beyond the golden paths (pools, workflows, secrets, memory, spend caps).
+- `references/cli-cheatsheet.md`: the full command surface with flags.
+- `references/api-cookbook.md`: the raw API (the `/v1` Agents API through any OpenAI client, and the `/api` routes with curl) for anything beyond the CLI.
 
 ## Troubleshooting
 
 - Exit 3 or 401: run `orca login` again (or check `ORCA_API_KEY`).
-- "does not support headless login": the target conductor predates device login; use `orca login --with-token <key>` with a key minted in the dashboard (Settings, then API Keys).
+- "Out of Orca credit" (HTTP 429, or a turn that fails with it): the organization is out of credit; check `orca billing wallet`, add credit, then continue the session.
+- With a published agent's key, `orca chat` runs only that agent, with the environment and vaults its publisher chose; don't pass `--sandbox`, `--template` or `--vault`.
+- "does not support device login": the API URL does not point at an Orca server; check `orca auth status`, or use `orca login --with-token <key>` with a key minted in the dashboard.
 - Anything else: `orca doctor --json` names the failing check and the fix.

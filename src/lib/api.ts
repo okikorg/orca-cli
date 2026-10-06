@@ -1,22 +1,32 @@
-// Thin fetch client for the conductor's public tenant API, modeled on
-// dashboard/src/lib/api.ts. Auth is a bearer tenant API key; the server
-// derives the tenant from the key, so no X-Tenant-ID header is sent.
-// docs/openapi.sdk.yaml is the endpoint contract.
+// Clients for the Orca server. Two surfaces, one bearer key:
+//
+// - /api: the server's own routes (whoami, keys, usage, billing, kits,
+//   publish), through the thin fetch helper below.
+// - /v1: the OpenAI-compatible Agents API (agents, sessions, skills, vaults,
+//   files), through the official `openai` package, exactly as any OpenAI
+//   client calls it. v1() builds that client lazily so commands that never
+//   touch /v1 do not load the package.
+//
+// The server derives the tenant from the key, so no tenant header is sent.
+
+import type OpenAI from 'openai'
+import { APIConnectionTimeoutError, APIError as OpenAIAPIError, APIConnectionError } from 'openai/error'
 
 import { CliError, ExitCode } from './errors.js'
 import type {
-  AgentProfile,
+  APIKey,
   APIKeyIssued,
-  APIKeyMetadata,
-  ControlPlaneAPIKeyIssued,
-  ControlPlaneAPIKeyMetadata,
-  CreateControlPlaneAPIKeyRequest,
-  CreateRunResponse,
-  PublishRequest,
-  PublishedAgentWithURL,
-  RunDetail,
-  RunSummary,
-  SubTask,
+  BillingURL,
+  Kit,
+  KitCopyAsset,
+  KitCopyResult,
+  KitInput,
+  ListPage,
+  PublicKit,
+  UsageEvent,
+  UsageSummary,
+  Wallet,
+  Whoami,
 } from './types.js'
 
 export class ApiError extends Error {
@@ -29,16 +39,16 @@ export class ApiError extends Error {
   }
 }
 
-export type Paged<T> = { items: T[]; total: number }
+// Page is the CLI's view of one cursor page: the rows, whether the server has
+// more after them, and the cursor (the last row's id) that fetches the next.
+export type Page<T> = { items: T[]; hasMore: boolean; lastId: string | null }
 
-// PageParams are the uniform pagination knobs every list endpoint accepts.
-// The server clamps limit to [1, 200] and treats a missing limit as its
-// legacy unpaginated request, so an omitted field simply keeps the old shape.
-export type PageParams = { limit?: number; offset?: number }
+// PageParams are the cursor knobs every list route accepts. The server takes
+// 1 to 100 rows per request and lists newest first.
+export type PageParams = { limit?: number; after?: string }
 
-// pageQuery renders limit/offset (and any extra string filters, e.g. ?q=) into
-// a query string. Only defined, non-empty values are emitted, so a call with
-// no params yields '' and older servers keep receiving their legacy request.
+// pageQuery renders query parameters into a query string. Only defined,
+// non-empty values are emitted, so a call with no params yields ''.
 export function pageQuery(params?: Record<string, string | number | undefined>): string {
   const sp = new URLSearchParams()
   if (params) {
@@ -50,63 +60,108 @@ export function pageQuery(params?: Record<string, string | number | undefined>):
   return qs ? `?${qs}` : ''
 }
 
+// toPage adapts a list envelope (the /api routes' JSON, or an openai page
+// object, which carries the same data and has_more fields) to a Page.
+export function toPage<T extends { id: string }>(list: { data: T[]; has_more: boolean }): Page<T> {
+  const items = list.data ?? []
+  return { items, hasMore: Boolean(list.has_more), lastId: items.at(-1)?.id ?? null }
+}
+
 export type ApiClientOptions = {
   apiUrl: string
   apiKey: string
   contextName: string
+  // The dashboard this context logged in from, sent as Origin where the
+  // server returns the user to the dashboard (checkout, portal).
+  dashboardUrl?: string
   // JSON request timeout in milliseconds. Streaming requests manage their own.
   timeoutMs?: number
 }
 
-// extractErrorBody pulls a human-readable reason out of the JSON body the
-// conductor sends on 4xx: { error: "<reason>" } for nearly every handler.
+// extractErrorBody pulls a human-readable reason out of an error body. The
+// server answers {"error": {"message", "type", "param", "code"}}; the device
+// login routes answer {"error": "<code>"}.
 export function extractErrorBody(body: unknown): string {
   if (!body) return ''
   if (typeof body === 'string') return body
   if (typeof body === 'object' && body !== null) {
     const rec = body as Record<string, unknown>
     if (typeof rec.error === 'string') return rec.error
+    if (rec.error && typeof rec.error === 'object') {
+      const message = (rec.error as Record<string, unknown>).message
+      if (typeof message === 'string') return message
+    }
     if (typeof rec.message === 'string') return rec.message
   }
   return ''
 }
 
-// mapApiError converts a thrown ApiError/TypeError into the CliError the
+// errorParam is the field a refusal is about: the server's `param`.
+function errorParam(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null
+  const error = (body as Record<string, unknown>).error
+  if (!error || typeof error !== 'object') return null
+  const param = (error as Record<string, unknown>).param
+  return typeof param === 'string' && param ? param : null
+}
+
+// mapApiError converts a failure from either client into the CliError the
 // top-level trap renders, distinguishing auth, not-found, server, and
 // connectivity failures so the user knows which one to fix.
 export function mapApiError(err: unknown, opts: { contextName: string; apiUrl: string }): CliError {
   if (err instanceof CliError) return err
+  // openai raises APIConnectionError (a subclass of its APIError, with no
+  // status) when it cannot reach the host, so check it first.
+  if (err instanceof APIConnectionTimeoutError) {
+    return new CliError(`request to ${opts.apiUrl} timed out`, ExitCode.Failure)
+  }
+  if (err instanceof APIConnectionError || err instanceof TypeError) {
+    return new CliError(`cannot reach ${opts.apiUrl} (context "${opts.contextName}")`, ExitCode.Failure, [
+      'Is the server running? Check: orca auth status',
+    ])
+  }
+  let status: number | undefined
+  let reason = ''
+  let param: string | null = null
   if (err instanceof ApiError) {
-    if (err.status === 401) {
+    status = err.status
+    reason = extractErrorBody(err.body)
+    param = errorParam(err.body)
+  } else if (err instanceof OpenAIAPIError && err.status !== undefined) {
+    status = err.status
+    reason = extractErrorBody({ error: err.error })
+    param = errorParam({ error: err.error })
+  }
+  if (reason && param) reason = `${reason} (${param})`
+  if (status !== undefined) {
+    if (status === 401) {
       return new CliError(
         `invalid or revoked API key for context "${opts.contextName}"`,
         ExitCode.Auth,
         ['Run: orca auth login'],
       )
     }
-    if (err.status === 403) {
+    if (status === 403) {
       return new CliError(
-        `your API key's role does not allow this action (context "${opts.contextName}")`,
+        reason
+          ? `not allowed: ${reason} (context "${opts.contextName}")`
+          : `your API key's role does not allow this action (context "${opts.contextName}")`,
         ExitCode.Auth,
       )
     }
-    if (err.status === 404) {
-      const reason = extractErrorBody(err.body)
+    if (status === 404) {
       return new CliError(reason ? `not found: ${reason}` : 'not found', ExitCode.NotFound)
     }
-    if (err.status >= 500) {
-      return new CliError(`the API server returned ${err.status}; try again in a moment`, ExitCode.Failure)
+    if (status === 410) {
+      return new CliError(reason || 'gone', ExitCode.NotFound)
     }
-    const reason = extractErrorBody(err.body)
-    return new CliError(reason ? `${err.status}: ${reason}` : err.message, ExitCode.Failure)
-  }
-  // fetch() rejects with TypeError when it cannot reach the host.
-  if (err instanceof TypeError) {
-    return new CliError(
-      `cannot reach ${opts.apiUrl} (context "${opts.contextName}")`,
-      ExitCode.Failure,
-      ['Is the conductor running? Check orca auth status.'],
-    )
+    if (status >= 500) {
+      return new CliError(
+        reason ? `the API server returned ${status}: ${reason}; try again in a moment` : `the API server returned ${status}; try again in a moment`,
+        ExitCode.Failure,
+      )
+    }
+    return new CliError(reason ? `${status}: ${reason}` : `request failed (${status})`, ExitCode.Failure)
   }
   if (err instanceof Error && err.name === 'TimeoutError') {
     return new CliError(`request to ${opts.apiUrl} timed out`, ExitCode.Failure)
@@ -116,23 +171,51 @@ export function mapApiError(err: unknown, opts: { contextName: string; apiUrl: s
     : new CliError('unknown error', ExitCode.Failure)
 }
 
+// The server returns at most 100 rows per request; --all pages through in
+// windows of this size, up to a hard safety ceiling.
+export const FETCH_ALL_PAGE_SIZE = 100
+export const FETCH_ALL_MAX_ROWS = 10_000
+
+const enc = encodeURIComponent
+
 export class ApiClient {
   readonly apiUrl: string
   readonly contextName: string
+  private readonly dashboardUrl?: string
   private readonly apiKey: string
   private readonly timeoutMs: number
+  private openai: OpenAI | null = null
 
   constructor(opts: ApiClientOptions) {
     this.apiUrl = opts.apiUrl.replace(/\/+$/, '')
     this.apiKey = opts.apiKey
     this.contextName = opts.contextName
+    this.dashboardUrl = opts.dashboardUrl?.replace(/\/+$/, '')
     this.timeoutMs = opts.timeoutMs ?? 30_000
   }
 
+  // v1 returns the official openai client pointed at this server's /v1. No
+  // automatic retries, matching the /api helper: the CLI reports a failure
+  // and the user decides whether to run the command again.
+  async v1(): Promise<OpenAI> {
+    if (!this.openai) {
+      const { default: OpenAIClient } = await import('openai')
+      this.openai = new OpenAIClient({
+        apiKey: this.apiKey,
+        baseURL: `${this.apiUrl}/v1`,
+        maxRetries: 0,
+        timeout: this.timeoutMs,
+      })
+    }
+    return this.openai
+  }
+
+  // headers omits Authorization when the client has no key, which only the
+  // public kit lookup does.
   headers(extra?: Record<string, string>): Record<string, string> {
     return {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${this.apiKey}`,
+      ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
       ...extra,
     }
   }
@@ -157,231 +240,118 @@ export class ApiClient {
       throw new ApiError(`${res.status} ${res.statusText}`, res.status, body)
     }
     if (res.status === 204) return undefined as T
-    // Some DELETE/POST handlers return an empty 200.
     const text = await res.text()
     if (!text) return undefined as T
     return JSON.parse(text) as T
   }
 
-  // getOrThrow issues a GET and raises ApiError on a non-2xx, sharing the
-  // error-body parsing the paged readers both need.
-  private async getOrThrow(path: string): Promise<Response> {
-    const res = await fetch(this.url(path), {
-      headers: this.headers(),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    })
-    if (!res.ok) {
-      let body: unknown
-      try {
-        body = await res.json()
-      } catch {
-        /* non-JSON error body */
-      }
-      throw new ApiError(`${res.status} ${res.statusText}`, res.status, body)
-    }
-    return res
-  }
-
-  // requestPaged reads a bare-array list endpoint. The total comes from the
-  // X-Total-Count header the conductor sets on paginated endpoints, falling
-  // back to the array length so the CLI still works against older servers.
-  async requestPaged<T>(path: string): Promise<Paged<T>> {
-    const res = await this.getOrThrow(path)
-    const items = ((await res.json()) ?? []) as T[]
-    const header = res.headers.get('X-Total-Count')
-    const total = header != null && header !== '' ? Number(header) : items.length
-    return { items, total }
-  }
-
-  // requestPagedField reads a list endpoint that wraps its rows in an envelope
-  // object ({ <field>: T[], total }). It prefers X-Total-Count, then the
-  // envelope's own total, then the array length, so both new and old servers
-  // report a sane total.
-  async requestPagedField<T>(path: string, field: string): Promise<Paged<T>> {
-    const res = await this.getOrThrow(path)
-    const body = ((await res.json()) ?? {}) as Record<string, unknown>
-    const raw = body[field]
-    const items = (Array.isArray(raw) ? raw : []) as T[]
-    const header = res.headers.get('X-Total-Count')
-    const total =
-      header != null && header !== ''
-        ? Number(header)
-        : typeof body.total === 'number'
-          ? body.total
-          : items.length
-    return { items, total }
-  }
-
-  // -- Profiles ---------------------------------------------------------------
-
-  listProfiles(params?: PageParams): Promise<Paged<AgentProfile>> {
-    return this.requestPaged<AgentProfile>(`/api/profiles${pageQuery({ ...params })}`)
-  }
-
-  // Pools, sessions, skills, and MCP servers are bare-array endpoints whose
-  // row types live in their command modules; the caller supplies the element
-  // type. Sessions accepts a ?q= id/profile substring filter (free text) and a
-  // ?profile= exact-profile-name filter, both composable with pagination.
-  listPools<T = unknown>(params?: PageParams): Promise<Paged<T>> {
-    return this.requestPaged<T>(`/api/pools${pageQuery({ ...params })}`)
-  }
-
-  listSessions<T = unknown>(
-    params?: PageParams & { q?: string; profile?: string },
-  ): Promise<Paged<T>> {
-    return this.requestPaged<T>(`/api/sessions${pageQuery({ ...params })}`)
-  }
-
-  listSkills<T = unknown>(params?: PageParams): Promise<Paged<T>> {
-    return this.requestPaged<T>(`/api/skills${pageQuery({ ...params })}`)
-  }
-
-  listMcpServers<T = unknown>(params?: PageParams): Promise<Paged<T>> {
-    return this.requestPaged<T>(`/api/mcp-servers${pageQuery({ ...params })}`)
-  }
-
-  listSecrets<T = unknown>(params?: PageParams): Promise<Paged<T>> {
-    return this.requestPagedField<T>(`/api/secrets${pageQuery({ ...params })}`, 'secrets')
-  }
-
-  getProfile(name: string): Promise<AgentProfile> {
-    return this.request<AgentProfile>(`/api/profiles/${encodeURIComponent(name)}`)
-  }
-
-  createProfile(profile: AgentProfile): Promise<AgentProfile> {
-    return this.request<AgentProfile>('/api/profiles', {
+  private post<T>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>(path, {
       method: 'POST',
-      body: JSON.stringify(profile),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
   }
 
-  updateProfile(name: string, profile: AgentProfile): Promise<AgentProfile> {
-    return this.request<AgentProfile>(`/api/profiles/${encodeURIComponent(name)}`, {
-      method: 'PUT',
-      body: JSON.stringify(profile),
+  // -- Identity -----------------------------------------------------------------
+
+  whoami(): Promise<Whoami> {
+    return this.request<Whoami>('/api/whoami')
+  }
+
+  // -- API keys -----------------------------------------------------------------
+
+  async listKeys(params?: PageParams): Promise<Page<APIKey>> {
+    return toPage(await this.request<ListPage<APIKey>>(`/api/keys${pageQuery({ ...params })}`))
+  }
+
+  createKey(name: string): Promise<APIKeyIssued> {
+    return this.post<APIKeyIssued>('/api/keys', { name })
+  }
+
+  revokeKey(id: string): Promise<void> {
+    return this.request<void>(`/api/keys/${enc(id)}`, { method: 'DELETE' })
+  }
+
+  // -- Publishing ---------------------------------------------------------------
+
+  // publishAgent mints a key scoped to the agent; its sessions run with the
+  // template and vaults given here, and the key holder can choose neither.
+  publishAgent(agentId: string, publish: { label: string; template?: string; vaults: string[] }): Promise<APIKeyIssued> {
+    return this.post<APIKeyIssued>(`/api/agents/${enc(agentId)}/publish`, {
+      label: publish.label,
+      ...(publish.template ? { environment_template_id: publish.template } : {}),
+      ...(publish.vaults.length ? { vault_ids: publish.vaults } : {}),
     })
   }
 
-  deleteProfile(name: string): Promise<void> {
-    return this.request<void>(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' })
+  async publishedKeys(agentId: string): Promise<APIKey[]> {
+    return (await this.request<ListPage<APIKey>>(`/api/agents/${enc(agentId)}/published-keys`)).data
   }
 
-  // -- Runs ---------------------------------------------------------------------
+  // -- Usage and billing --------------------------------------------------------
 
-  createRun(input: SubTask): Promise<CreateRunResponse> {
-    return this.request<CreateRunResponse>('/api/runs', {
+  usage(params: { start?: number; end?: number; group_by?: string; session?: string }): Promise<UsageSummary> {
+    return this.request<UsageSummary>(`/api/usage${pageQuery(params)}`)
+  }
+
+  async usageEvents(params: PageParams & { meter?: string }): Promise<Page<UsageEvent>> {
+    return toPage(await this.request<ListPage<UsageEvent>>(`/api/usage/events${pageQuery(params)}`))
+  }
+
+  wallet(): Promise<Wallet> {
+    return this.request<Wallet>('/api/billing/wallet')
+  }
+
+  checkout(offer: string): Promise<BillingURL> {
+    return this.request<BillingURL>('/api/billing/checkout', {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify({ offer }),
+      headers: this.returnTo(),
     })
   }
 
-  listRuns(params?: PageParams): Promise<Paged<RunSummary>> {
-    return this.requestPaged<RunSummary>(`/api/runs${pageQuery({ ...params })}`)
+  portal(): Promise<BillingURL> {
+    return this.request<BillingURL>('/api/billing/portal', { method: 'POST', headers: this.returnTo() })
   }
 
-  listProfileRuns(profile: string, params?: PageParams): Promise<Paged<RunSummary>> {
-    return this.requestPaged<RunSummary>(
-      `/api/profiles/${encodeURIComponent(profile)}/runs${pageQuery({ ...params })}`,
-    )
+  // returnTo names the dashboard to send the user back to; the server keeps
+  // it only when it is one of its dashboard origins.
+  private returnTo(): Record<string, string> {
+    return this.dashboardUrl ? { Origin: this.dashboardUrl } : {}
   }
 
-  listSessionRuns(sessionId: string, params?: PageParams): Promise<Paged<RunSummary>> {
-    return this.requestPaged<RunSummary>(
-      `/api/sessions/${encodeURIComponent(sessionId)}/runs${pageQuery({ ...params })}`,
-    )
+  // -- Kits ---------------------------------------------------------------------
+
+  async listKits(): Promise<Kit[]> {
+    return (await this.request<ListPage<Kit>>('/api/kits')).data
   }
 
-  getRun(id: string): Promise<RunDetail> {
-    return this.request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`)
+  getKit(id: string): Promise<Kit> {
+    return this.request<Kit>(`/api/kits/${enc(id)}`)
   }
 
-  cancelRun(id: string): Promise<void> {
-    return this.request<void>(`/api/runs/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  createKit(input: KitInput): Promise<Kit> {
+    return this.post<Kit>('/api/kits', input)
   }
 
-  // -- Publishing (public chat gateway) ----------------------------------------
-
-  getPublishedAgent(profileName: string): Promise<PublishedAgentWithURL> {
-    return this.request<PublishedAgentWithURL>(
-      `/api/profiles/${encodeURIComponent(profileName)}/published`,
-    )
+  updateKit(id: string, input: Partial<KitInput>): Promise<Kit> {
+    return this.request<Kit>(`/api/kits/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(input) })
   }
 
-  publishAgent(profileName: string, req: PublishRequest): Promise<PublishedAgentWithURL> {
-    return this.request<PublishedAgentWithURL>(
-      `/api/profiles/${encodeURIComponent(profileName)}/publish`,
-      { method: 'POST', body: JSON.stringify(req) },
-    )
+  publishKit(id: string): Promise<Kit> {
+    return this.post<Kit>(`/api/kits/${enc(id)}/publish`)
   }
 
-  unpublishAgent(profileName: string): Promise<void> {
-    return this.request<void>(`/api/profiles/${encodeURIComponent(profileName)}/published`, {
-      method: 'DELETE',
-    })
+  withdrawKit(id: string): Promise<Kit> {
+    return this.post<Kit>(`/api/kits/${enc(id)}/withdraw`)
   }
 
-  listPublishedAgents(params?: PageParams): Promise<Paged<PublishedAgentWithURL>> {
-    return this.requestPagedField<PublishedAgentWithURL>(
-      `/api/published${pageQuery({ ...params })}`,
-      'publishedAgents',
-    )
+  // publicKit reads a published kit's public page, which needs no credential.
+  publicKit(publicId: string): Promise<PublicKit> {
+    return this.request<PublicKit>(`/api/public/kits/${enc(publicId)}`)
   }
 
-  listAgentKeys(profileName: string, params?: PageParams): Promise<Paged<APIKeyMetadata>> {
-    return this.requestPagedField<APIKeyMetadata>(
-      `/api/profiles/${encodeURIComponent(profileName)}/keys${pageQuery({ ...params })}`,
-      'keys',
-    )
+  copyKit(publicId: string, assets: KitCopyAsset[]): Promise<KitCopyResult> {
+    return this.post<KitCopyResult>(`/api/kits/${enc(publicId)}/copy`, { assets })
   }
-
-  issueAgentKey(profileName: string, req: { label?: string; expiresAt?: string }): Promise<APIKeyIssued> {
-    return this.request<APIKeyIssued>(`/api/profiles/${encodeURIComponent(profileName)}/keys`, {
-      method: 'POST',
-      body: JSON.stringify(req),
-    })
-  }
-
-  revokeAgentKey(profileName: string, keyId: string): Promise<void> {
-    return this.request<void>(
-      `/api/profiles/${encodeURIComponent(profileName)}/keys/${encodeURIComponent(keyId)}`,
-      { method: 'DELETE' },
-    )
-  }
-
-  // -- Control-plane API keys ---------------------------------------------------
-
-  listControlPlaneKeys(): Promise<ControlPlaneAPIKeyMetadata[]> {
-    return this.request<{ keys: ControlPlaneAPIKeyMetadata[] }>('/api/api-keys').then(
-      (res) => res.keys ?? [],
-    )
-  }
-
-  createControlPlaneKey(body: CreateControlPlaneAPIKeyRequest): Promise<ControlPlaneAPIKeyIssued> {
-    return this.request<ControlPlaneAPIKeyIssued>('/api/api-keys', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })
-  }
-
-  revokeControlPlaneKey(id: string): Promise<void> {
-    return this.request<void>(`/api/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' })
-  }
-
-  // whoami identifies the caller: tenant, role, credential kind, key id.
-  // 404 on conductors that predate the endpoint; callers degrade to local
-  // context info.
-  whoami(): Promise<WhoamiResponse> {
-    return this.request<WhoamiResponse>('/api/whoami')
-  }
-}
-
-// WhoamiResponse mirrors GET /api/whoami. tenantName is best-effort;
-// exactly one of keyId/userId is set depending on authKind.
-export type WhoamiResponse = {
-  tenantId: string
-  tenantName?: string
-  role?: string
-  authKind: 'api_key' | 'session' | 'run_token' | string
-  keyId?: string
-  userId?: string
 }

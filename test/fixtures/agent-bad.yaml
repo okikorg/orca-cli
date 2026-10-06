@@ -1,6 +1,0 @@
-name: broken-bot
-runtime: quantum
-mcpServers:
-  - name: runner
-    transport: carrier-pigeon
-    url: not-a-url

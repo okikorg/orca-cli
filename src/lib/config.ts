@@ -2,23 +2,16 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import {
-  DEFAULT_API_URL,
-  DEFAULT_DASHBOARD_URL,
-  DEFAULT_GATEWAY_URL,
-  LEGACY_DEFAULT_API_URL,
-  LEGACY_DEFAULT_GATEWAY_URL,
-} from './defaults.js'
+import { DEFAULT_API_URL, DEFAULT_DASHBOARD_URL, LEGACY_DEFAULT_API_URL } from './defaults.js'
 import { CliError, ExitCode } from './errors.js'
 
 export type ContextConfig = {
   apiUrl?: string
-  gatewayUrl?: string
   apiKey?: string
-  // Orca dashboard base URL used by the browser login flow (orca auth login).
+  // Orca dashboard base URL, for a published kit's share link.
   dashboardUrl?: string
   // Server-side id of the minted key, so `orca auth logout --revoke` can
-  // DELETE /api/api-keys/{keyId}. Absent when the key was pasted manually.
+  // DELETE /api/keys/{keyId}. Absent when the key was passed with --with-token.
   keyId?: string
 }
 
@@ -34,17 +27,15 @@ export type GlobalFlags = {
 }
 
 // Fields that can be filled from a baked-in production default.
-export type DefaultableField = 'apiUrl' | 'gatewayUrl' | 'dashboardUrl'
+export type DefaultableField = 'apiUrl' | 'dashboardUrl'
 
 // Everything a command needs to talk to the platform. apiKey stays optional
 // here; ApiClient enforces its presence so `auth login` can run without one.
 export type ResolvedContext = {
   name: string
   apiUrl?: string
-  gatewayUrl?: string
   apiKey?: string
   dashboardUrl?: string
-  keyId?: string
   // Fields whose value came from the baked-in production default (not a flag,
   // env var, or config file), so commands can mark them "(default)".
   defaulted: Set<DefaultableField>
@@ -137,8 +128,6 @@ export async function resolveContext(flags: GlobalFlags): Promise<ResolvedContex
   const defaulted = new Set<DefaultableField>()
   const upgradeLegacyApiUrl = (url: string | undefined): string | undefined =>
     url === LEGACY_DEFAULT_API_URL && DEFAULT_API_URL ? DEFAULT_API_URL : url
-  const upgradeLegacyGatewayUrl = (url: string | undefined): string | undefined =>
-    url === LEGACY_DEFAULT_GATEWAY_URL && DEFAULT_GATEWAY_URL ? DEFAULT_GATEWAY_URL : url
   const withDefault = (
     field: DefaultableField,
     explicit: string | undefined,
@@ -156,20 +145,14 @@ export async function resolveContext(flags: GlobalFlags): Promise<ResolvedContex
     name,
     // The legacy upgrade rewrites only the exact former baked-in default (a
     // raw Railway hostname saved by cli<=0.4.0 logins); custom URLs pass
-    // through untouched. `orca login` persists the upgraded value.
+    // through untouched. `orca auth login` persists the upgraded value.
     apiUrl: withDefault(
       'apiUrl',
       upgradeLegacyApiUrl(flags.apiUrl || process.env.ORCA_API_URL || base.apiUrl),
       DEFAULT_API_URL,
     ),
-    gatewayUrl: withDefault(
-      'gatewayUrl',
-      upgradeLegacyGatewayUrl(process.env.ORCA_GATEWAY_URL || base.gatewayUrl),
-      DEFAULT_GATEWAY_URL,
-    ),
     apiKey: process.env.ORCA_API_KEY || base.apiKey,
     dashboardUrl: withDefault('dashboardUrl', process.env.ORCA_DASHBOARD_URL || base.dashboardUrl, DEFAULT_DASHBOARD_URL),
-    keyId: base.keyId,
     defaulted,
     configPath: configPath(),
   }

@@ -1,9 +1,22 @@
 import type { Command } from 'commander'
+import type { AgentSession, AgentSessionItem } from 'openai/resources/beta/agents/agents'
 
-import { formatDuration, formatTimestamp } from '../lib/format.js'
-import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
-import type { RunSummary } from '../lib/types.js'
-import { hintText } from '../ui/theme.js'
+import { resolveAgentId } from '../lib/agents.js'
+import { toPage } from '../lib/api.js'
+import { CliError, ExitCode } from '../lib/errors.js'
+import { formatTime } from '../lib/format.js'
+import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
+import {
+  addSessionCreateOptions,
+  itemRole,
+  itemText,
+  publishedScope,
+  sessionAgent,
+  sessionCreateParams,
+  type SessionCreateFlags,
+} from '../lib/sessions.js'
+import { accentVerb, hintText } from '../ui/theme.js'
+import { confirm } from './prompts.js'
 import {
   addPageFlags,
   apiContext,
@@ -16,201 +29,216 @@ import {
   type PageFlags,
 } from './shared.js'
 
-// Session mirrors the conductor Session schema (docs/openapi.sdk.yaml, Sessions
-// group; runtime/httpapi handleGetSession). Tenant-key accessible via
-// /api/sessions and /api/sessions/{id}.
-type Session = {
-  id: string
-  profile: string
-  runtime: string
-  status: string // idle | running | errored | shutdown
-  createdAt: string
-  lastUsedAt: string
-  lastPrompt?: string
-  lastRunStartedAt?: string
-  lastRunFinishedAt?: string
-  lastRunStatus?: string
-  runCount: number
-}
-
-// sessionStatusColor tints the status cell: mint for live, destructive for
-// errored, subtle for shut-down. Idle keeps the terminal default.
-function sessionStatusColor(status: string, theme: { accent: string; destructive: string; subtle: string }): string | undefined {
+// sessionStatusColor tints the status cell: mint while a turn runs,
+// destructive for failed, subtle while waiting on an action. Idle keeps the
+// terminal default.
+function sessionStatusColor(
+  status: AgentSession['status'],
+  theme: { accent: string; destructive: string; subtle: string },
+): string | undefined {
   switch (status) {
-    case 'running':
+    case 'in_progress':
       return theme.accent
-    case 'errored':
+    case 'failed':
       return theme.destructive
-    case 'shutdown':
+    case 'requires_action':
       return theme.subtle
-    default:
+    case 'idle':
       return undefined
   }
 }
 
 export function registerSessions(program: Command): void {
-  const sessions = program.command('sessions').description('inspect persisted agent sessions')
+  const sessions = program.command('sessions').description('manage agent sessions (conversations)')
 
   const sessionsList = sessions
     .command('list')
-    .description('list sessions')
-    .option('--agent <name>', 'only sessions for this exact profile name')
+    .description('list sessions, newest first')
+    .option('--agent <agent>', 'only sessions of this agent (id or name)')
   addPageFlags(sessionsList)
   sessionsList.action(async (opts: PageFlags & { agent?: string }, cmd: Command) => {
-      const flags = globalFlags(cmd)
-      validatePage(opts, cmd)
-      const api = await apiContext(cmd)
-      // --agent maps to the server's ?profile= exact-equality filter (not the
-      // ?q= id/profile substring match, which would also catch, e.g.,
-      // "dev-helper" for "dev"), composed with pagination so the total reflects
-      // the filtered set. The client-side filter below is a belt-and-braces
-      // guard for servers that predate ?profile= and would ignore it.
-      const page = await fetchPageOrAll<Session>(opts, (params) =>
-        withApi(api, (c) => c.listSessions<Session>({ ...params, profile: opts.agent })),
+    const flags = globalFlags(cmd)
+    validatePage(opts, cmd)
+    const api = await apiContext(cmd)
+    const agentId = opts.agent
+      ? await withApi(api, async (c) => resolveAgentId(await c.v1(), opts.agent as string))
+      : undefined
+    const page = await fetchPageOrAll(opts, (params) =>
+      withApi(api, async (c) =>
+        toPage(await (await c.v1()).beta.agents.sessions.list({ ...params, ...(agentId ? { agent_id: agentId } : {}) })),
+      ),
+    )
+    const mode = outputMode(flags)
+    if (mode === 'json') {
+      printJson(page.items)
+      return
+    }
+    if (page.items.length === 0) {
+      console.error(hintText('No sessions yet. Start one with: orca chat <agent> "prompt"'))
+      return
+    }
+    if (mode === 'plain') {
+      printPlainRows(
+        page.items.map((s) => [s.id, s.agent.id, s.status, s.environment.type, formatTime(s.last_active_at)]),
       )
-      const items = opts.agent ? page.items.filter((s) => s.profile === opts.agent) : page.items
+      printPageHint(page)
+      return
+    }
+    const { Table } = await import('../ui/Table.js')
+    const { glyphs, theme } = await import('../ui/theme.js')
+    await renderStatic(
+      <Table
+        title="Sessions"
+        meta={pagedSubtitle(page)}
+        headers
+        hint="orca sessions get <id> · orca chat <agent> --session <id>"
+        columns={[
+          { header: 'id', get: (s: AgentSession) => s.id, color: () => theme.accent, bold: true },
+          { header: 'agent', get: (s: AgentSession) => s.agent.id },
+          {
+            header: 'status',
+            get: (s: AgentSession) => `${glyphs.statusFilled} ${s.status}`,
+            color: (s: AgentSession) => sessionStatusColor(s.status, theme),
+          },
+          { header: 'environment', get: (s: AgentSession) => s.environment.type },
+          { header: 'last active', get: (s: AgentSession) => formatTime(s.last_active_at) },
+        ]}
+        rows={page.items}
+      />,
+    )
+    printPageHint(page)
+  })
 
+  sessions
+    .command('get <id>')
+    .description('show one session')
+    .action(async (id: string, _opts: Record<string, never>, cmd: Command) => {
+      const flags = globalFlags(cmd)
+      const api = await apiContext(cmd)
+      const session = await withApi(api, async (c) => (await c.v1()).beta.agents.sessions.retrieve(id))
+      const mode = outputMode(flags)
+      if (mode === 'json') {
+        printJson(session)
+        return
+      }
+      const tokens = session.usage ? `${session.usage.input_tokens} in, ${session.usage.output_tokens} out` : '-'
+      if (mode === 'plain') {
+        printPlainRows([
+          ['id', session.id],
+          ['agent', session.agent.id],
+          ['status', session.status],
+          ['environment', session.environment.type],
+          ['created', formatTime(session.created_at)],
+          ['lastActive', formatTime(session.last_active_at)],
+          ['tokens', tokens],
+          ['error', session.error ?? '-'],
+        ])
+        return
+      }
+      const { Panel, Field } = await import('../ui/Panel.js')
+      const { theme } = await import('../ui/theme.js')
+      await renderStatic(
+        <Panel title={session.id} subtitle={session.agent.id}>
+          <Field label="status" value={session.status} valueColor={sessionStatusColor(session.status, theme)} />
+          <Field label="environment" value={session.environment.type} />
+          <Field label="created" value={formatTime(session.created_at)} />
+          <Field label="last active" value={formatTime(session.last_active_at)} />
+          <Field label="tokens" value={tokens} />
+          {session.vault_ids.length ? <Field label="vaults" value={session.vault_ids.join(', ')} /> : null}
+          {session.error ? <Field label="error" value={session.error} valueColor={theme.destructive} /> : null}
+        </Panel>,
+      )
+    })
+
+  addSessionCreateOptions(
+    sessions
+      .command('create')
+      .description('create a session of an agent; talk to it with orca chat <agent> --session <id>')
+      .requiredOption('--agent <agent>', 'the agent (id or name)'),
+  ).action(async (opts: SessionCreateFlags & { agent: string }, cmd: Command) => {
+    const flags = globalFlags(cmd)
+    const api = await apiContext(cmd)
+    const scope = await withApi(api, (c) => publishedScope(c))
+    const agentId = await withApi(api, (c) => sessionAgent(c, opts.agent, scope))
+    const params = sessionCreateParams(agentId, opts, scope)
+    const session = await withApi(api, async (c) => (await c.v1()).beta.agents.sessions.create(params))
+    if (outputMode(flags) === 'json') {
+      printJson(session)
+      return
+    }
+    if (!process.stdout.isTTY) {
+      process.stdout.write(session.id + '\n')
+      return
+    }
+    console.log(`${accentVerb('Created')} session ${session.id}.`)
+    console.error(hintText(`Talk to it: orca chat ${opts.agent} --session ${session.id}`))
+  })
+
+  sessions
+    .command('items <id>')
+    .description('show the latest conversation items of a session, oldest first')
+    .option('--limit <n>', 'how many items (1 to 100)', (v) => parseInt(v, 10), 20)
+    .action(async (id: string, opts: { limit: number }, cmd: Command) => {
+      const flags = globalFlags(cmd)
+      if (!Number.isFinite(opts.limit) || opts.limit < 1 || opts.limit > 100) {
+        throw new CliError('--limit must be an integer from 1 to 100', ExitCode.Usage)
+      }
+      const api = await apiContext(cmd)
+      const page = await withApi(api, async (c) =>
+        (await c.v1()).beta.agents.sessions.items.list(id, { limit: opts.limit, order: 'desc' }),
+      )
+      const items = [...page.data].reverse()
       const mode = outputMode(flags)
       if (mode === 'json') {
         printJson(items)
         return
       }
       if (items.length === 0) {
-        // Empty state names the command that creates a session. stderr only, so
-        // plain stdout stays empty (byte-identical) for scripts.
-        console.error(
-          hintText(
-            opts.agent
-              ? `No sessions for agent "${opts.agent}". Start one with: orca run ${opts.agent} "prompt"`
-              : 'No sessions yet. Start one with: orca run <agent> "prompt"',
-          ),
-        )
+        console.error(hintText('No items in this session yet.'))
         return
       }
       if (mode === 'plain') {
-        printPlainRows(
-          items.map((s) => [
-            s.id,
-            s.profile,
-            s.runtime,
-            s.status,
-            formatTimestamp(s.lastUsedAt),
-            s.runCount,
-          ]),
-        )
-        printPageHint(items.length, page.total)
+        printPlainRows(items.map((item) => [itemRole(item), itemText(item)]))
         return
       }
-
       const { Table } = await import('../ui/Table.js')
-      const { glyphs, theme } = await import('../ui/theme.js')
-      // Wide, multi-column table: header line + UPPERCASE labels + a `next:`
-      // hint. The status cell shows the tier glyph + word (`● running`), tinted
-      // by sessionStatusColor. Session status is a free string (idle/running/
-      // errored/shutdown), not a RunStatus, so the glyph is composed inline
-      // rather than through Table's RunStatus-typed statusDot helper.
+      const { theme } = await import('../ui/theme.js')
       await renderStatic(
         <Table
-          title="Sessions"
-          meta={pagedSubtitle(items.length, page.total)}
+          title="Items"
+          meta={[id, `${items.length} shown`]}
           headers
-          hint="orca sessions get <id> · orca runs list --agent <name>"
           columns={[
-            { header: 'id', get: (s: Session) => s.id, color: () => theme.accent, bold: true },
-            { header: 'profile', get: (s: Session) => s.profile },
-            { header: 'runtime', get: (s: Session) => s.runtime },
             {
-              header: 'status',
-              get: (s: Session) => `${glyphs.statusFilled} ${s.status}`,
-              color: (s: Session) => sessionStatusColor(s.status, theme),
+              header: 'role',
+              get: itemRole,
+              color: (item: AgentSessionItem) => (itemRole(item) === 'assistant' ? theme.accent : theme.subtle),
             },
-            { header: 'last used', get: (s: Session) => formatTimestamp(s.lastUsedAt) },
-            { header: 'runs', get: (s: Session) => String(s.runCount) },
+            { header: 'text', get: itemText },
           ]}
           rows={items}
         />,
       )
-      printPageHint(items.length, page.total)
     })
 
   sessions
-    .command('get <id>')
-    .description('show one session with its recent runs')
-    .action(async (id: string, _opts: Record<string, never>, cmd: Command) => {
+    .command('delete <id>')
+    .description('delete a session and its history')
+    .option('--yes', 'skip the confirmation prompt')
+    .action(async (id: string, opts: { yes?: boolean }, cmd: Command) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
-      const session = await withApi(api, (c) => c.request<Session>(`/api/sessions/${encodeURIComponent(id)}`))
-      // Run history is a second endpoint; degrade to the session's own runCount
-      // rather than failing the detail view when it is unavailable.
-      let runs: RunSummary[] | null = null
-      try {
-        runs = (await api.client.listSessionRuns(id)).items
-      } catch {
-        runs = null
+      if (!opts.yes) {
+        if (!interactive()) {
+          throw new CliError('refusing to delete without --yes in non-interactive mode', ExitCode.Usage)
+        }
+        if (!(await confirm(`Delete session ${id}?`))) {
+          console.error(hintText('Aborted.'))
+          return
+        }
       }
-
-      const mode = outputMode(flags)
-      if (mode === 'json') {
-        printJson({ ...session, runs: runs ?? [] })
-        return
-      }
-      if (mode === 'plain') {
-        printPlainRows([
-          ['id', session.id],
-          ['profile', session.profile],
-          ['runtime', session.runtime],
-          ['status', session.status],
-          ['created', formatTimestamp(session.createdAt)],
-          ['lastUsed', formatTimestamp(session.lastUsedAt)],
-          ['runCount', session.runCount],
-          ['lastRunStatus', session.lastRunStatus ?? '-'],
-        ])
-        return
-      }
-
-      const { Panel, Field } = await import('../ui/Panel.js')
-      const { Table } = await import('../ui/Table.js')
-      const { Box, Text } = await import('ink')
-      const { theme } = await import('../ui/theme.js')
-      const recent = (runs ?? []).slice(0, 5)
-      await renderStatic(
-        <Panel title={session.id} subtitle={session.profile}>
-          <Field label="runtime" value={session.runtime} />
-          <Field
-            label="status"
-            value={session.status}
-            valueColor={sessionStatusColor(session.status, theme)}
-          />
-          <Field label="created" value={formatTimestamp(session.createdAt)} />
-          <Field label="last used" value={formatTimestamp(session.lastUsedAt)} />
-          <Field label="runs" value={String(session.runCount)} />
-          {session.lastRunStatus ? (
-            <Field label="last run" value={session.lastRunStatus} />
-          ) : null}
-          {session.lastPrompt ? (
-            <Box flexDirection="column" marginTop={1}>
-              <Text color={theme.subtle}>last prompt</Text>
-              <Text color={theme.muted}>{session.lastPrompt}</Text>
-            </Box>
-          ) : null}
-          {recent.length > 0 ? (
-            <Box flexDirection="column" marginTop={1}>
-              <Text color={theme.subtle}>recent runs</Text>
-              <Table
-                columns={[
-                  { header: 'id', get: (r: RunSummary) => r.id, color: () => theme.accent, bold: true },
-                  { header: 'status', get: (r: RunSummary) => r.status },
-                  { header: 'started', get: (r: RunSummary) => formatTimestamp(r.startedAt) },
-                  {
-                    header: 'duration',
-                    get: (r: RunSummary) => (r.finishedAt ? formatDuration(r.startedAt, r.finishedAt) : '-'),
-                  },
-                ]}
-                rows={recent}
-              />
-            </Box>
-          ) : null}
-        </Panel>,
-      )
+      await withApi(api, async (c) => (await c.v1()).beta.agents.sessions.delete(id))
+      if (outputMode(flags) === 'json') printJson({ id, deleted: true })
+      else console.log(`${accentVerb('Deleted')} session ${id}.`)
     })
 }

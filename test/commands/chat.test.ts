@@ -1,307 +1,168 @@
-import { Command } from 'commander'
 import { Readable } from 'node:stream'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { describe, expect, it, vi } from 'vitest'
 
 import { registerChat } from '../../src/commands/chat.js'
 import { ExitCode } from '../../src/lib/errors.js'
+import { commandHarness, list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
-import { chunkedBytes, streamResponse } from '../helpers/sse-stream.js'
-import { useTmpConfigDir } from '../helpers/tmp-config.js'
+import { AGENT_ID, SESSION_ID, orgKeyRoutes, publishedKeyRoutes, session, turnEvents, turnRoutes } from '../helpers/session-events.js'
 
-const KEY = 'ao_dev_' + 'k'.repeat(32)
+const { run, stdout, stderr } = commandHarness(registerChat)
 
-function gwFrames(events: { event: string; data: unknown }[]): string {
-  let out = ''
-  events.forEach((e, i) => {
-    out += `id: p:${i}\nevent: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`
-  })
-  return out
-}
-
-function sseRoute(events: { event: string; data: unknown }[], sizes = [1000]) {
-  return () => streamResponse(chunkedBytes(gwFrames(events), sizes))
-}
-
-function buildProgram(): Command {
-  const program = new Command()
-  program.exitOverride()
-  program.option('--json', 'machine-readable JSON output')
-  program.option('--context <name>')
-  program.option('--api-url <url>')
-  registerChat(program)
-  return program
-}
-
-let out: string[]
-let err: string[]
-let cleanupConfig: () => Promise<void>
-
-beforeEach(async () => {
-  out = []
-  err = []
-  const tmp = await useTmpConfigDir()
-  cleanupConfig = tmp.cleanup
-  vi.stubEnv('ORCA_GATEWAY_URL', 'http://gw:8090')
-  vi.stubEnv('ORCA_CHAT_KEY', KEY)
-  vi.stubEnv('ORCA_TENANT', 'org_x')
-  vi.stubEnv('NO_COLOR', '1')
-  vi.spyOn(process.stdout, 'write').mockImplementation((s: unknown) => {
-    out.push(typeof s === 'string' ? s : String(s))
-    return true
-  })
-  vi.spyOn(process.stderr, 'write').mockImplementation((s: unknown) => {
-    err.push(typeof s === 'string' ? s : String(s))
-    return true
-  })
-})
-
-afterEach(async () => {
-  vi.unstubAllGlobals()
-  vi.unstubAllEnvs()
-  vi.restoreAllMocks()
-  await cleanupConfig()
-})
-
-const doneStream = [
-  { event: 'delta', data: { text: 'Hello ' } },
-  { event: 'delta', data: { text: 'world' } },
-  { event: 'done', data: { conversation_id: 'conv_1', public_run_id: 'prun_1', message: 'Hello world' } },
-]
-
-describe('orca chat single-shot (plain)', () => {
-  it('streams plain answer text to stdout with a single trailing newline and zero ANSI', async () => {
-    stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(doneStream, [3]) })
-    await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'say', 'hi'])
-    const stdout = out.join('')
-    expect(stdout).toBe('Hello world\n')
-    // eslint-disable-next-line no-control-regex
-    expect(stdout).not.toMatch(/\x1b\[/)
-  })
-
-  it('neutralizes escape sequences injected by the gateway, even when piped', async () => {
-    const evil = [
-      { event: 'delta', data: { text: 'safe \x1b]0;pwn\x07' } },
-      { event: 'delta', data: { text: 'text\x1b[2J done' } },
-      { event: 'done', data: { conversation_id: 'conv_1', message: '' } },
-    ]
-    stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(evil) })
-    await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi'])
-    const stdout = out.join('')
-    expect(stdout).toBe('safe text done\n')
-    expect(stdout).not.toContain('\x1b')
-  })
-
-  it('prints the conversation id to stderr so scripts can capture it', async () => {
-    stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(doneStream) })
-    await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi'])
-    expect(err.join('')).toContain('conversation conv_1')
-    // The answer never leaks the chat key.
-    expect(out.join('') + err.join('')).not.toContain(KEY)
-  })
-
-  it('prints one named tool line and suppresses its successful completion', async () => {
-    const toolStream = [
-      { event: 'tool', data: { id: 'tc1', name: 'mcp__runner__read_file', status: 'running' } },
-      { event: 'tool', data: { id: 'tc1', status: 'ok' } },
-      ...doneStream,
-    ]
-    stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(toolStream) })
-    const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY')
-    Object.defineProperty(process.stderr, 'isTTY', { value: true, configurable: true })
-    try {
-      await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi'])
-    } finally {
-      if (ttyDescriptor) Object.defineProperty(process.stderr, 'isTTY', ttyDescriptor)
-      else Reflect.deleteProperty(process.stderr, 'isTTY')
-    }
-
-    const toolOutput = err.join('')
-    expect(toolOutput.match(/read_file/g)).toHaveLength(1)
-    expect(toolOutput).not.toContain('tool tool')
-    expect(toolOutput).not.toContain(' ok')
-  })
-
-  it('passes --conversation through as conversation_id', async () => {
-    const calls = stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(doneStream) })
-    await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi', '--conversation', 'conv_prev'])
-    expect(JSON.parse(calls[0].body!)).toMatchObject({ message: 'hi', conversation_id: 'conv_prev' })
-  })
-
-  it('documents --tenant as a tenant id and --conversation for both modes', () => {
-    const chat = buildProgram().commands.find((c) => c.name() === 'chat')!
-    const help = chat.helpInformation()
-    // The value is the org_... id the gateway path carries, not a slug.
-    expect(help).toContain('--tenant <id>')
-    expect(help).toContain('tenant id (org_...)')
-    expect(help).not.toContain('<slug>')
-    // The REPL seeds from --conversation too, so it is not single-shot only.
-    expect(help).toContain('single-shot or REPL')
-  })
-
-  it('reads the message from piped stdin when no prompt arg is given', async () => {
-    const calls = stubFetch({ 'POST /v1/chat/org_x/support/stream': sseRoute(doneStream) })
-    const original = process.stdin
-    Object.defineProperty(process, 'stdin', {
-      value: Readable.from([Buffer.from('summarize this\n')]),
-      configurable: true,
+describe('orca chat (single shot)', () => {
+  it('creates a session of the agent, streams the reply, and names the session on stderr', async () => {
+    const calls = stubFetch({
+      ...orgKeyRoutes(),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
     })
-    try {
-      await buildProgram().parseAsync(['node', 'orca', 'chat', 'support'])
-    } finally {
-      Object.defineProperty(process, 'stdin', { value: original, configurable: true })
-    }
-    expect(JSON.parse(calls[0].body!)).toMatchObject({ message: 'summarize this' })
-    expect(out.join('')).toBe('Hello world\n')
-  })
-})
+    await run(['chat', AGENT_ID, 'hi', 'there'])
 
-describe('orca chat single-shot (--json)', () => {
-  it('emits one ndjson object per gateway event, skipping heartbeats', async () => {
-    const withPing = () =>
-      streamResponse(
-        chunkedBytes(
-          'event: delta\ndata: {"text":"Hi"}\n\n: ping\n\nevent: done\ndata: {"conversation_id":"conv_9","message":"Hi"}\n\n',
-          [1000],
-        ),
-      )
-    stubFetch({ 'POST /v1/chat/org_x/support/stream': withPing })
-    await buildProgram().parseAsync(['node', 'orca', '--json', 'chat', 'support', 'hi'])
-    const lines = out
-      .join('')
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => JSON.parse(l))
-    expect(lines).toEqual([
-      { event: 'delta', data: { text: 'Hi' } },
-      { event: 'done', data: { conversation_id: 'conv_9', message: 'Hi' } },
-    ])
+    const created = JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}')
+    expect(created).toEqual({ agent_id: AGENT_ID, environment: { type: 'none' } })
+    const input = JSON.parse(calls.find((c) => c.method === 'POST' && c.path.endsWith('/events'))?.body ?? '{}')
+    expect(input.events[0]).toEqual({
+      type: 'agent.session.input.message',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi there' }] }],
+    })
+    // Two message items read as two paragraphs.
+    expect(stdout()).toBe('Let me look.\n\nHello there\n')
+    expect(stderr()).toContain(`session ${SESSION_ID}`)
   })
-})
 
-describe('orca chat exit codes', () => {
-  it('exits 1 on a terminal gateway error event', async () => {
+  it('continues a session with --session, creating nothing', async () => {
+    const calls = stubFetch(turnRoutes(turnEvents()))
+    await run(['chat', 'support', '--session', SESSION_ID, 'again'])
+    expect(calls.some((c) => c.path === '/v1/agents/sessions')).toBe(false)
+    expect(stdout()).toContain('Hello there')
+  })
+
+  it('asks for a hosted sandbox from a template and attaches vaults', async () => {
+    const calls = stubFetch({
+      ...orgKeyRoutes(),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
+    })
+    await run(['chat', AGENT_ID, '--template', 'tmpl_1', '--vault', 'vault_1', 'go'])
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}')).toEqual({
+      agent_id: AGENT_ID,
+      environment: { type: 'openai_hosted', environment_template_id: 'tmpl_1' },
+      vault_ids: ['vault_1'],
+    })
+  })
+
+  it('reads the prompt from stdin', async () => {
+    const calls = stubFetch({
+      ...orgKeyRoutes(),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
+    })
+    // The test runner's stdin is not a TTY, so the command reads it.
+    vi.spyOn(process.stdin, Symbol.asyncIterator).mockImplementation(
+      () => Readable.from([Buffer.from('from stdin\n')])[Symbol.asyncIterator]() as never,
+    )
+    await run(['chat', AGENT_ID])
+    const input = JSON.parse(calls.find((c) => c.method === 'POST' && c.path.endsWith('/events'))?.body ?? '{}')
+    expect(input.events[0].input[0].content[0].text).toBe('from stdin')
+  })
+
+  it('fails with the turn error after printing what arrived', async () => {
+    stubFetch({ ...orgKeyRoutes(), 'POST /v1/agents/sessions': jsonResponse(session()), ...turnRoutes(turnEvents('failed')) })
+    await expect(run(['chat', AGENT_ID, 'hi'])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+      message: 'Out of credit',
+    })
+  })
+
+  it('emits each raw session event as NDJSON with --json', async () => {
+    stubFetch({ ...orgKeyRoutes(), 'POST /v1/agents/sessions': jsonResponse(session()), ...turnRoutes(turnEvents()) })
+    await run(['--json', 'chat', AGENT_ID, 'hi'])
+    const lines = stdout().trim().split('\n').map((l) => JSON.parse(l) as { type: string })
+    expect(lines[0].type).toBe('agent.session.turn.created')
+    expect(lines.at(-1)?.type).toBe('agent.session.idle')
+  })
+
+  it('maps an out-of-credit refusal before the stream opens', async () => {
     stubFetch({
-      'POST /v1/chat/org_x/support/stream': sseRoute([
-        { event: 'delta', data: { text: 'partial' } },
-        { event: 'error', data: { code: 'upstream', message: 'conductor failed mid-run' } },
-      ]),
+      ...orgKeyRoutes(),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
+      [`POST /v1/agents/sessions/${SESSION_ID}/events`]: jsonResponse(
+        { error: { message: 'Out of credit', code: 'insufficient_quota' } },
+        { status: 429 },
+      ),
     })
-    await expect(
-      buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Failure })
+    await expect(run(['chat', AGENT_ID, 'hi'])).rejects.toMatchObject({ message: '429: Out of credit' })
   })
 
-  it('exits 3 (auth) on a 401 from the gateway', async () => {
-    stubFetch({
-      'POST /v1/chat/org_x/support/stream': jsonResponse({ error: 'unauthorized' }, { status: 401 }),
-    })
-    await expect(
-      buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
-  })
-
-  it('exits 4 (not found) on a 404 from the gateway', async () => {
-    stubFetch({
-      'POST /v1/chat/org_x/nope/stream': jsonResponse({ error: 'not_found' }, { status: 404 }),
-    })
-    await expect(
-      buildProgram().parseAsync(['node', 'orca', 'chat', 'nope', 'hi']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.NotFound })
-  })
-
-  it('exits 3 (auth) when no chat key is configured', async () => {
-    vi.stubEnv('ORCA_CHAT_KEY', '')
-    await expect(
-      buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
-  })
-
-  it('exits 2 (usage) when no tenant is configured', async () => {
-    vi.stubEnv('ORCA_TENANT', '')
-    await expect(
-      buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
-  })
-
-  it('falls back to the baked-in production gateway when none is configured', async () => {
-    vi.stubEnv('ORCA_GATEWAY_URL', '')
+  it('resolves an agent name', async () => {
     const calls = stubFetch({
-      'POST /v1/chat/org_x/support/stream': jsonResponse({ error: 'unauthorized' }, { status: 401 }),
+      ...orgKeyRoutes(),
+      'GET /v1/agents/support': jsonResponse({ error: { message: 'Agent not found' } }, { status: 404 }),
+      'GET /v1/agents?limit=100': jsonResponse(list([{ id: AGENT_ID, name: 'support' }])),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
     })
-    await expect(
-      buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
-    // The request must have targeted the baked-in default host.
-    expect(calls[0].host).toBe('chat.orcapods.ai')
+    await run(['chat', 'support', 'hi'])
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}').agent_id).toBe(AGENT_ID)
   })
 
-  it('upgrades a context still pinned to the former Railway gateway host', async () => {
-    vi.stubEnv('ORCA_GATEWAY_URL', 'https://chat-gateway-production-b766.up.railway.app')
-    const calls = stubFetch({
-      'POST /v1/chat/org_x/support/stream': jsonResponse({ error: 'unauthorized' }, { status: 401 }),
-    })
-    await expect(
-      buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
-    // The stale first-party default is rewritten, not honoured.
-    expect(calls[0].host).toBe('chat.orcapods.ai')
-  })
-
-  it('leaves a self-hosted gateway alone', async () => {
-    vi.stubEnv('ORCA_GATEWAY_URL', 'https://gateway.internal.example')
-    const calls = stubFetch({
-      'POST /v1/chat/org_x/support/stream': jsonResponse({ error: 'unauthorized' }, { status: 401 }),
-    })
-    await expect(
-      buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Auth })
-    expect(calls[0].host).toBe('gateway.internal.example')
+  it('requires an agent when not interactive', async () => {
+    stubFetch(orgKeyRoutes())
+    await expect(run(['chat'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
   })
 })
 
-describe('orca chat missing agent (non-interactive)', () => {
-  it('errors with a usage exit code when the agent arg is omitted and stdin is not a TTY', async () => {
-    // The picker only opens in an interactive TTY; the non-TTY path keeps the
-    // byte-identical missing-arg usage error so scripts and CI stay unchanged.
-    stubFetch({})
-    await expect(buildProgram().parseAsync(['node', 'orca', 'chat'])).rejects.toMatchObject({
-      exitCode: ExitCode.Usage,
+describe('orca chat with a published agent\'s key', () => {
+  it('names the published environment and vaults, and needs no agent', async () => {
+    const calls = stubFetch({
+      ...publishedKeyRoutes({ type: 'openai_hosted', environment_template_id: 'envtmpl_1' }, ['vault_1']),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
     })
+    await run(['chat', AGENT_ID, 'hi'])
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}')).toEqual({
+      agent_id: AGENT_ID,
+      environment: { type: 'openai_hosted', environment_template_id: 'envtmpl_1' },
+      vault_ids: ['vault_1'],
+    })
+    // It reads no agent: a published key may not.
+    expect(calls.some((c) => c.path.startsWith('/v1/agents/agent_'))).toBe(false)
   })
 
-  it('errors with a usage exit code when the agent arg is omitted under --json', async () => {
-    stubFetch({})
-    await expect(
-      buildProgram().parseAsync(['node', 'orca', '--json', 'chat']),
-    ).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+  it('refuses what its publisher chose, and another agent', async () => {
+    stubFetch(publishedKeyRoutes())
+    await expect(run(['chat', AGENT_ID, '--vault', 'vault_9', 'hi'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    await expect(run(['chat', 'agent_' + '2'.repeat(32), 'hi'])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
   })
 })
 
-describe('orca chat tenant resolution', () => {
-  it('resolves the tenant by paging the published set when the slug is past the first page', async () => {
-    // No ORCA_TENANT, but a conductor key is configured, so the arg is treated
-    // as a slug and resolved by walking every page of the published set.
-    vi.stubEnv('ORCA_TENANT', '')
-    vi.stubEnv('ORCA_API_URL', 'http://api:8080')
-    vi.stubEnv('ORCA_API_KEY', 'ao_dev_' + 'k'.repeat(30))
-    const firstPub = Array.from({ length: 200 }, (_, i) => ({
-      profileName: `p${i}`,
-      slug: `slug${i}`,
-      tenantId: 'org_a',
-      publicUrl: 'https://x',
-    }))
-    const hit = { profileName: 'support', slug: 'support', tenantId: 'org_z', publicUrl: 'https://x' }
-    const calls = stubFetch({
-      'GET /api/profiles/support/published': jsonResponse({ error: 'not published' }, { status: 404 }),
-      'GET /api/published?limit=200': jsonResponse({ publishedAgents: firstPub, total: 201 }),
-      'GET /api/published?limit=200&offset=200': jsonResponse({ publishedAgents: [hit], total: 201 }),
-      'POST /v1/chat/org_z/support/stream': sseRoute(doneStream),
+describe('orca chat keeps its session id', () => {
+  it('names the session even when the turn is refused after it was made', async () => {
+    stubFetch({
+      ...orgKeyRoutes(),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
+      [`POST /v1/agents/sessions/${SESSION_ID}/events`]: jsonResponse({ error: { message: 'Out of credit', code: 'insufficient_quota' } }, { status: 429 }),
     })
-    await buildProgram().parseAsync(['node', 'orca', 'chat', 'support', 'hi'])
-    expect(out.join('')).toBe('Hello world\n')
-    // The gateway request landed on the tenant resolved from the second page.
-    expect(calls.some((c) => c.path === '/api/published?limit=200&offset=200')).toBe(true)
-    expect(calls.some((c) => c.path === '/v1/chat/org_z/support/stream')).toBe(true)
+    await expect(run(['chat', AGENT_ID, 'hi'])).rejects.toMatchObject({ message: '429: Out of credit' })
+    expect(stderr()).toContain(`session ${SESSION_ID}`)
+  })
+})
+
+describe('agent references', () => {
+  it('reads an id as an id by asking the server, not by its shape', async () => {
+    // A name shaped like an id: only the server can tell.
+    const lookalike = 'agent_' + 'f'.repeat(32)
+    const calls = stubFetch({
+      [`GET /v1/agents/${lookalike}`]: jsonResponse({ error: { message: 'Agent not found' } }, { status: 404 }),
+      'GET /v1/agents?limit=100': jsonResponse(list([{ id: AGENT_ID, name: lookalike }])),
+      'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'key_1', role: 'admin', agent: null }),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
+    })
+    await run(['chat', lookalike, 'hi'])
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}').agent_id).toBe(AGENT_ID)
   })
 })

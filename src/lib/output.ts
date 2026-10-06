@@ -27,14 +27,6 @@ export function printPlainRows(rows: (string | number | null | undefined)[][]): 
   }
 }
 
-// renderInk mounts a self-managed Ink view (one that calls exit() itself,
-// e.g. the run tail) and resolves when it exits.
-export async function renderInk(element: ReactElement): Promise<void> {
-  const { render } = await import('ink')
-  const instance = render(element, { exitOnCtrlC: true })
-  await instance.waitUntilExit()
-}
-
 // renderStatic mounts a one-shot view (tables, detail panels, key reveal)
 // that has no exit logic of its own: paint the first frame, then unmount so
 // control returns to the shell. Without this, waitUntilExit() never resolves

@@ -1,6 +1,6 @@
 import type { Command } from 'commander'
 
-import { ApiClient, mapApiError, type Paged, type PageParams } from '../lib/api.js'
+import { ApiClient, FETCH_ALL_MAX_ROWS, FETCH_ALL_PAGE_SIZE, mapApiError, type Page, type PageParams } from '../lib/api.js'
 import {
   requireApiKey,
   requireApiUrl,
@@ -17,136 +17,91 @@ export function globalFlags(cmd: Command): GlobalFlags {
 }
 
 // -- Pagination -----------------------------------------------------------
-// Every list command shares one pagination shape: a --limit (defaulting to
-// 10, uniform across table/plain/json), a --offset (both forwarded to the
-// server), and an --all escape hatch that walks every page. Table/plain views
-// also print a "Showing X of Y" hint on stderr once the server has more rows
-// than the page returned. Keeping this here means the flags, defaults, help
-// text, and hint stay identical everywhere.
+// Every list command shares one pagination shape over the server's cursor
+// lists: a --limit (defaulting to 10, uniform across table/plain/json), an
+// --after cursor (the last id of the previous page), and an --all escape hatch
+// that walks every page. Table/plain views print a hint on stderr naming the
+// next cursor when the server has more rows. Keeping this here means the
+// flags, defaults, help text, and hint stay identical everywhere.
 
 export const DEFAULT_PAGE_LIMIT = 10
 
-// The server caps any single list request at 200 rows; --all pages through in
-// windows of this size, up to a hard safety ceiling.
-export const FETCH_ALL_PAGE_SIZE = 200
-export const FETCH_ALL_MAX_ROWS = 10_000
 
-export type PageFlags = { limit: number; offset?: number; all?: boolean }
+export type PageFlags = { limit: number; after?: string; all?: boolean }
 
-// addPageFlags attaches the uniform --limit/--offset/--all options. Coercion
+// addPageFlags attaches the uniform --limit/--after/--all options. Coercion
 // is a plain parseInt (validation lives in validatePage, matching the
-// codebase's validate-in-the-action convention). Pass a different default
-// (e.g. 200) for a join that must see the full set rather than a user-facing
-// page.
-export function addPageFlags(cmd: Command, defaultLimit: number = DEFAULT_PAGE_LIMIT): Command {
+// codebase's validate-in-the-action convention).
+export function addPageFlags(cmd: Command): Command {
   return cmd
-    .option('--limit <n>', 'page size', (v) => parseInt(v, 10), defaultLimit)
-    .option('--offset <n>', 'page offset', (v) => parseInt(v, 10))
-    .option('--all', 'fetch every page (cannot be combined with --limit/--offset)')
+    .option('--limit <n>', 'page size (1 to 100)', (v) => parseInt(v, 10), DEFAULT_PAGE_LIMIT)
+    .option('--after <id>', 'start after this id (the cursor the previous page printed)')
+    .option('--all', 'fetch every page (cannot be combined with --limit/--after)')
 }
 
-// validatePage rejects a non-positive limit or negative offset as a usage
-// error before the value ever reaches the API. When --all is set it instead
-// rejects an explicitly-supplied --limit/--offset (they contradict --all); the
-// bounds checks are skipped because --all supplies its own page window. The
-// command is consulted so a value left at its default does not count as an
-// explicit override.
-export function validatePage(
-  opts: { limit?: number; offset?: number; all?: boolean },
-  cmd?: Command,
-): void {
+// validatePage rejects a limit outside the server's 1 to 100 as a usage error
+// before the value ever reaches the API. When --all is set it instead rejects
+// an explicitly-supplied --limit/--after (they contradict --all). The command
+// is consulted so a value left at its default does not count as an explicit
+// override.
+export function validatePage(opts: { limit?: number; after?: string; all?: boolean }, cmd?: Command): void {
   if (opts.all) {
     const limitFromCli = cmd?.getOptionValueSource('limit') === 'cli'
-    const offsetFromCli = cmd?.getOptionValueSource('offset') === 'cli'
-    if (limitFromCli || offsetFromCli) {
-      throw new CliError('--all cannot be combined with --limit or --offset', ExitCode.Usage)
+    if (limitFromCli || opts.after !== undefined) {
+      throw new CliError('--all cannot be combined with --limit or --after', ExitCode.Usage)
     }
     return
   }
-  if (opts.limit != null && (!Number.isFinite(opts.limit) || opts.limit <= 0)) {
-    throw new CliError('--limit must be a positive integer', ExitCode.Usage)
-  }
-  if (opts.offset != null && (!Number.isFinite(opts.offset) || opts.offset < 0)) {
-    throw new CliError('--offset must be a non-negative integer', ExitCode.Usage)
+  if (opts.limit != null && (!Number.isFinite(opts.limit) || opts.limit < 1 || opts.limit > 100)) {
+    throw new CliError('--limit must be an integer from 1 to 100', ExitCode.Usage)
   }
 }
 
-// fetchAll walks every page of a list endpoint, concatenating the rows into
-// one array. It reads FETCH_ALL_PAGE_SIZE rows at a time and stops once a page
-// comes back short or the server's reported total is reached. A hard cap of
-// FETCH_ALL_MAX_ROWS guards against an unbounded loop; hitting it prints a
-// stderr warning and returns the truncated set. The returned total is the
-// number of rows actually collected, so callers render an "N total" subtitle
-// and never a "Showing X of Y" hint over an already-complete set.
-export async function fetchAll<T>(
-  fetchPage: (params: PageParams) => Promise<Paged<T>>,
-): Promise<Paged<T>> {
+// fetchAll walks every page of a cursor list, concatenating the rows into one
+// array. A hard cap of FETCH_ALL_MAX_ROWS guards against an unbounded loop;
+// hitting it prints a stderr warning and returns the truncated set.
+export async function fetchAll<T>(fetchPage: (params: PageParams) => Promise<Page<T>>): Promise<Page<T>> {
   const items: T[] = []
-  let offset = 0
+  let after: string | undefined
   for (;;) {
-    // Keep the first request identical to a plain single-page fetch (no
-    // offset=0) so a set that fits in one page makes exactly one call.
-    const page = await fetchPage(
-      offset === 0 ? { limit: FETCH_ALL_PAGE_SIZE } : { limit: FETCH_ALL_PAGE_SIZE, offset },
-    )
+    const page = await fetchPage(after ? { limit: FETCH_ALL_PAGE_SIZE, after } : { limit: FETCH_ALL_PAGE_SIZE })
     items.push(...page.items)
-    // A short page (fewer rows than requested) is always the last one.
-    if (page.items.length < FETCH_ALL_PAGE_SIZE) break
-    offset += FETCH_ALL_PAGE_SIZE
-    // The server's own total tells us when the whole set has been walked.
-    if (offset >= page.total) break
-    // Safety valve: never loop unboundedly. Warn and return what we have.
+    if (!page.hasMore || !page.lastId) break
     if (items.length >= FETCH_ALL_MAX_ROWS) {
       console.error(
-        hintText(
-          `Stopped at the ${FETCH_ALL_MAX_ROWS}-row --all cap; narrow the set or page with --limit/--offset.`,
-        ),
+        hintText(`Stopped at the ${FETCH_ALL_MAX_ROWS}-row --all cap; page with --limit/--after instead.`),
       )
-      break
+      items.length = FETCH_ALL_MAX_ROWS
+      return { items, hasMore: true, lastId: null }
     }
+    after = page.lastId
   }
-  if (items.length > FETCH_ALL_MAX_ROWS) items.length = FETCH_ALL_MAX_ROWS
-  return { items, total: items.length }
+  return { items, hasMore: false, lastId: null }
 }
 
 // fetchPageOrAll resolves the fetch strategy for a list command: --all walks
-// every page, otherwise a single page of opts.limit/opts.offset is read. The
-// fetchPage closure should already wrap its client call in withApi so both
+// every page, otherwise a single page of opts.limit after opts.after is read.
+// The fetchPage closure should already wrap its client call in withApi so both
 // paths share the exit-code contract.
 export async function fetchPageOrAll<T>(
   opts: PageFlags,
-  fetchPage: (params: PageParams) => Promise<Paged<T>>,
-): Promise<Paged<T>> {
+  fetchPage: (params: PageParams) => Promise<Page<T>>,
+): Promise<Page<T>> {
   if (opts.all) return fetchAll(fetchPage)
-  const limit = opts.limit ?? DEFAULT_PAGE_LIMIT
-  const offset = opts.offset ?? 0
-  const page = await fetchPage({ limit: opts.limit, offset: opts.offset })
-  // Servers that predate pagination ignore limit/offset and return the whole
-  // set. A page larger than the requested limit can only mean that, so emulate
-  // the window client-side; total keeps the full count so the hint still fires.
-  if (page.items.length > limit) {
-    return {
-      items: page.items.slice(offset, offset + limit),
-      total: Math.max(page.total, page.items.length),
-    }
-  }
-  return page
+  return fetchPage({ limit: opts.limit ?? DEFAULT_PAGE_LIMIT, ...(opts.after ? { after: opts.after } : {}) })
 }
 
-// pagedSubtitle renders the Panel subtitle: "X of Y" when the server has more,
-// else "N total".
-export function pagedSubtitle(shown: number, total: number): string {
-  return total > shown ? `${shown} of ${total}` : `${shown} total`
+// pagedSubtitle renders the Panel subtitle: "N shown, more available" when the
+// server has more, else "N total".
+export function pagedSubtitle(page: Page<unknown>): string {
+  return page.hasMore ? `${page.items.length} shown, more available` : `${page.items.length} total`
 }
 
-// printPageHint writes the "Showing X of Y" hint to stderr (never stdout, so
-// json/plain piping stays clean) only when the server holds more rows than the
-// page returned.
-export function printPageHint(shown: number, total: number): void {
-  if (total > shown) {
-    console.error(
-      hintText(`Showing ${shown} of ${total}. Use --limit/--offset or --all for more.`),
-    )
+// printPageHint writes the next-page hint to stderr (never stdout, so
+// json/plain piping stays clean) only when the server holds more rows.
+export function printPageHint(page: Page<unknown>): void {
+  if (page.hasMore && page.lastId) {
+    console.error(hintText(`More rows: add --after ${page.lastId}, or use --all.`))
   }
 }
 
@@ -163,6 +118,7 @@ export async function apiContext(cmd: Command): Promise<ApiContext> {
     apiUrl: requireApiUrl(resolved),
     apiKey: requireApiKey(resolved),
     contextName: resolved.name,
+    dashboardUrl: resolved.dashboardUrl,
   })
   return { client, resolved }
 }

@@ -2,7 +2,7 @@
 //
 // The CLI ships as Bun-compiled binaries published to GitHub Releases on the
 // public repo below (tags `cli-v<semver>`, assets `orca-<os>-<arch>.tar.gz`
-// plus a SHA256SUMS manifest — see scripts/build-binary.ts and
+// plus a SHA256SUMS manifest; see scripts/build-binary.ts and
 // scripts/package-binaries.sh). `orca update` downloads the matching asset,
 // verifies its checksum, and atomically swaps it over the running executable.
 // The `-v` update hint (lib/update-check.ts) reuses fetchLatestRelease.
@@ -216,7 +216,7 @@ export type UpdateHooks = { fetchImpl?: typeof fetch; onProgress?: (msg: string)
 
 // Downloads the release asset for env's platform, verifies its SHA-256 against
 // the release's SHA256SUMS manifest, and atomically swaps it over the running
-// executable. Returns the installed path. Unix only — the caller must exclude
+// executable. Returns the installed path. Unix only: the caller must exclude
 // Windows (a running .exe cannot replace itself). Staging happens inside the
 // executable's own directory so the final rename is same-filesystem (atomic)
 // and works even while the old binary is still running.

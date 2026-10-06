@@ -1,51 +1,50 @@
 # Orca API cookbook
 
-For anything the CLI or the curated MCP tools do not cover, use the raw API. The full schema is machine-readable and unauthenticated:
+For anything the CLI or the MCP tools do not cover, use the raw API. Auth is one header everywhere: `Authorization: Bearer <orca_sk_key>`.
 
-- https://api.orcapods.ai/api/openapi.yaml (spec)
-- https://api.orcapods.ai/api/docs (interactive viewer)
-- The `orca://openapi` MCP resource (same spec, no network hop needed)
+The server has two surfaces:
 
-Auth is one header everywhere: `Authorization: Bearer <ao_key>`.
+- `/v1`: the OpenAI-compatible Agents API (agents, sessions, skills, vaults, files, environment templates). Use the official `openai` package (TypeScript or Python) with `baseURL` set to `https://api.orcapods.ai/v1` and the Orca key as the API key.
+- `/api`: Orca's own routes (whoami, keys, usage, billing, kits, publishing, device login).
 
-## Via the MCP api_request tool
+## /v1 through the openai package
 
-```json
-{ "method": "GET", "path": "/api/pools" }
-{ "method": "POST", "path": "/api/runs", "body": { "profile": "support", "prompt": "triage", "title": "triage" } }
-{ "method": "GET", "path": "/api/stats/summary", "query": { "window": "7d" } }
-{ "method": "PUT", "path": "/api/spend-cap", "body": { "monthlyCapCents": 5000 } }
+```ts
+import OpenAI from 'openai'
+
+const client = new OpenAI({ apiKey: process.env.ORCA_API_KEY, baseURL: 'https://api.orcapods.ai/v1' })
+const agent = await client.beta.agents.create({ model: 'openai/gpt-5', name: 'support', instructions: 'Be brief.' })
+const session = await client.beta.agents.sessions.create({ agent_id: agent.id, environment: { type: 'none' } })
+for await (const event of client.beta.agents.sessions.stream(session.id, { input: 'Hello' })) {
+  if (event.type === 'agent.session.turn.output_text.delta') process.stdout.write(event.delta)
+}
 ```
 
-Rules: `path` must start with `/api/`; responses are truncated at about 50KB, so page with `query: {"limit": "..."}` where the endpoint supports it.
+Environment templates (a hosted sandbox's files and skills) are `client.beta.agents.environments.templates`; pass a template's id as `environment: { type: 'openai_hosted', environment_template_id }`.
 
-## Via curl
+## /api with curl
 
 ```bash
 K="Authorization: Bearer $ORCA_API_KEY"
 B=https://api.orcapods.ai
 
-curl -s -H "$K" $B/api/whoami                          # who am I
-curl -s -H "$K" $B/api/profiles                        # agents
-curl -s -H "$K" -X POST $B/api/runs \
-  -d '{"profile":"support","prompt":"triage the inbox","title":"triage"}'
-curl -s -H "$K" $B/api/runs/<id>                       # status + buffered events
-curl -s -N -H "$K" $B/api/runs/<id>/stream             # SSE until terminal
-curl -s -H "$K" $B/api/runs/<id>/events                # NDJSON replay
-curl -s -H "$K" $B/api/skills                          # skill catalog
-curl -s -H "$K" $B/api/sessions                        # sessions
-curl -s -H "$K" $B/api/pools                           # agent pools
-curl -s -H "$K" $B/api/workflows                       # workflow definitions
-curl -s -H "$K" $B/api/billing/wallet                  # credits
-curl -s -H "$K" $B/api/usage                           # metered usage
+curl -s -H "$K" $B/api/whoami                                  # tenant, actor, role
+curl -s -H "$K" "$B/api/keys?limit=20"                         # API keys (no secrets)
+curl -s -H "$K" "$B/api/usage?group_by=model"                  # cost per meter and model, last 30 days
+curl -s -H "$K" "$B/api/usage/events?limit=20&meter=model_tokens"
+curl -s -H "$K" $B/api/billing/wallet                          # balance and plan
+curl -s -H "$K" $B/api/kits                                    # this organization's kits
+curl -s $B/api/public/kits/kit-xxxxxxxxxxxxxxxxx               # a published kit, no auth
+curl -s -H "$K" -X POST $B/api/kits/kit-xxxxxxxxxxxxxxxxx/copy \
+  -H 'Content-Type: application/json' -d '{"assets":[{"key":"agent-1","name":"support"}]}'
+curl -s -H "$K" $B/api/agents/<agent_id>/published-keys
+curl -s -H "$K" -X POST $B/api/agents/<agent_id>/publish \
+  -H 'Content-Type: application/json' -d '{"label":"website","environment_template_id":"envtmpl_...","vault_ids":["vault_..."]}'
 ```
-
-## Resource groups in the spec
-
-Profiles (agents, revisions, publish, keys, memories, metrics, usage), Runs (create, get, events, stream, terminate), Sessions, Pools, Workflows (definitions, runs, schedules), Skills (CRUD, import, resources), Storage, Memory bank, Secrets, MCP-server catalog, Connected apps, Capabilities, Stats, Usage, Billing, Spend cap, API keys, Topology, Publishing.
 
 ## Notes
 
-- List endpoints are paginated: `?limit=` and `?offset=`, with totals in the `X-Total-Count` header.
-- POST /api/runs returns 202 with `{runId, sessionId}`; the run executes asynchronously.
-- Keys are role-inheriting and have no scopes: treat an admin key as admin everywhere.
+- Money is micro-USD (`cost_micro_usd`, `balance_micro_usd`) and computed by the server; format it, never recompute it.
+- Lists use cursors: `?limit=` (1 to 100) and `?after=<last id>`, with `has_more` in the body.
+- Errors are `{"error": {"message", "type", "param", "code"}}`; rate limits and out-of-credit answer 429 with a `code` of `rate_limit_exceeded` or `insufficient_quota`.
+- A key carries the role of whoever minted it; a published agent's key reaches only that agent's sessions. Its session create must name the environment (and, optionally, the vaults) its publisher fixed: `GET /api/whoami` with the key returns them as `environment` and `vault_ids`, and anything else is refused with the values to send.

@@ -27,7 +27,7 @@ type PickerProps = {
 //
 // TextInput owns the query text (character input, backspace); useInput owns
 // navigation (arrows, enter, escape). Enter is handled here, not by TextInput,
-// so an empty query never submits the raw text — it always selects a row.
+// so an empty query never submits the raw text: it always selects a row.
 export function Picker({ items, onSubmit, onCancel, placeholder }: PickerProps) {
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)

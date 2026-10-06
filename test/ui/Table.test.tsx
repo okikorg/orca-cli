@@ -1,7 +1,7 @@
 import { render } from 'ink-testing-library'
 import { describe, expect, it } from 'vitest'
 
-import { Table, statusDot } from '../../src/ui/Table.js'
+import { Table } from '../../src/ui/Table.js'
 import { glyphs } from '../../src/ui/theme.js'
 
 type Row = { name: string; runtime: string }
@@ -46,9 +46,9 @@ describe('Table', () => {
 
   it('renders a subtle next: hint footer', () => {
     const { lastFrame } = render(
-      <Table<Row> columns={cols} rows={data} hint="orca run <name>" />,
+      <Table<Row> columns={cols} rows={data} hint="orca chat <agent>" />,
     )
-    expect(lastFrame() ?? '').toContain('next: orca run <name>')
+    expect(lastFrame() ?? '').toContain('next: orca chat <agent>')
   })
 
   it('truncates cells that exceed the column cap', () => {
@@ -59,10 +59,5 @@ describe('Table', () => {
     const frame = lastFrame() ?? ''
     expect(frame).toContain('...')
     expect(frame).not.toContain(long)
-  })
-
-  it('statusDot pairs the active status glyph with the status word', () => {
-    expect(statusDot('running')).toBe(`${glyphs.statusFilled} running`)
-    expect(statusDot('error')).toBe(`${glyphs.statusFilled} error`)
   })
 })

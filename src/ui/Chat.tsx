@@ -2,36 +2,36 @@ import { Box, Static, Text, useApp, useInput } from 'ink'
 import TextInput from 'ink-text-input'
 import { useEffect, useRef, useState } from 'react'
 
-import type { ChatEvent, ChatToolStatus, ChatTurnResult } from '../lib/gateway.js'
+import type { ChatEvent, ChatToolStatus, ChatTurnResult } from '../lib/sessions.js'
 import { renderMarkdown, stripControlSequences } from '../lib/markdown.js'
 import { colorEnabled, glyphs, theme } from './theme.js'
 
-// send is injected by the chat command so this component never touches fetch
-// or the gateway client directly (mirrors RunTail's `subscribe`), keeping it
-// unit-testable under ink-testing-library. It resolves with how the turn
-// ended; it does not reject for gateway `error` events (those arrive as a
+// send is injected by the chat command so this component never touches the
+// API client directly, keeping it unit-testable under ink-testing-library. It
+// resolves with how the turn ended and the session it ran in (created on the
+// first message); it does not reject for a failed turn (that arrives as a
 // { terminated: 'error' } result so the REPL stays alive).
 export type SendTurn = (
   message: string,
   handlers: { onEvent: (event: ChatEvent) => void; signal: AbortSignal },
-  conversationId: string | undefined,
-) => Promise<ChatTurnResult>
+  sessionId: string | undefined,
+) => Promise<ChatTurnResult & { sessionId?: string }>
 
 export type ChatProps = {
   agentLabel: string
-  initialConversationId?: string
+  initialSessionId?: string
   send: SendTurn
-  onExit: (conversationId?: string) => void
+  onExit: (sessionId?: string) => void
 }
 
 type ToolState = { id: string; name?: string; status: ChatToolStatus }
 
 type Item =
-  | { kind: 'intro'; key: number; agent: string; conversationId?: string }
+  | { kind: 'intro'; key: number; agent: string; sessionId?: string }
   | { kind: 'user'; key: number; text: string }
   | { kind: 'assistant'; key: number; text: string; tools: ToolState[]; cancelled?: boolean }
   | { kind: 'error'; key: number; message: string }
-  | { kind: 'summary'; key: number; agent: string; conversationId?: string }
+  | { kind: 'summary'; key: number; agent: string; sessionId?: string }
 
 // Omit over a union is not distributive by default; this keeps each member's
 // own fields so pushItem accepts a fully-typed item minus its key.
@@ -45,7 +45,7 @@ function compactToolName(name: string): string {
 
 type ToolGroup = { phase: string; tools: ToolState[] }
 
-// The gateway does not expose model reasoning, so phase labels are derived
+// The session stream's reasoning is not shown, so phase labels are derived
 // only from real tool names. This adds scan-friendly structure without
 // pretending private chain-of-thought is available to the CLI.
 function toolPhase(name: string): string {
@@ -79,8 +79,7 @@ function groupTools(tools: ToolState[]): ToolGroup[] {
 
 // A compact worklog inspired by coding-agent terminals: semantic phase
 // headings, one real tool per row, and status conveyed by a stable glyph.
-// No arguments or outputs are shown because the public gateway deliberately
-// excludes them (they may contain secrets).
+// No arguments or outputs are shown: they may contain secrets.
 function ToolActivity({ tools }: { tools: ToolState[] }) {
   const groups = groupTools(tools)
   return (
@@ -125,8 +124,7 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
   switch (item.kind) {
     case 'intro':
       // Header: name the surface first, then the selected agent and optional
-      // resumed conversation. Avoid exposing the publishing implementation in
-      // the user-facing title.
+      // resumed session.
       return (
         <Box flexDirection="column" marginBottom={1}>
           <Text>
@@ -135,7 +133,7 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
             </Text>
             <Text color={theme.subtle}>
               {`${sep}${item.agent}`}
-              {item.conversationId ? `${sep}${item.conversationId}` : ''}
+              {item.sessionId ? `${sep}${item.sessionId}` : ''}
             </Text>
           </Text>
           <Text color={theme.subtle}>{`enter send${sep}ctrl-c stop or exit`}</Text>
@@ -154,7 +152,7 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
     case 'assistant':
       // Committed reply renders through markdown-lite (default foreground; only
       // metadata is muted). Color is gated so NO_COLOR / piped output stays
-      // clean — the same axis colorEnabled() governs everywhere.
+      // clean: the same axis colorEnabled() governs everywhere.
       return (
         <Box flexDirection="column" marginTop={1}>
           <Text>
@@ -174,30 +172,30 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
         </Box>
       )
     case 'error':
-      // Gateway error text is remote-controlled; neutralize control bytes.
+      // Error text is remote-controlled; neutralize control bytes.
       return (
         <Box marginTop={1}>
           <Text color={theme.destructive}>error: {stripControlSequences(item.message)}</Text>
         </Box>
       )
     case 'summary':
-      // Exit summary: subtle conversation id + a copy-paste resume command.
+      // Exit summary: subtle session id + a copy-paste resume command.
       return (
         <Box marginTop={1}>
           <Text color={theme.subtle}>
-            {item.conversationId
-              ? `conversation ${item.conversationId}${sep}resume: orca chat ${item.agent} --conversation ${item.conversationId}`
-              : 'no conversation started'}
+            {item.sessionId
+              ? `session ${item.sessionId}${sep}resume: orca chat ${item.agent} --session ${item.sessionId}`
+              : 'no session started'}
           </Text>
         </Box>
       )
   }
 }
 
-export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatProps) {
+export function Chat({ agentLabel, initialSessionId, send, onExit }: ChatProps) {
   const { exit } = useApp()
   const [items, setItems] = useState<Item[]>([
-    { kind: 'intro', key: 0, agent: agentLabel, conversationId: initialConversationId },
+    { kind: 'intro', key: 0, agent: agentLabel, sessionId: initialSessionId },
   ])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -212,7 +210,7 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
   const abortRef = useRef<AbortController | null>(null)
   const streamingRef = useRef(false)
   const exitingRef = useRef(false)
-  const convRef = useRef<string | undefined>(initialConversationId)
+  const sessionRef = useRef<string | undefined>(initialSessionId)
 
   const pushItem = (item: ItemInput) =>
     setItems((prev) => [...prev, { ...item, key: keyRef.current++ } as Item])
@@ -220,7 +218,7 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
   function beginExit() {
     if (exitingRef.current) return
     exitingRef.current = true
-    pushItem({ kind: 'summary', agent: agentLabel, conversationId: convRef.current })
+    pushItem({ kind: 'summary', agent: agentLabel, sessionId: sessionRef.current })
     setExiting(true)
   }
 
@@ -264,14 +262,15 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
           }
         },
       },
-      convRef.current,
+      sessionRef.current,
     )
       .then((result) => {
+        if (result.sessionId) sessionRef.current = result.sessionId
         finishTurn(result, accum, [...tools.values()])
       })
       .catch((err: unknown) => {
-        // send() maps gateway HTTP failures to an error result, so a reject
-        // here is unexpected; surface it and keep the REPL alive.
+        // send() maps HTTP failures to an error result, so a reject here is
+        // unexpected; surface it and keep the REPL alive.
         pushItem({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
         endStreaming()
       })
@@ -289,12 +288,11 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
   function finishTurn(result: ChatTurnResult, accum: string, tools: ToolState[]) {
     if (result.terminated === 'done') {
       pushItem({ kind: 'assistant', text: result.message || accum, tools })
-      if (result.conversationId) convRef.current = result.conversationId
     } else if (result.terminated === 'aborted') {
       pushItem({ kind: 'assistant', text: accum, tools, cancelled: true })
     } else if (result.terminated === 'dropped') {
       if (accum) pushItem({ kind: 'assistant', text: accum, tools })
-      pushItem({ kind: 'error', message: 'stream closed before a terminal done/error event' })
+      pushItem({ kind: 'error', message: 'the event stream closed before the turn ended' })
     } else {
       // terminated === 'error'
       pushItem({ kind: 'error', message: result.message || result.errorCode || 'upstream error' })
@@ -313,11 +311,11 @@ export function Chat({ agentLabel, initialConversationId, send, onExit }: ChatPr
   })
 
   // Defer exit one tick so the summary <Static> item commits before Ink tears
-  // down the dynamic region (same race RunTail guards against).
+  // down the dynamic region.
   useEffect(() => {
     if (!exiting) return
     const t = setTimeout(() => {
-      onExit(convRef.current)
+      onExit(sessionRef.current)
       exit()
     }, 0)
     return () => clearTimeout(t)

@@ -1,194 +1,200 @@
-// Wire types for the conductor's public tenant API, copied as a subset of
-// dashboard/src/lib/types.ts. docs/openapi.sdk.yaml is the contract; check
-// there when the backend changes.
+// Wire types for the Orca server's /api routes. The /v1 Agents API types come
+// from the `openai` package. Money is micro-USD as the server sends it; the
+// CLI formats those figures and never computes one.
 
-// An inline server carries transport + url (+ headers). A catalog reference
-// (`ref: "catalog://<name>"`, a Connected Apps grant) carries neither: the
-// runtime resolves it at session time. `optional` marks a dependency the
-// agent can work without.
-export type MCPServerSpec = {
-  name: string
-  transport?: 'http' | 'sse'
-  url?: string
-  headers?: Record<string, string>
-  ref?: string
-  optional?: boolean
+// The /v1 list envelope, which the /api list routes share.
+export type ListPage<T> = {
+  object: 'list'
+  data: T[]
+  has_more: boolean
+  first_id?: string | null
+  last_id?: string | null
 }
 
-export type FSPolicy = {
-  read?: string[]
-  write?: string[]
-  delete?: string[]
-  deny?: string[]
-  // Explicit per-session VFS mount allowlist. JSON key matches the Go wire
-  // format (snake_case); the rest of FSPolicy is lowercase by legacy convention.
-  allow_mounts?: string[]
+// GET /api/whoami. `agent` is set only for a key scoped to a published agent.
+export type Whoami = {
+  object: 'whoami'
+  tenant: string
+  actor: string
+  role: string
+  agent: string | null
+  // A published agent's key: what its sessions must name.
+  environment?: Record<string, unknown>
+  vault_ids?: string[]
 }
 
-export type SandboxResources = {
-  cpu?: number
-  memoryMB?: number
-  diskMB?: number
-  timeout?: number
-}
-
-export type SandboxSpec = {
-  provider: string
-  template?: string
-  resources?: SandboxResources
-  env?: Record<string, string>
-  idleTimeout?: number // nanoseconds, matches Go time.Duration
-}
-
-export type AgentProfile = {
-  id?: string
-  name: string
-  // "general" is the deprecated pre-rename label for "vercel" and may still
-  // be returned for older stored profiles.
-  runtime: 'pi' | 'vercel' | 'claude' | 'codex' | 'marlin' | 'general'
-  systemPrompt?: string
-  skills?: string[]
-  mcpServers?: MCPServerSpec[]
-  model?: string
-  tools?: string[]
-  fs?: FSPolicy
-  sandbox?: SandboxSpec
-  // How the runner executes the profile: "static" (default, omitted on the
-  // wire) dials a warm sidecar; "sandbox" boots a per-session worker.
-  workerMode?: 'static' | 'sandbox'
-  // Where a sandbox worker boots (e2b, daytona, docker, process) and which
-  // image it runs. Only meaningful when workerMode is "sandbox".
-  workerSubstrate?: string
-  workerImage?: string
-}
-
-export type SubTask = {
-  id?: string
-  parentId?: string
-  profile: string
-  sessionId?: string
-  title: string
-  prompt?: string
-  files?: string[]
-}
-
-export type RunEventType =
-  | 'progress'
-  | 'result'
-  | 'error'
-  | 'assistant'
-  | 'tool_call'
-  | 'tool_result'
-  | 'usage'
-
-export type Usage = {
-  inputTokens?: number
-  outputTokens?: number
-  cacheReadTokens?: number
-  cacheCreateTokens?: number
-}
-
-export type RunEvent = {
-  type: RunEventType
-  message?: string
-  ts?: string
-  toolCallId?: string
-  toolName?: string
-  input?: unknown
-  output?: unknown
-  isError?: boolean
-  usage?: Usage
-}
-
-// 'interrupted' is stamped by the conductor's boot reconciliation sweep on
-// runs orphaned by a crash or redeploy: terminal, but neither ok nor error.
-export type RunStatus = 'running' | 'ok' | 'error' | 'cancelled' | 'interrupted'
-
-export type RunSummary = {
+// An API key, without its secret. `agent` is the agent a published agent's
+// key is scoped to, or null for an organization key.
+export type APIKey = {
   id: string
-  subTask: SubTask
-  status: RunStatus
-  startedAt: string
-  finishedAt?: string
-}
-
-// `usage` is the conductor's authoritative total for the run. Prefer it over
-// re-deriving a total from the usage events: some runtimes (marlin) upload
-// CUMULATIVE snapshots, one per model step, so summing the events counts the
-// earlier steps again.
-export type RunDetail = RunSummary & { events: RunEvent[]; usage?: Usage }
-
-export type CreateRunResponse = {
-  runId: string
-  sessionId: string
-}
-
-// -- Publishing (public chat gateway) ----------------------------------------
-
-export type PublishedAgent = {
-  id: string
-  tenantId: string
-  profileName: string
-  slug: string
-  visibility: 'private' | 'org' | 'public'
-  authMode: 'api_key' | 'jwt'
-  allowedOrigins: string[]
-  rateLimitRpm: number
-  syncMaxDurationSeconds: number
-  conversationTtlDays: number | null
-  exposeToolEvents: boolean
-  enabled: boolean
-  unpublishedAt: string | null
-  createdAt: string
-  updatedAt: string
-}
-
-export type PublishedAgentWithURL = PublishedAgent & { publicUrl: string }
-
-export type PublishRequest = {
-  slug?: string
-  visibility?: 'private' | 'org' | 'public'
-  authMode?: 'api_key' | 'jwt'
-  allowedOrigins?: string[]
-  rateLimitRpm?: number
-  syncMaxDurationSeconds?: number
-  conversationTtlDays?: number | null
-  exposeToolEvents?: boolean
-}
-
-// Per-published-agent chat keys, verified by the gateway on /v1/chat.
-export type APIKeyMetadata = {
-  id: string
-  publishedId: string
-  label: string
-  lastUsedAt: string | null
-  revokedAt: string | null
-  expiresAt: string | null
-  createdAt: string
-}
-
-export type APIKeyIssued = APIKeyMetadata & { token: string }
-
-// -- Control-plane API keys (tenant-to-server, RBAC) --------------------------
-// Durable bearer keys for /api/*. A key inherits its minter's role.
-
-export type ControlPlaneAPIKeyMetadata = {
-  id: string
-  tenantId: string
+  object: 'api_key'
   name: string
   role: string
-  createdBy: string
-  createdAt: string
-  lastUsedAt?: string | null
-  revokedAt?: string | null
-  expiresAt?: string | null
+  hint: string
+  created_by: string
+  created_at: number
+  last_used_at: number | null
+  agent: string | null
+  // What a published agent's sessions run with, fixed by its publisher.
+  environment_template_id: string | null
+  vault_ids: string[]
 }
 
-export type CreateControlPlaneAPIKeyRequest = {
+// runsWith says what a published key's sessions run with, in a few words.
+export function runsWith(key: Pick<APIKey, 'environment_template_id' | 'vault_ids'>): string {
+  const environment = key.environment_template_id ?? 'no environment'
+  const vaults = key.vault_ids.length === 0 ? 'no vaults' : `${key.vault_ids.length === 1 ? 'vault' : 'vaults'} ${key.vault_ids.join(', ')}`
+  return `${environment}, ${vaults}`
+}
+
+// POST /api/keys and POST /api/agents/{id}/publish: the only responses that
+// ever carry the secret.
+export type APIKeyIssued = APIKey & { secret: string }
+
+// -- Usage --------------------------------------------------------------------
+
+export type UsageMeter = {
+  meter: string
+  unit: string
+  quantity: number
+  cost_micro_usd: number
+  buckets: Record<string, number>
+}
+
+export type UsageDay = {
+  date: string
+  meter: string
+  quantity: number
+  cost_micro_usd: number
+}
+
+export type UsageGroup = {
+  meter: string
+  key: string | null
+  quantity: number
+  cost_micro_usd: number
+}
+
+// GET /api/usage.
+export type UsageSummary = {
+  object: 'usage.summary'
+  start: number
+  end: number
+  session_id: string | null
+  cost_micro_usd: number
+  meters: UsageMeter[]
+  daily: UsageDay[]
+  groups?: UsageGroup[]
+}
+
+// GET /api/usage/events rows.
+export type UsageEvent = {
+  id: string
+  object: 'usage.event'
+  meter: string
+  unit: string
+  bucket: string | null
+  quantity: number
+  status: string | null
+  source: string | null
+  session_id: string | null
+  subject: string | null
+  provider: string | null
+  model: string | null
+  credential: string | null
+  window_start: number
+  window_end: number
+  recorded_at: number
+  cost_micro_usd: number
+  rate_id: string | null
+  actor: string | null
+}
+
+// -- Billing ------------------------------------------------------------------
+
+export type WalletPack = { cents: number; fee_cents: number; credited_micro_usd: number }
+
+// GET /api/billing/wallet.
+export type Wallet = {
+  object: 'billing.wallet'
+  balance_micro_usd: number
+  credited_micro_usd: number
+  charged_micro_usd: number
+  tier: string
+  period_start: number
+  period_end: number
+  included_compute_seconds: number
+  used_compute_seconds: number
+  packs: WalletPack[]
+  processing_fee: { bps: number; flat_cents: number }
+}
+
+// POST /api/billing/checkout and /api/billing/portal.
+export type BillingURL = { url: string }
+
+// -- Kits ---------------------------------------------------------------------
+
+export type KitSelection = { agents: string[]; skills: string[]; templates: string[] }
+
+// A kit of this organization's own (GET /api/kits).
+export type Kit = {
+  id: string
+  object: 'kit'
+  public_id: string | null
+  // The share link, from the server, which knows the dashboard's origin.
+  url: string | null
   name: string
-  expiresAt?: string
+  description: string
+  readme: string
+  status: string
+  selection: KitSelection
+  latest_version: number | null
+  created_by: string
+  created_at: number
+  updated_at: number
 }
 
-export type ControlPlaneAPIKeyIssued = ControlPlaneAPIKeyMetadata & {
-  token: string
+export type KitInput = {
+  name: string
+  description?: string
+  readme?: string
+  selection: Partial<KitSelection>
+}
+
+export type PublicKitAsset = { key: string; name: string } & Record<string, unknown>
+
+// A credential the copying organization must add: an MCP server, an MCP
+// header, or a template environment variable.
+// A credential a copied kit needs: an MCP server's goes in a vault, a
+// variable is set on the copied template. `asset` is the kit key needing it.
+export type KitCredential = {
+  kind: 'mcp_server' | 'environment_variable'
+  name: string
+  used_by: string
+  asset: string
+  server_url?: string | null
+}
+
+// GET /api/public/kits/{public_id}: names and descriptions, never bytes.
+export type PublicKit = {
+  object: 'kit.public'
+  public_id: string
+  name: string
+  description: string
+  readme: string
+  version: number
+  published_at: number
+  contents: { agents: PublicKitAsset[]; skills: PublicKitAsset[]; templates: PublicKitAsset[] }
+  credentials: KitCredential[]
+}
+
+export type KitCopyAsset = { key: string; name: string }
+
+// POST /api/kits/{public_id}/copy.
+export type KitCopyResult = {
+  object: 'kit.copy'
+  public_id: string
+  version: number
+  created: { key: string; kind: string; id: string; name: string }[]
+  credentials: KitCredential[]
 }

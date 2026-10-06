@@ -1,7 +1,7 @@
 {
   "name": "orca",
-  "version": "0.1.0",
-  "description": "Use Orca (orcapods.ai) from Claude Code: headless login, agent creation, cloud runs, skills, storage, and an MCP server over the full control-plane API.",
+  "version": "1.0.0",
+  "description": "Use Orca (orcapods.ai) from Claude Code: device login, agents, sessions and chat, kits, publishing, and an MCP server with one tool per CLI action.",
   "author": {
     "name": "Orca",
     "url": "https://orcapods.ai"

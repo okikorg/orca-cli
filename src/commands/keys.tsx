@@ -1,94 +1,87 @@
 import type { Command } from 'commander'
 
 import { CliError, ExitCode } from '../lib/errors.js'
+import { formatTime } from '../lib/format.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
-import type { ControlPlaneAPIKeyMetadata } from '../lib/types.js'
+import type { APIKey } from '../lib/types.js'
 import { accentVerb, hintText } from '../ui/theme.js'
-import { revealIssuedKey } from './prompts.js'
-import { apiContext, globalFlags, withApi } from './shared.js'
+import { confirmDestructive, revealIssuedKey } from './prompts.js'
+import {
+  addPageFlags,
+  apiContext,
+  fetchPageOrAll,
+  globalFlags,
+  pagedSubtitle,
+  printPageHint,
+  validatePage,
+  withApi,
+  type PageFlags,
+} from './shared.js'
 
-// confirmDestructive mounts the shared Confirm component for a y/N gate in
-// interactive TTY mode (single keypress; Enter declines, so the safe answer is
-// the default). Non-TTY callers never reach here — they require --yes and
-// throw a Usage error first — so this changes nothing about the machine
-// contract. Kept local per command because the shared prompts module is owned
-// by another wave; the mount pattern mirrors pickOne/promptText.
-async function confirmDestructive(message: string): Promise<boolean> {
-  const { render } = await import('ink')
-  const { Confirm } = await import('../ui/Confirm.js')
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (v: boolean) => {
-      if (settled) return
-      settled = true
-      instance.unmount()
-      resolve(v)
-    }
-    const instance = render(<Confirm message={message} onDecision={finish} />, { exitOnCtrlC: true })
-    // Ctrl-C unmounts without a decision; treat it as a decline (safe default).
-    void instance.waitUntilExit().then(() => finish(false))
-  })
+// scopeCell says what a key reaches: the whole organization, or the one
+// published agent a scoped key belongs to.
+function scopeCell(k: APIKey): string {
+  return k.agent ? `agent ${k.agent}` : 'organization'
 }
 
 export function registerKeys(program: Command): void {
   const keys = program
     .command('keys')
-    .description('manage tenant API keys (the keys this CLI and the SDKs authenticate with)')
+    .description('manage API keys (the keys this CLI and the SDKs authenticate with)')
 
-  keys
+  const keysList = keys
     .command('list')
-    .description('list tenant API keys')
-    .action(async (_opts: Record<string, never>, cmd: Command) => {
-      const flags = globalFlags(cmd)
-      const api = await apiContext(cmd)
-      const items = await withApi(api, (c) => c.listControlPlaneKeys())
-      const mode = outputMode(flags)
-      if (mode === 'json') {
-        printJson(items)
-        return
-      }
-      if (items.length === 0) {
-        console.error(hintText('No API keys yet.'))
-        console.error(hintText('  create one: orca keys create <name>'))
-        return
-      }
-      const state = (k: ControlPlaneAPIKeyMetadata) =>
-        k.revokedAt ? 'revoked' : k.expiresAt ? `expires ${k.expiresAt}` : 'active'
-      if (mode === 'plain') {
-        printPlainRows(items.map((k) => [k.id, k.name, k.role, k.createdAt, k.lastUsedAt ?? '-', state(k)]))
-        return
-      }
-      const { Table } = await import('../ui/Table.js')
-      const { Panel } = await import('../ui/Panel.js')
-      const { theme } = await import('../ui/theme.js')
-      await renderStatic(
-        <Panel title="API KEYS" subtitle={`${items.length} total`}>
-          <Table
-            columns={[
-              { header: 'id', get: (k: ControlPlaneAPIKeyMetadata) => k.id, color: () => theme.accent, bold: true },
-              { header: 'name', get: (k: ControlPlaneAPIKeyMetadata) => k.name },
-              { header: 'role', get: (k: ControlPlaneAPIKeyMetadata) => k.role },
-              { header: 'created', get: (k: ControlPlaneAPIKeyMetadata) => k.createdAt },
-              { header: 'last used', get: (k: ControlPlaneAPIKeyMetadata) => k.lastUsedAt ?? '-' },
-              {
-                header: 'state',
-                get: state,
-                color: (k: ControlPlaneAPIKeyMetadata) => (k.revokedAt ? theme.subtle : undefined),
-              },
-            ]}
-            rows={items}
-            headers
-            hint="orca keys create [name]"
-          />
-        </Panel>,
+    .description('list active API keys, newest first (members see their own, admins all)')
+  addPageFlags(keysList)
+  keysList.action(async (opts: PageFlags, cmd: Command) => {
+    const flags = globalFlags(cmd)
+    validatePage(opts, cmd)
+    const api = await apiContext(cmd)
+    const page = await fetchPageOrAll(opts, (params) => withApi(api, (c) => c.listKeys(params)))
+    const mode = outputMode(flags)
+    if (mode === 'json') {
+      printJson(page.items)
+      return
+    }
+    if (page.items.length === 0) {
+      console.error(hintText('No API keys yet.'))
+      console.error(hintText('  create one: orca keys create <name>'))
+      return
+    }
+    if (mode === 'plain') {
+      printPlainRows(
+        page.items.map((k) => [k.id, k.name, k.role, scopeCell(k), formatTime(k.created_at), formatTime(k.last_used_at)]),
       )
-    })
+      printPageHint(page)
+      return
+    }
+    const { Table } = await import('../ui/Table.js')
+    const { Panel } = await import('../ui/Panel.js')
+    const { theme } = await import('../ui/theme.js')
+    await renderStatic(
+      <Panel title="API KEYS" subtitle={pagedSubtitle(page)}>
+        <Table
+          columns={[
+            { header: 'id', get: (k: APIKey) => k.id, color: () => theme.accent, bold: true },
+            { header: 'name', get: (k: APIKey) => k.name },
+            { header: 'role', get: (k: APIKey) => k.role },
+            { header: 'scope', get: scopeCell },
+            { header: 'created', get: (k: APIKey) => formatTime(k.created_at) },
+            { header: 'last used', get: (k: APIKey) => formatTime(k.last_used_at) },
+          ]}
+          rows={page.items}
+          headers
+          hint="orca keys create <name> · orca keys revoke <id>"
+        />
+      </Panel>,
+    )
+    printPageHint(page)
+  })
 
   keys
     .command('create [name]')
-    .description('issue a tenant API key (the token is shown once)')
-    .option('--expires <iso8601>', 'expiry timestamp')
-    .action(async (name: string | undefined, opts: { expires?: string }, cmd: Command) => {
+    .description('mint an API key with your role (the secret is shown once)')
+    .action(async (name: string | undefined, _opts: Record<string, never>, cmd: Command) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
       let keyName = name
@@ -102,15 +95,13 @@ export function registerKeys(program: Command): void {
         keyName = (await promptText({ label: 'Key name' })).trim()
         if (!keyName) throw new CliError('empty key name', ExitCode.Usage)
       }
-      const issued = await withApi(api, (c) =>
-        c.createControlPlaneKey({ name: keyName, ...(opts.expires ? { expiresAt: opts.expires } : {}) }),
-      )
-      await revealIssuedKey(issued, `Tenant API key "${keyName}"`, outputMode(flags) === 'json')
+      const issued = await withApi(api, (c) => c.createKey(keyName))
+      await revealIssuedKey(issued, `API key "${keyName}"`, outputMode(flags) === 'json')
     })
 
   keys
     .command('revoke <id>')
-    .description('revoke a tenant API key')
+    .description('revoke an API key (revoking a published agent\'s last key unpublishes it)')
     .option('--yes', 'skip the confirmation prompt')
     .action(async (id: string, opts: { yes?: boolean }, cmd: Command) => {
       const flags = globalFlags(cmd)
@@ -124,7 +115,7 @@ export function registerKeys(program: Command): void {
           return
         }
       }
-      await withApi(api, (c) => c.revokeControlPlaneKey(id))
+      await withApi(api, (c) => c.revokeKey(id))
       if (outputMode(flags) === 'json') printJson({ id, revoked: true })
       else console.log(`${accentVerb('Revoked')} key ${id}.`)
     })
