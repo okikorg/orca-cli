@@ -101,8 +101,9 @@ export async function requestDeviceCode(
 // pollDeviceToken polls until the user decides or the handshake expires.
 // Follows RFC 8628 section 3.5: sleep `interval` seconds between polls and
 // add 5 seconds whenever the server answers slow_down. A poll the server
-// rate-limits waits its Retry-After, and a poll that got no answer is
-// retried: both are transient, and the code's own expiry bounds them.
+// rate-limits waits its Retry-After, and a poll that got no answer or a
+// gateway error (502, 503, 504, as while the server redeploys) is retried:
+// all are transient, and the code's own expiry bounds them.
 export async function pollDeviceToken(
   apiUrl: string,
   grant: DeviceCodeResponse,
@@ -111,10 +112,16 @@ export async function pollDeviceToken(
   const deadline = Date.now() + Math.max(30, grant.expires_in || 900) * 1000
 
   let waitSec = intervalSec
+  let unreachable = false
   for (;;) {
     await sleep(waitSec * 1000)
     waitSec = intervalSec
     if (Date.now() > deadline) {
+      if (unreachable) {
+        throw new CliError('login code expired while the server was unreachable', ExitCode.Failure, [
+          'Re-run: orca auth login',
+        ])
+      }
       throw new CliError('login timed out waiting for approval', ExitCode.Failure, [
         'Re-run: orca auth login',
       ])
@@ -126,10 +133,15 @@ export async function pollDeviceToken(
         device_code: grant.device_code,
       })
     } catch (err) {
-      if (err instanceof Unreachable) continue
+      if (err instanceof Unreachable) {
+        unreachable = true
+        continue
+      }
       throw err
     }
     const { status, json, retryAfterSec } = reply
+    unreachable = status === 502 || status === 503 || status === 504
+    if (unreachable) continue
     if (status === 429) {
       waitSec = Math.max(intervalSec, retryAfterSec ?? intervalSec + 5)
       continue
@@ -146,7 +158,9 @@ export async function pollDeviceToken(
       case 'authorization_pending':
         continue
       case 'slow_down':
+        // RFC 8628: the increase applies from the very next poll.
         intervalSec += 5
+        waitSec = intervalSec
         continue
       case 'access_denied':
         throw new CliError('login denied in the dashboard', ExitCode.Auth)
