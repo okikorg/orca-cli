@@ -158,7 +158,9 @@ export async function pollDeviceToken(
       case 'authorization_pending':
         continue
       case 'slow_down':
+        // RFC 8628: the increase applies from the very next poll.
         intervalSec += 5
+        waitSec = intervalSec
         continue
       case 'access_denied':
         throw new CliError('login denied in the dashboard', ExitCode.Auth)

@@ -349,7 +349,7 @@ describe('auth login (device flow) through a server redeploy', () => {
     expect(calls.filter((c) => c.path === '/api/device/token')).toHaveLength(1)
   })
 
-  it('still raises the interval on slow_down', async () => {
+  it('raises the interval on slow_down from the very next poll', async () => {
     const at: number[] = []
     const answers = [
       jsonResponse({ error: 'slow_down' }, { status: 400 }),
@@ -358,7 +358,8 @@ describe('auth login (device flow) through a server redeploy', () => {
     ]
     stubPolls(...answers.map((answer): RouteHandler => (call) => (at.push(Date.now()), answer(call))))
     await runOnFakeClock(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
-    // The 1s interval plus the 5s slow_down adds.
+    // The 1s interval plus the 5s slow_down adds, from the poll right after it.
+    expect(at[1] - at[0]).toBe(6000)
     expect(at[2] - at[1]).toBe(6000)
     expect((await loadConfig()).contexts.default.apiKey).toBe(KEY)
   })
