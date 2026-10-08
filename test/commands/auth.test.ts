@@ -67,6 +67,23 @@ function stderr(): string {
     .join('\n')
 }
 
+// runOnFakeClock runs one command on a fake clock, stepping it a second at a
+// time, so polls that wait out slow_down or the code's expiry stay fast.
+async function runOnFakeClock(args: string[]): Promise<void> {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] })
+  try {
+    let settled = false
+    const done = run(args).finally(() => {
+      settled = true
+    })
+    done.catch(() => {})
+    while (!settled) await vi.advanceTimersByTimeAsync(1000)
+    await done
+  } finally {
+    vi.useRealTimers()
+  }
+}
+
 // withTTY fakes a terminal on both streams for one test body.
 async function withTTY(fn: () => Promise<void>): Promise<void> {
   const savedStdin = process.stdin.isTTY
@@ -275,6 +292,74 @@ describe('auth login (device flow) under strain', () => {
       'GET /api/whoami': jsonResponse(WHOAMI),
     })
     await run(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
+    expect((await loadConfig()).contexts.default.apiKey).toBe(KEY)
+  })
+})
+
+describe('auth login (device flow) through a server redeploy', () => {
+  const TOKEN = { access_token: KEY, token_type: 'bearer', key_id: 'key_dev', role: 'admin', tenant_id: 'org_1' }
+  const gateway = (status: number) => () => new Response('Bad Gateway', { status })
+
+  // stubPolls answers each token poll with the next handler in turn.
+  function stubPolls(...answers: RouteHandler[]) {
+    let polls = 0
+    return stubFetch({
+      'POST /api/device/code': jsonResponse(DEVICE_CODE),
+      'POST /api/device/token': (call) => answers[Math.min(polls++, answers.length - 1)](call),
+      'GET /api/whoami': jsonResponse(WHOAMI),
+    })
+  }
+
+  it('keeps polling through a 502 and logs in', async () => {
+    const calls = stubPolls(gateway(502), jsonResponse(TOKEN))
+    await runOnFakeClock(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
+    expect(calls.filter((c) => c.path === '/api/device/token')).toHaveLength(2)
+    expect((await loadConfig()).contexts.default.apiKey).toBe(KEY)
+  })
+
+  it('keeps polling through a 503 and a request that got no answer, and logs in', async () => {
+    const calls = stubPolls(
+      gateway(503),
+      () => {
+        throw new TypeError('fetch failed')
+      },
+      gateway(504),
+      jsonResponse(TOKEN),
+    )
+    await runOnFakeClock(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
+    expect(calls.filter((c) => c.path === '/api/device/token')).toHaveLength(4)
+    expect((await loadConfig()).contexts.default.apiKey).toBe(KEY)
+  })
+
+  it('says the code expired while the server was unreachable', async () => {
+    stubPolls(gateway(502))
+    await expect(runOnFakeClock(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+      message: 'login code expired while the server was unreachable',
+    })
+    expect((await loadConfig()).contexts.default).toBeUndefined()
+  })
+
+  it('still fails at once on a 500', async () => {
+    const calls = stubPolls(jsonResponse({ error: { message: 'internal error' } }, { status: 500 }))
+    await expect(runOnFakeClock(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+      message: 'device token poll failed (500)',
+    })
+    expect(calls.filter((c) => c.path === '/api/device/token')).toHaveLength(1)
+  })
+
+  it('still raises the interval on slow_down', async () => {
+    const at: number[] = []
+    const answers = [
+      jsonResponse({ error: 'slow_down' }, { status: 400 }),
+      jsonResponse({ error: 'authorization_pending' }, { status: 400 }),
+      jsonResponse(TOKEN),
+    ]
+    stubPolls(...answers.map((answer): RouteHandler => (call) => (at.push(Date.now()), answer(call))))
+    await runOnFakeClock(['auth', 'login', '--api-url', 'http://test:8080', '--no-browser'])
+    // The 1s interval plus the 5s slow_down adds.
+    expect(at[2] - at[1]).toBe(6000)
     expect((await loadConfig()).contexts.default.apiKey).toBe(KEY)
   })
 })
