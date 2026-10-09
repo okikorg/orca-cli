@@ -20,3 +20,11 @@ export function usdMicro(micro: number): string {
 export function usdCents(cents: number): string {
   return usdMicro(cents * 10_000)
 }
+
+// percentBps formats basis points as a percentage, in integer arithmetic:
+// 550 is "5.5%", 600 "6%".
+export function percentBps(bps: number): string {
+  const whole = Math.trunc(bps / 100)
+  const rest = String(Math.abs(bps % 100)).padStart(2, '0').replace(/0+$/, '')
+  return `${whole}${rest ? `.${rest}` : ''}%`
+}

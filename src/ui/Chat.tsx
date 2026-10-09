@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { ChatEvent, ChatToolStatus, ChatTurnResult } from '../lib/sessions.js'
 import { renderMarkdown, stripControlSequences } from '../lib/markdown.js'
+import { creditOut, refusedAtAdmission } from '../lib/models.js'
+import { SwitchPrompt, type SwitchChoice, type SwitchOffer } from './SwitchPrompt.js'
 import { colorEnabled, glyphs, theme } from './theme.js'
 
 // send is injected by the chat command so this component never touches the
@@ -17,12 +19,32 @@ export type SendTurn = (
   sessionId: string | undefined,
 ) => Promise<ChatTurnResult & { sessionId?: string }>
 
+// Switcher is the switch of who pays for the session (orca-design
+// model-billing D3.13), injected like send: `load` reads the other side's
+// models (with the one to preselect, if any), `apply` posts the choice.
+export type Switcher = {
+  load: (sessionId: string) => Promise<SwitchOffer>
+  apply: (sessionId: string, model: string) => Promise<void>
+}
+
 export type ChatProps = {
   agentLabel: string
   initialSessionId?: string
   send: SendTurn
+  // Offered when a turn ends because a credit ran out; absent, the REPL
+  // only reports it.
+  switcher?: Switcher
   onExit: (sessionId?: string) => void
 }
+
+// The switch prompt after a credit ran out: which credit, the other side's
+// models, and `resend`, the message to send again after a switch when the
+// server refused it at admission (a turn it ended continues instead).
+type Pause = { out: 'orca_credit' | 'provider_quota'; offer: SwitchOffer; resend?: string }
+
+// What a continue after a switch sends: the next turn resumes the saved
+// conversation.
+const CONTINUE_MESSAGE = 'Continue'
 
 type ToolState = { id: string; name?: string; status: ChatToolStatus }
 
@@ -31,6 +53,7 @@ type Item =
   | { kind: 'user'; key: number; text: string }
   | { kind: 'assistant'; key: number; text: string; tools: ToolState[]; cancelled?: boolean }
   | { kind: 'error'; key: number; message: string }
+  | { kind: 'note'; key: number; text: string }
   | { kind: 'summary'; key: number; agent: string; sessionId?: string }
 
 // Omit over a union is not distributive by default; this keeps each member's
@@ -171,6 +194,12 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
           </Box>
         </Box>
       )
+    case 'note':
+      return (
+        <Box marginTop={1}>
+          <Text color={theme.muted}>{item.text}</Text>
+        </Box>
+      )
     case 'error':
       // Error text is remote-controlled; neutralize control bytes.
       return (
@@ -192,7 +221,7 @@ function TranscriptItem({ item, agentLabel }: { item: Item; agentLabel: string }
   }
 }
 
-export function Chat({ agentLabel, initialSessionId, send, onExit }: ChatProps) {
+export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: ChatProps) {
   const { exit } = useApp()
   const [items, setItems] = useState<Item[]>([
     { kind: 'intro', key: 0, agent: agentLabel, sessionId: initialSessionId },
@@ -203,6 +232,7 @@ export function Chat({ agentLabel, initialSessionId, send, onExit }: ChatProps) 
   const [liveTools, setLiveTools] = useState<ToolState[]>([])
   const [elapsed, setElapsed] = useState(0)
   const [exiting, setExiting] = useState(false)
+  const [pause, setPause] = useState<Pause | null>(null)
 
   // Refs mirror state for the useInput closure (which Ctrl-C reads) and for
   // the deferred-exit effect, avoiding stale reads.
@@ -211,6 +241,7 @@ export function Chat({ agentLabel, initialSessionId, send, onExit }: ChatProps) 
   const streamingRef = useRef(false)
   const exitingRef = useRef(false)
   const sessionRef = useRef<string | undefined>(initialSessionId)
+  const lastMessageRef = useRef('')
 
   const pushItem = (item: ItemInput) =>
     setItems((prev) => [...prev, { ...item, key: keyRef.current++ } as Item])
@@ -239,6 +270,7 @@ export function Chat({ agentLabel, initialSessionId, send, onExit }: ChatProps) 
     const tools = new Map<string, ToolState>()
     let accum = ''
 
+    lastMessageRef.current = message
     send(
       message,
       {
@@ -296,8 +328,42 @@ export function Chat({ agentLabel, initialSessionId, send, onExit }: ChatProps) 
     } else {
       // terminated === 'error'
       pushItem({ kind: 'error', message: result.message || result.errorCode || 'upstream error' })
+      // A credit ran out: ask whether to top up or switch who pays. Nothing
+      // switches on its own.
+      const out = creditOut(result.errorCode, result.errorParam)
+      const resend = refusedAtAdmission(result.errorCode) ? lastMessageRef.current : undefined
+      const sessionId = sessionRef.current
+      if (out && switcher && sessionId) {
+        switcher
+          .load(sessionId)
+          .then((offer) => setPause({ out, offer, resend }))
+          .catch((err: unknown) => pushItem({ kind: 'error', message: err instanceof Error ? err.message : String(err) }))
+      }
     }
     endStreaming()
+  }
+
+  function finishPause(choice: SwitchChoice) {
+    const sessionId = sessionRef.current
+    const resend = pause?.resend
+    setPause(null)
+    if (choice.kind === 'top-up' || !switcher || !sessionId) {
+      pushItem({ kind: 'note', text: 'Top up, then send a message to continue this session.' })
+      return
+    }
+    if (choice.kind === 'no-models') {
+      pushItem({ kind: 'note', text: 'No provider key is saved. Set one in the dashboard, Settings, Providers.' })
+      return
+    }
+    switcher
+      .apply(sessionId, choice.model)
+      .then(() => {
+        pushItem({ kind: 'note', text: `Switched: this session's next turn runs on ${choice.model}.` })
+        submit(resend ?? CONTINUE_MESSAGE)
+      })
+      .catch((err: unknown) => {
+        pushItem({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
+      })
   }
 
   useInput((inputChar, key) => {
@@ -341,7 +407,8 @@ export function Chat({ agentLabel, initialSessionId, send, onExit }: ChatProps) 
         )}
       </Static>
 
-      {exiting ? null : streaming ? (
+      {exiting ? null : pause ? (
+        <SwitchPrompt out={pause.out} offer={pause.offer} onDone={finishPause} />      ) : streaming ? (
         <Box flexDirection="column" marginTop={1}>
           <Text color={theme.accent} bold>{agentLabel}</Text>
           <Box flexDirection="column" paddingLeft={2}>

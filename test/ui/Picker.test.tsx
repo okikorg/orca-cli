@@ -117,4 +117,35 @@ describe('Picker', () => {
     await new Promise((r) => setTimeout(r, 40))
     expect(picked).toBeUndefined()
   })
+
+  it('starts on the initial value and draws a window of rows around the pointer', async () => {
+    const many: PickerItem[] = Array.from({ length: 30 }, (_, i) => ({ label: `model-${i}`, value: `model-${i}`, detail: i < 15 ? 'Orca credit' : 'OpenAI' }))
+    let picked: string | undefined
+    const { stdin, lastFrame } = render(
+      <Picker items={many} initial="model-20" onSubmit={(v) => (picked = v)} onCancel={() => {}} />,
+    )
+    await waitFor(() => (lastFrame() ?? '').includes('model-20'))
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain(`${glyphs.pointer} model-20`)
+    expect(frame).not.toContain('model-0 ')
+    expect(frame).not.toContain('model-29')
+    expect(frame).toContain('30 matches')
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\r')
+    await waitFor(() => picked !== undefined)
+    expect(picked).toBe('model-20')
+  })
+
+  it('filters on the detail too', async () => {
+    const two: PickerItem[] = [
+      { label: 'orca/openrouter/x', value: 'a', detail: 'Orca credit' },
+      { label: 'anthropic/y', value: 'b', detail: 'Anthropic, billed by your provider' },
+    ]
+    const { stdin, lastFrame } = render(<Picker items={two} onSubmit={() => {}} onCancel={() => {}} />)
+    await waitFor(() => (lastFrame() ?? '').includes('anthropic/y'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('billed')
+    await waitFor(() => !(lastFrame() ?? '').includes('orca/openrouter/x'))
+    expect(lastFrame() ?? '').toContain('1 match of 2')
+  })
 })

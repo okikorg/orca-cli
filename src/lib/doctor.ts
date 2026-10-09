@@ -433,7 +433,7 @@ export async function checkKeyRole(o: {
 }
 
 // 9. Credit preflight: GET /api/billing/wallet. The server's money gate
-//    refuses a paid turn (one on Orca's model keys or a hosted sandbox) below
+//    refuses a paid turn (one on Orca credit or a hosted sandbox) below
 //    the plan's minimum balance; turns on the tenant's own provider keys are
 //    not gated, so an empty wallet is a warn, never a failure.
 export async function checkBilling(o: {
@@ -470,8 +470,8 @@ export async function checkBilling(o: {
     return {
       name,
       status: 'warn',
-      message: `paid work paused (balance ${balance}, under the ${usdMicro(body.min_balance_micro_usd)} minimum); turns on Orca's model keys will be refused`,
-      fix: 'buy credit with: orca billing buy pack:<cents>, or save your own provider key in the dashboard',
+      message: `paid work paused (balance ${balance}, under the ${usdMicro(body.min_balance_micro_usd)} minimum); turns on Orca credit will be refused`,
+      fix: 'buy credit with: orca billing buy pack:<cents>, or switch a session to your own provider key (orca chat offers it)',
     }
   }
   return { name, status: 'pass', message: `credit available (balance ${balance}, ${body.tier ?? 'free'} plan)` }

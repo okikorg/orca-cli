@@ -17,29 +17,39 @@ type PickerProps = {
   onSubmit: (value: string) => void
   onCancel: () => void
   placeholder?: string
+  // The value the pointer starts on, when it is among the items.
+  initial?: string
 }
+
+// At most this many rows are drawn, a window that follows the pointer, so a
+// long list (a provider's model catalog) never floods the terminal. The
+// match count says how many there are.
+const VISIBLE_ROWS = 10
 
 // Generic filterable single-select per the design language: type to filter,
 // arrows to move, mint pointer on the active row, esc to cancel, enter to
 // pick. Selection state is a mint pointer plus mint text, never an accent
 // bar or inverted block. Filtering is a case-insensitive substring match on
-// the label so callers get type-ahead without wiring their own predicate.
+// the label or the detail so callers get type-ahead without wiring their own
+// predicate.
 //
 // TextInput owns the query text (character input, backspace); useInput owns
 // navigation (arrows, enter, escape). Enter is handled here, not by TextInput,
 // so an empty query never submits the raw text: it always selects a row.
-export function Picker({ items, onSubmit, onCancel, placeholder }: PickerProps) {
+export function Picker({ items, onSubmit, onCancel, placeholder, initial }: PickerProps) {
   const [query, setQuery] = useState('')
-  const [index, setIndex] = useState(0)
+  const [index, setIndex] = useState(() => Math.max(0, items.findIndex((it) => it.value === initial)))
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return items
-    return items.filter((it) => it.label.toLowerCase().includes(q))
+    return items.filter((it) => it.label.toLowerCase().includes(q) || (it.detail ?? '').toLowerCase().includes(q))
   }, [items, query])
 
   // Clamp the cursor into range whenever the filtered set shrinks under it.
   const active = filtered.length === 0 ? -1 : Math.min(index, filtered.length - 1)
+  const start = Math.min(Math.max(0, active - Math.floor(VISIBLE_ROWS / 2)), Math.max(0, filtered.length - VISIBLE_ROWS))
+  const shown = filtered.slice(start, start + VISIBLE_ROWS)
 
   useInput((_input, key) => {
     if (key.escape) {
@@ -73,8 +83,8 @@ export function Picker({ items, onSubmit, onCancel, placeholder }: PickerProps) 
           placeholder={placeholder ?? 'filter'}
         />
       </Box>
-      {filtered.map((it, i) => {
-        const isActive = i === active
+      {shown.map((it, offset) => {
+        const isActive = start + offset === active
         return (
           <Box key={it.value}>
             <Text color={theme.accent}>{isActive ? `${glyphs.pointer} ` : '  '}</Text>

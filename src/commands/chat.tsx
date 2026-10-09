@@ -1,9 +1,11 @@
 import type { Command } from 'commander'
 import type OpenAI from 'openai'
+import { APIError } from 'openai/error'
 import type { AgentSessionEvent } from 'openai/resources/beta/agents/agents'
 
 import { resolveAgentId } from '../lib/agents.js'
 import { mapApiError, toPage } from '../lib/api.js'
+import { creditOut, otherSide, pickerItems, preselect, refusedAtAdmission } from '../lib/models.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { stripControlSequences } from '../lib/markdown.js'
 import { interactive } from '../lib/output.js'
@@ -14,8 +16,9 @@ import {
   type ChatEvent,
   type SessionCreateFlags,
 } from '../lib/sessions.js'
-import { ansi, glyphs } from '../ui/theme.js'
-import type { SendTurn } from '../ui/Chat.js'
+import { ansi, glyphs, hintText } from '../ui/theme.js'
+import type { SendTurn, Switcher } from '../ui/Chat.js'
+import type { SwitchChoice } from '../ui/SwitchPrompt.js'
 import { apiContext, fetchAll, globalFlags, withApi, type ApiContext } from './shared.js'
 
 type ChatOpts = SessionCreateFlags & { session?: string }
@@ -54,6 +57,68 @@ async function openSession(client: OpenAI, agentId: string | undefined, opts: Ch
   return session.id
 }
 
+// What a continue after a switch sends, as the dashboard's Continue does:
+// the next turn resumes the saved conversation.
+const CONTINUE_MESSAGE = 'Continue'
+
+// switcher loads the other side of who pays for a session and switches it.
+// The REPL and the single-shot prompt share it.
+function switcher(api: ApiContext): Switcher {
+  return {
+    load: async (sessionId) =>
+      withApi(api, async (c) => {
+        const current = await c.sessionModel(sessionId)
+        const list = await c.models()
+        const side = otherSide(list, current.payer)
+        return {
+          items: pickerItems(list, (group) => side.includes(group)),
+          initial: preselect(side, current.model),
+          provider: current.model.split('/')[0] ?? null,
+        }
+      }),
+    apply: async (sessionId, model) => {
+      await withApi(api, (c) => c.setSessionModel(sessionId, model))
+    },
+  }
+}
+
+// offerSwitch says which credit ran out and asks, in one prompt, whether to
+// top up or switch this session, with the design's warning; on switch, the
+// model is picked from the other side (preselected only for the same
+// OpenRouter model) and posted. True means the next turn can go on.
+async function offerSwitch(
+  api: ApiContext,
+  sessionId: string,
+  out: 'orca_credit' | 'provider_quota',
+  reason: string,
+): Promise<boolean> {
+  const sessions = switcher(api)
+  const offer = await sessions.load(sessionId)
+  process.stderr.write(`${stripControlSequences(reason)}\n`)
+  const { render } = await import('ink')
+  const { SwitchPrompt } = await import('../ui/SwitchPrompt.js')
+  const choice = await new Promise<SwitchChoice>((resolve) => {
+    let settled = false
+    const finish = (value: SwitchChoice) => {
+      if (settled) return
+      settled = true
+      instance.unmount()
+      resolve(value)
+    }
+    const instance = render(<SwitchPrompt out={out} offer={offer} onDone={finish} />, { exitOnCtrlC: true })
+    // Ctrl-C unmounts Ink without a choice: treated as a top-up.
+    void instance.waitUntilExit().then(() => finish({ kind: 'top-up' }))
+  })
+  if (choice.kind === 'no-models') {
+    process.stderr.write(`${hintText('No provider key is saved. Set one in the dashboard, Settings, Providers.')}\n`)
+    return false
+  }
+  if (choice.kind !== 'switch') return false
+  await sessions.apply(sessionId, choice.model)
+  process.stderr.write(`${hintText(`Switched: this session's next turn runs on ${choice.model}.`)}\n`)
+  return true
+}
+
 async function runSingleShot(
   api: ApiContext,
   agentId: string | undefined,
@@ -77,6 +142,18 @@ async function runSingleShot(
   process.once('SIGINT', onSigint)
   try {
     let wroteText = false
+    // A message refused at admission for Orca credit: at a terminal, offer
+    // the switch. Null means it was switched and the message goes again;
+    // anything else is rethrown as it came.
+    const switchedAfterRefusal = async (err: unknown): Promise<null> => {
+      const code = err instanceof APIError ? (err.code ?? undefined) : undefined
+      if (refusedAtAdmission(code) && !json && interactive()) {
+        nameSession()
+        const reason = err instanceof Error ? err.message : String(err)
+        if (await offerSwitch(api, sessionId, 'orca_credit', reason)) return null
+      }
+      throw err
+    }
     const result = await withApi(api, () =>
       streamTurn(client, sessionId, message, {
         signal: controller.signal,
@@ -93,8 +170,12 @@ async function runSingleShot(
                 noteTool(event)
               }
             },
-      }),
+      }).catch(switchedAfterRefusal),
     )
+    if (result === null) {
+      await runSingleShot(api, undefined, message, { ...opts, session: sessionId }, json)
+      return
+    }
 
     if (result.terminated === 'aborted') {
       if (!json && wroteText) process.stdout.write('\n')
@@ -107,6 +188,13 @@ async function runSingleShot(
     }
     nameSession()
     if (result.terminated === 'error') {
+      // A credit ran out: at a terminal, offer the switch of who pays, then
+      // continue the same session on it (orca-design model-billing D3.13).
+      const out = creditOut(result.errorCode, result.errorParam)
+      if (out && !json && interactive() && (await offerSwitch(api, sessionId, out, result.message))) {
+        await runSingleShot(api, undefined, CONTINUE_MESSAGE, { ...opts, session: sessionId }, json)
+        return
+      }
       throw new CliError(result.message || result.errorCode || 'the turn failed', ExitCode.Failure)
     }
     if (result.terminated === 'dropped') {
@@ -143,7 +231,9 @@ async function runRepl(
       return { ...result, sessionId: id }
     } catch (err) {
       const mapped = mapApiError(err, { contextName: api.resolved.name, apiUrl: api.client.apiUrl })
-      return { terminated: 'error' as const, message: mapped.message, sessionId: id }
+      // The code stays, so a refusal for Orca credit offers the switch.
+      const errorCode = err instanceof APIError ? (err.code ?? undefined) : undefined
+      return { terminated: 'error' as const, message: mapped.message, errorCode, sessionId: id }
     }
   }
 
@@ -152,7 +242,7 @@ async function runRepl(
     if (sessionId) process.stderr.write(`session ${sessionId}\n`)
   }
   const instance = render(
-    <Chat agentLabel={label} initialSessionId={opts.session} send={send} onExit={onExit} />,
+    <Chat agentLabel={label} initialSessionId={opts.session} send={send} switcher={switcher(api)} onExit={onExit} />,
     { exitOnCtrlC: false },
   )
   await instance.waitUntilExit()

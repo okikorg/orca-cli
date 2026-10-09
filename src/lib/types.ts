@@ -115,6 +115,45 @@ export type Wallet = {
   used_compute_seconds: number
   packs: WalletPack[]
   processing_fee: { bps: number; flat_cents: number }
+  // OpenRouter's credit fee on tokens and searches on Orca credit, in basis
+  // points. The CLI shows it and does no arithmetic with it.
+  openrouter_fee_bps: number
+}
+
+// -- Models -------------------------------------------------------------------
+
+// Who pays for a model's calls (orca-design model-billing D3.13).
+export type Payer = 'orca_credit' | 'own_key'
+
+// One model a member can pick. Prices are OpenRouter's, Orca credit only, in
+// micro-USD per million tokens; null where OpenRouter has no fixed price.
+export type PickModel = {
+  id: string
+  name?: string
+  context_length?: number
+  input_micro_usd_per_million?: number | null
+  output_micro_usd_per_million?: number | null
+}
+
+export type ModelGroup = {
+  payer: Payer
+  provider: string
+  label: string
+  // False when the server could not read this list; it then has no models.
+  available: boolean
+  models: PickModel[]
+}
+
+// GET /api/models: Orca credit first, then one group per provider with a key.
+export type ModelGroups = { object: 'list'; openrouter_fee_bps: number; groups: ModelGroup[] }
+
+// GET and POST /api/sessions/{id}/model.
+export type SessionModel = {
+  object: 'session.model'
+  session_id: string
+  model: string
+  agent_model: string
+  payer: Payer | null
 }
 
 // POST /api/billing/checkout and /api/billing/portal.

@@ -9,7 +9,7 @@ import { saveConfig } from '../../src/lib/config.js'
 import { useTmpConfigDir } from '../helpers/tmp-config.js'
 import { list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
-import { AGENT_ID, SESSION_ID, agentRoute, session } from '../helpers/session-events.js'
+import { AGENT_ID, SESSION_ID, agentRoute, session, sessionModelRoute } from '../helpers/session-events.js'
 
 // connect builds the server against a ClientSource and returns a connected
 // MCP client over an in-memory transport pair: the same wire protocol a
@@ -137,6 +137,7 @@ describe('orca mcp serve', () => {
     stubFetch({
       [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(session('completed', { usage: { input_tokens: 12, output_tokens: 3 } })),
       [`GET /api/usage?start=0&session=${SESSION_ID}&group_by=model`]: jsonResponse(summary),
+      ...sessionModelRoute(),
     })
     const client = await connect()
     const payload = JSON.parse(firstText(await client.callTool({ name: 'get_session', arguments: { id: SESSION_ID } })))

@@ -22,7 +22,7 @@ import { CliError, ExitCode } from './errors.js'
 import { formatCount } from './format.js'
 import { stripControlSequences } from './markdown.js'
 import { usdMicro } from './money.js'
-import type { UsageSummary } from './types.js'
+import type { SessionModel, UsageSummary } from './types.js'
 
 export type ChatToolStatus = 'running' | 'ok' | 'error'
 
@@ -40,6 +40,9 @@ export type ChatTurnResult = {
   terminated: 'done' | 'error' | 'dropped' | 'aborted'
   message: string
   errorCode?: string
+  // The error's param: with usage_limit_exceeded, `orca_credit` or
+  // `provider_quota` says whose credit ran out.
+  errorParam?: string
 }
 
 export type StreamTurnOptions = {
@@ -145,6 +148,7 @@ export async function streamTurn(
               terminated: 'error',
               message: event.turn.error?.message ?? 'the turn failed',
               errorCode: event.turn.error?.code ?? undefined,
+              errorParam: (event.turn.error as { param?: string | null } | null)?.param ?? undefined,
             }
           }
           break
@@ -169,8 +173,13 @@ export async function streamTurn(
     // The package raises a stream's `error` event as an APIError without a
     // status (unlike a connection failure, which has its own class).
     if (err instanceof APIError && err.status === undefined && !(err instanceof APIConnectionError)) {
-      const detail = err.error as { message?: string; code?: string | null } | undefined
-      return { terminated: 'error', message: detail?.message ?? err.message, errorCode: detail?.code ?? undefined }
+      const detail = err.error as { message?: string; code?: string | null; param?: string | null } | undefined
+      return {
+        terminated: 'error',
+        message: detail?.message ?? err.message,
+        errorCode: detail?.code ?? undefined,
+        errorParam: detail?.param ?? undefined,
+      }
     }
     // A failure before any event is an HTTP rejection: let the caller map it.
     if (followed === null && accum === '') throw err
@@ -240,16 +249,32 @@ export function sessionCreateParams(agentId: string, flags: SessionCreateFlags) 
 
 // SessionView is a session as the CLI shows it: the /v1 object without its
 // own usage field, and `usage`, the session's all-time /api/usage summary by
-// model (decision 0017).
-export type SessionView = Omit<AgentSession, 'usage'> & { usage: UsageSummary }
+// model (decision 0017); and from /api/sessions/{id}/model, the model its
+// next turn uses, the agent's own, and who pays (model-billing D3.13): a
+// switch is visible here, while the /v1 object keeps the agent's model.
+export type SessionView = Omit<AgentSession, 'usage'> & {
+  usage: UsageSummary
+  model: string
+  agent_model: string
+  payer: SessionModel['payer']
+}
 
-// sessionView reads one session and its usage from their one source each.
-// `sessions get` and the MCP server's get_session both answer with it.
+// sessionView reads one session, its usage and its model from their one
+// source each. `sessions get` and the MCP server's get_session both answer
+// with it.
 export async function sessionView(client: ApiClient, id: string): Promise<SessionView> {
   const session = await (await client.v1()).beta.agents.sessions.retrieve(id)
   const usage = await client.usage({ start: 0, session: id, group_by: 'model' })
+  const model = await client.sessionModel(id)
   // `usage` replaces the /v1 object's own field.
-  return { ...session, usage }
+  return { ...session, usage, model: model.model, agent_model: model.agent_model, payer: model.payer }
+}
+
+// payerLabel says who pays for a session's model, in words.
+export function payerLabel(payer: SessionModel['payer']): string {
+  if (payer === 'orca_credit') return 'Orca credit'
+  if (payer === 'own_key') return 'your own provider key'
+  return 'unknown'
 }
 
 // SessionUsageRow is one line of a session's usage: a stable key and raw

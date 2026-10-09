@@ -47,7 +47,7 @@ Create an agent and talk to it:
 
 ```bash
 orca agents list --json
-orca agents create -f agent.yaml --json      # the POST /v1/agents body: model (with a provider prefix, e.g. openai/gpt-5), name, instructions, tools
+orca agents create -f agent.yaml --json      # the POST /v1/agents body: model (who pays: orca/openrouter/<id> or <provider>/<id>), name, instructions, tools
 orca chat <agent> "summarize the open issues"     # one turn; the reply on stdout, "session <id>" on stderr
 orca chat <agent> --session <id> "and the oldest?"  # continue the same session
 orca sessions items <id> --json              # the conversation so far
@@ -91,6 +91,8 @@ It exposes one tool per CLI action: whoami and keys, agents, sessions, `chat` (s
 ## Troubleshooting
 
 - Exit 3 or 401: run `orca login` again (or check `ORCA_API_KEY`).
-- "Out of Orca credit" (HTTP 429, or a turn that fails with it): paid work is paused because the balance is under the plan's minimum; `orca billing wallet --json` shows `paid_work_paused` and `min_balance_micro_usd`. Add credit, then continue the session.
+- "Out of Orca credit" (HTTP 429, or a turn that fails with `usage_limit_exceeded` and `param` `orca_credit`): paid work is paused because the balance is under the plan's minimum; `orca billing wallet --json` shows `paid_work_paused` and `min_balance_micro_usd`. Add credit, then continue the session, or switch this session to a model on your own key: `POST /api/sessions/{id}/model {"model": "..."}` (in a terminal, `orca chat` offers it).
+- `param` `provider_quota`: your own provider account is out of quota. Top up there, or switch the session to Orca credit the same way.
+- 400 on `model` when saving: the name must say who pays (`orca/openrouter/<OpenRouter id>` for Orca credit, `<provider>/<id>` with your own key), the provider must list it, and an own key must be saved. `GET /api/models` lists every name you can use.
 - "does not support device login": the API URL does not point at an Orca server; check `orca auth status`, or use `orca login --with-token <key>` with a key minted in the dashboard.
 - Anything else: `orca doctor --json` names the failing check and the fix.

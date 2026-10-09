@@ -196,14 +196,14 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'create_agent',
-    'Create an agent. spec is the POST /v1/agents body: model (with a provider prefix, such as openai/gpt-5), name, instructions, tools, reasoning, multi_agent.',
+    'Create an agent. spec is the POST /v1/agents body: model, name, instructions, tools, reasoning, multi_agent. The model says who pays: orca/openrouter/<OpenRouter id> runs on Orca credit (such as orca/openrouter/openai/gpt-5.6-luna), <provider>/<id> on the organization\'s own key for openai, anthropic, openrouter, vercel or cheaperinference (such as anthropic/claude-sonnet-4-5). A bare name is refused.',
     { spec: z.record(z.string(), z.unknown()).describe('the agent body; model is required') },
     async (client, args) => (await client.v1()).beta.agents.create(args.spec as unknown as AgentCreateParams),
   )
 
   tool(
     'update_agent',
-    'Update an agent. spec holds only the fields to change; the rest are kept.',
+    'Update an agent. spec holds only the fields to change; the rest are kept. A model names who pays, as in create_agent.',
     {
       agent: z.string().describe('agent id or name'),
       spec: z.record(z.string(), z.unknown()).describe('fields to change'),
@@ -230,7 +230,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'get_session',
-    'Fetch one session: status, environment, error, and usage: its all-time usage summary by model with cost in micro-USD.',
+    'Fetch one session: status, environment, error; model (what its next turn runs on), agent_model and payer (orca_credit or own_key); and usage: its all-time usage summary by model with cost in micro-USD.',
     { id: z.string() },
     async (client, args) => sessionView(client, args.id as string),
   )

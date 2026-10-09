@@ -31,7 +31,8 @@ async function readSource(file: string): Promise<string> {
 // body of POST /v1/agents (model, name, instructions, tools, reasoning, ...).
 // YAML is a superset of JSON, so one parser covers both. Only the shape is
 // checked here; the server validates every field and names the one it
-// rejects. A create needs a model; an update may change any subset.
+// rejects. A create needs a model, from the file or, in a terminal, the
+// model picker (`agents create`); an update may change any subset.
 export async function loadAgentFile(
   file: string,
   opts: { requireModel: boolean },
@@ -48,16 +49,25 @@ export async function loadAgentFile(
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new CliError(`${label} must hold one agent object`, ExitCode.Usage, [
-      'Example: { model: openai/gpt-5, name: support, instructions: "..." }',
+      'Example: { model: orca/openrouter/openai/gpt-5.6-luna, name: support, instructions: "..." }',
     ])
   }
   const doc = raw as Record<string, unknown>
-  if (opts.requireModel && (typeof doc.model !== 'string' || !doc.model.trim())) {
-    throw new CliError(`${label} needs a model`, ExitCode.Usage, [
-      'Name it with a provider prefix, such as model: openai/gpt-5',
-    ])
-  }
+  if (opts.requireModel && !hasModel(doc)) throw missingModel(label)
   return doc
+}
+
+export function hasModel(doc: Record<string, unknown>): boolean {
+  return typeof doc.model === 'string' && Boolean(doc.model.trim())
+}
+
+// missingModel is the refusal of an agent file with no model, outside a
+// terminal or with --json, where no picker opens.
+export function missingModel(label: string): CliError {
+  return new CliError(`${label} needs a model`, ExitCode.Usage, [
+    'Name who pays: model: orca/openrouter/<OpenRouter id> for Orca credit,',
+    'or <provider>/<id> with your own key, such as model: anthropic/claude-sonnet-4-5',
+  ])
 }
 
 // findAgent turns what the user typed into an agent: the agent with that id,
