@@ -13,7 +13,7 @@ The server has two surfaces:
 import OpenAI from 'openai'
 
 const client = new OpenAI({ apiKey: process.env.ORCA_API_KEY, baseURL: 'https://api.orcapods.ai/v1' })
-const agent = await client.beta.agents.create({ model: 'openai/gpt-5', name: 'support', instructions: 'Be brief.' })
+const agent = await client.beta.agents.create({ model: 'orca/openrouter/openai/gpt-5.6-luna', name: 'support', instructions: 'Be brief.' })
 const session = await client.beta.agents.sessions.create({ agent_id: agent.id, environment: { type: 'none' } })
 for await (const event of client.beta.agents.sessions.stream(session.id, { input: 'Hello' })) {
   if (event.type === 'agent.session.turn.output_text.delta') process.stdout.write(event.delta)
@@ -30,6 +30,7 @@ B=https://api.orcapods.ai
 
 curl -s -H "$K" $B/api/whoami                                  # tenant, actor, role
 curl -s -H "$K" "$B/api/keys?limit=20"                         # API keys (no secrets)
+curl -s -H "$K" "$B/api/models"                                # every model you can pick, by who pays, with prices
 curl -s -H "$K" "$B/api/usage?group_by=model"                  # cost per meter and model, last 30 days
 curl -s -H "$K" "$B/api/usage/events?limit=20&meter=model_tokens"
 curl -s -H "$K" $B/api/billing/wallet                          # balance and plan

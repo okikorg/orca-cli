@@ -89,22 +89,37 @@ describe('agents get', () => {
 
 describe('agents create and update', () => {
   it('posts the file as the agent body', async () => {
-    const file = await agentFile('model: openai/gpt-5\nname: support\ninstructions: Be brief.\n')
+    const file = await agentFile('model: orca/openrouter/openai/gpt-5.6-luna\nname: support\ninstructions: Be brief.\n')
     const calls = stubFetch({ 'POST /v1/agents': jsonResponse(agent(ID, 'support')) })
     await run(['agents', 'create', '-f', file])
     expect(JSON.parse(calls[0].body ?? '{}')).toEqual({
-      model: 'openai/gpt-5',
+      model: 'orca/openrouter/openai/gpt-5.6-luna',
       name: 'support',
       instructions: 'Be brief.',
     })
     expect(stdout()).toContain(`Created agent "support" (${ID})`)
   })
 
-  it('needs a model before any request', async () => {
+  it('needs a model in the file outside a terminal, before any request', async () => {
     const file = await agentFile('name: support\n')
     const calls = stubFetch({})
-    await expect(run(['agents', 'create', '-f', file])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
+    // The test runner is not a terminal, so no picker opens; --json never opens one either.
+    for (const argv of [['agents', 'create', '-f', file], ['--json', 'agents', 'create', '-f', file]]) {
+      await expect(run(argv)).rejects.toMatchObject({ exitCode: ExitCode.Usage, message: `${file} needs a model` })
+    }
     expect(calls).toHaveLength(0)
+  })
+
+  it("prints the server's refusal of a model on the model field", async () => {
+    const file = await agentFile('model: openai/gpt-5.6-luna\n')
+    const message = 'Add your OpenAI key in Settings, Providers, or use orca/openrouter/openai/gpt-5.6-luna for Orca credit'
+    stubFetch({
+      'POST /v1/agents': jsonResponse(
+        { error: { message, type: 'invalid_request_error', param: 'model', code: 'invalid_request' } },
+        { status: 400 },
+      ),
+    })
+    await expect(run(['agents', 'create', '-f', file])).rejects.toMatchObject({ message: `400: ${message} (model)` })
   })
 
   it('updates only the fields in the file', async () => {
@@ -118,7 +133,7 @@ describe('agents create and update', () => {
   })
 
   it('maps a server validation error to its message', async () => {
-    const file = await agentFile('model: openai/gpt-5\ncolor: blue\n')
+    const file = await agentFile('model: orca/openrouter/openai/gpt-5.6-luna\ncolor: blue\n')
     stubFetch({
       'POST /v1/agents': jsonResponse(
         { error: { message: 'Unknown agent field: color', type: 'invalid_request_error', param: 'color', code: 'invalid_request' } },

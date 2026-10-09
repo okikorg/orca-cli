@@ -12,6 +12,7 @@ import {
   itemText,
   sessionCreateParams,
   sessionUsageRows,
+  payerLabel,
   sessionView,
   type SessionCreateFlags,
 } from '../lib/sessions.js'
@@ -126,6 +127,9 @@ export function registerSessions(program: Command): void {
         printPlainRows([
           ['id', session.id],
           ['agent', session.agent.id],
+          ['model', session.model],
+          ['agent_model', session.agent_model],
+          ['payer', session.payer ?? '-'],
           ['status', session.status],
           ['environment', session.environment.type],
           ['created', formatTime(session.created_at)],
@@ -140,6 +144,11 @@ export function registerSessions(program: Command): void {
       await renderStatic(
         <Panel title={session.id} subtitle={session.agent.id}>
           <Field label="status" value={session.status} valueColor={sessionStatusColor(session.status, theme)} />
+          <Field
+            label="model"
+            value={session.model === session.agent_model ? session.model : `${session.model} (switched from ${session.agent_model})`}
+          />
+          <Field label="pays" value={payerLabel(session.payer)} />
           <Field label="environment" value={session.environment.type} />
           <Field label="created" value={formatTime(session.created_at)} />
           <Field label="last active" value={formatTime(session.last_active_at)} />

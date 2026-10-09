@@ -145,8 +145,8 @@ whether the config file exists, parses, and is `chmod 600`, how the active
 context resolves (which field came from a flag, env var, file, or baked default),
 server reachability (`GET /health`, with latency), the API key's presence and
 validity and role (`GET /api/whoami`), a credit preflight (`GET
-/api/billing/wallet`: an empty wallet warns, since turns on Orca's model keys
-are refused while your own provider keys keep working), and the dashboard URL
+/api/billing/wallet`: an empty wallet warns, since turns on Orca credit are
+refused while models on your own provider keys keep working), and the dashboard URL
 used for kit share links. Each check reports `pass`, `warn`, `fail`, or `skip`.
 The exit code is `0` when nothing failed (warnings are allowed) and `1` when any
 check failed; `--strict` also fails on warnings.
@@ -245,10 +245,12 @@ secret: `ORCA_API_KEY=$(orca keys create ci </dev/null)`.
 Agents, sessions, skills, vaults, and files live on the server's `/v1` Agents
 API, which the CLI calls through the `openai` package exactly as any OpenAI
 client does. `agents create -f` takes the `POST /v1/agents` body; the model
-names its provider with a prefix:
+says who pays (`orca/openrouter/<OpenRouter id>` for Orca credit,
+`<provider>/<id>` with your own key for openai, anthropic, openrouter, vercel or
+cheaperinference):
 
 ```yaml
-model: openai/gpt-5          # or anthropic/..., openrouter/..., vercel/..., cheaperinference/...
+model: orca/openrouter/openai/gpt-5.6-luna   # or anthropic/claude-sonnet-4-5 on your Anthropic key
 name: support
 instructions: |
   You answer support questions.
@@ -260,8 +262,12 @@ tools:
 reasoning: { effort: medium }
 ```
 
-Only the shape is checked locally; the server validates every field and the
-CLI prints its message and the field it is about.
+Only the shape is checked locally; the server validates every field, checks the
+model against its provider's list, and the CLI prints its message and the field
+it is about. In a terminal, a file with no `model` opens a picker of every model
+you can use, grouped by who pays: Orca credit with OpenRouter's price per million
+tokens and its fee, then each provider you saved a key for. With `--json` or
+outside a terminal the file must name the model.
 
 `orca chat <agent> [prompt]` runs a turn on a `/v1` session with your API key.
 Without `--session` it creates a session of the agent first (no environment by
@@ -286,6 +292,15 @@ stdout as plain text and the session id is printed to stderr (`session
 sess_...`), so scripts can resume with `--session`, also when the turn fails or
 is refused. A failed turn exits 1 after printing what arrived; Ctrl-C cancels
 the turn on the server and exits 130.
+
+When a turn ends because a credit ran out (Orca credit, or your own provider
+account's quota), `orca chat` in a terminal says which, shows the warning that
+switching may re-send the conversation without the provider's cache and behave
+differently, and asks whether to top up or switch this session. Switching picks
+a model on the other side (the same OpenRouter model is preselected when it
+exists there), applies from the next turn for this session only, and continues
+with `Continue`. Outside a terminal or with `--json` it prints the reason and
+the session id and exits 1.
 
 ## Usage and billing
 

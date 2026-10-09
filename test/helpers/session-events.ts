@@ -46,7 +46,7 @@ export function turnEvents(ending: 'completed' | 'failed' = 'completed'): Record
       : ev({
           type: 'agent.session.turn.failed',
           turn_id: t,
-          turn: turn(t, 'failed', { code: 'usage_limit_exceeded', message: 'Out of credit' }),
+          turn: turn(t, 'failed', { code: 'usage_limit_exceeded', message: 'Out of credit', param: 'orca_credit' }),
           usage: null,
         }),
     ev({ type: 'agent.session.idle', session: session() }),
@@ -70,10 +70,28 @@ export function turnRoutes(events: Record<string, unknown>[]): Record<string, Ro
 }
 
 export function agent(extra: Record<string, unknown> = {}) {
-  return { id: AGENT_ID, object: 'agent', name: 'support', model: 'openai/gpt-5', created_at: 1_783_245_600, ...extra }
+  return { id: AGENT_ID, object: 'agent', name: 'support', model: 'orca/openrouter/openai/gpt-5.6-luna', created_at: 1_783_245_600, ...extra }
 }
 
 // agentRoute is the agent by its id, which a new session's agent resolves to.
 export function agentRoute(): Record<string, RouteHandler> {
   return { [`GET /v1/agents/${AGENT_ID}`]: jsonResponse(agent()) }
+}
+
+// sessionModelRoute is GET /api/sessions/{id}/model: the model the session's
+// next turn uses (a switch, when one was made), the agent's, and who pays.
+export function sessionModelRoute(
+  model = 'orca/openrouter/openai/gpt-5.6-luna',
+  agentModel = 'orca/openrouter/openai/gpt-5.6-luna',
+): Record<string, RouteHandler> {
+  const payer = model.startsWith('orca/') ? 'orca_credit' : 'own_key'
+  return {
+    [`GET /api/sessions/${SESSION_ID}/model`]: jsonResponse({
+      object: 'session.model',
+      session_id: SESSION_ID,
+      model,
+      agent_model: agentModel,
+      payer,
+    }),
+  }
 }

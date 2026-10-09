@@ -2,7 +2,7 @@ import { cleanup, render } from 'ink-testing-library'
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { Chat, type SendTurn } from '../../src/ui/Chat.js'
+import { Chat, type SendTurn, type Switcher } from '../../src/ui/Chat.js'
 import type { ChatTurnResult } from '../../src/lib/sessions.js'
 import { glyphs } from '../../src/ui/theme.js'
 
@@ -155,5 +155,108 @@ describe('Chat REPL', () => {
     stdin.write('\x03') // now idle: exits
     await waitFor(() => exitCalled)
     expect(exitCalled).toBe(true)
+  }, 20000)
+
+  it('after a credit runs out, asks with the warning, switches on the chosen model and continues', async () => {
+    const sent: string[] = []
+    const send: SendTurn = async (message) => {
+      sent.push(message)
+      if (sent.length === 1) {
+        return {
+          terminated: 'error',
+          message: 'Out of Orca credit',
+          errorCode: 'usage_limit_exceeded',
+          errorParam: 'orca_credit',
+          sessionId: 'sess_1',
+        }
+      }
+      return { terminated: 'done', message: 'Continuing on your key', sessionId: 'sess_1' }
+    }
+    const applied: Array<[string, string]> = []
+    const switcher: Switcher = {
+      load: async () => ({
+        items: [
+          { label: 'anthropic/claude-sonnet-4-5', value: 'anthropic/claude-sonnet-4-5', detail: 'Anthropic, billed by your provider' },
+          { label: 'openrouter/openai/gpt-5.6-luna', value: 'openrouter/openai/gpt-5.6-luna', detail: 'OpenRouter, billed by your provider' },
+        ],
+        // The same OpenRouter model is preselected.
+        initial: 'openrouter/openai/gpt-5.6-luna',
+        provider: 'orca',
+      }),
+      apply: async (sessionId, model) => {
+        applied.push([sessionId, model])
+      },
+    }
+    const { stdin, frames, lastFrame } = render(<Chat agentLabel="support" send={send} switcher={switcher} onExit={() => {}} />)
+    await waitFor(() => frames.join('').includes('Chat'))
+    await ready(stdin as unknown as EventEmitter)
+
+    stdin.write('go')
+    await waitFor(() => frames.join('\n').includes('go'))
+    stdin.write('\r')
+    await waitFor(() => (lastFrame() ?? '').includes('Top up, or switch this session?'))
+    const asked = lastFrame() ?? ''
+    expect(asked).toContain('Out of Orca credit')
+    expect(asked).toContain("Switching may re-send this conversation without the provider's cache")
+    expect(asked).toContain('Switch this session to your own key')
+
+    // The first row is the switch.
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\r')
+    await waitFor(() => (lastFrame() ?? '').includes('Select a model'))
+    await ready(stdin as unknown as EventEmitter)
+    // Enter takes the preselected row.
+    stdin.write('\r')
+    await waitFor(() => frames.join('\n').includes('Continuing on your key'))
+    expect(applied).toEqual([['sess_1', 'openrouter/openai/gpt-5.6-luna']])
+    expect(sent).toEqual(['go', 'Continue'])
+    expect(frames.join('\n')).toContain("Switched: this session's next turn runs on openrouter/openai/gpt-5.6-luna.")
+  }, 20000)
+
+  it('reports a credit out without asking when no switch is offered', async () => {
+    const send: SendTurn = async () => ({
+      terminated: 'error',
+      message: 'Your OpenAI account is out of quota',
+      errorCode: 'usage_limit_exceeded',
+      errorParam: 'provider_quota',
+      sessionId: 'sess_1',
+    })
+    const { stdin, frames, lastFrame } = render(<Chat agentLabel="support" send={send} onExit={() => {}} />)
+    await waitFor(() => frames.join('').includes('Chat'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('go')
+    await waitFor(() => frames.join('\n').includes('go'))
+    stdin.write('\r')
+    await waitFor(() => frames.join('\n').includes('out of quota'))
+    expect(lastFrame() ?? '').not.toContain('Top up, or switch')
+  }, 20000)
+
+  it('after a message refused at admission for Orca credit, switches and sends that message again', async () => {
+    const sent: string[] = []
+    const send: SendTurn = async (message) => {
+      sent.push(message)
+      if (sent.length === 1) {
+        return { terminated: 'error', message: '429: Out of Orca credit', errorCode: 'insufficient_quota', sessionId: 'sess_1' }
+      }
+      return { terminated: 'done', message: 'Answered on your key', sessionId: 'sess_1' }
+    }
+    const switcher: Switcher = {
+      load: async () => ({ items: [{ label: 'anthropic/claude-sonnet-4-5', value: 'anthropic/claude-sonnet-4-5' }], provider: 'orca' }),
+      apply: async () => {},
+    }
+    const { stdin, frames, lastFrame } = render(<Chat agentLabel="support" send={send} switcher={switcher} onExit={() => {}} />)
+    await waitFor(() => frames.join('').includes('Chat'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('summarize the tickets')
+    await waitFor(() => frames.join('\n').includes('summarize the tickets'))
+    stdin.write('\r')
+    await waitFor(() => (lastFrame() ?? '').includes('Top up, or switch this session?'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\r')
+    await waitFor(() => (lastFrame() ?? '').includes('Select a model'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\r')
+    await waitFor(() => frames.join('\n').includes('Answered on your key'))
+    expect(sent).toEqual(['summarize the tickets', 'summarize the tickets'])
   }, 20000)
 })

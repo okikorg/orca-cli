@@ -2,9 +2,10 @@ import type { Command } from 'commander'
 import type { Agent, AgentCreateParams, AgentUpdateParams } from 'openai/resources/beta/agents/agents'
 
 import { toPage } from '../lib/api.js'
-import { findAgent, loadAgentFile, resolveAgentId } from '../lib/agents.js'
+import { findAgent, hasModel, loadAgentFile, missingModel, resolveAgentId } from '../lib/agents.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatTime } from '../lib/format.js'
+import { pickerItems } from '../lib/models.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import { accentVerb, hintText } from '../ui/theme.js'
 import { confirm } from './prompts.js'
@@ -50,6 +51,21 @@ async function resolveAgent(ref: string | undefined, verb: string, api: ApiConte
   const label = (a: Agent) => `${a.name ?? '(unnamed)'}  ${a.id}`
   const chosen = await pickOne('Select an agent', page.items.map(label))
   return page.items.find((a) => label(a) === chosen)!.id
+}
+
+// pickModel opens the model picker over every model the organization can
+// pick, by who pays (orca-design model-billing D3.13): Orca credit with
+// OpenRouter's prices and fee, then each provider with a saved key.
+async function pickModel(api: ApiContext): Promise<string> {
+  const list = await withApi(api, (c) => c.models())
+  const items = pickerItems(list)
+  if (items.length === 0) {
+    throw new CliError('no models to pick from: the model lists could not be read', ExitCode.Failure, [
+      'Name the model in the file instead, such as model: orca/openrouter/openai/gpt-5.6-luna',
+    ])
+  }
+  const { pickItem } = await import('../ui/AgentPicker.js')
+  return pickItem('Select a model (type to filter)', items)
 }
 
 async function renderAgentDetail(a: Agent): Promise<void> {
@@ -148,12 +164,18 @@ export function registerAgents(program: Command): void {
 
   agents
     .command('create')
-    .description('create an agent from a YAML or JSON file (the POST /v1/agents body)')
+    .description('create an agent from a YAML or JSON file (the POST /v1/agents body); with no model in it, a terminal picks one')
     .requiredOption('-f, --file <path>', 'agent document (use - for stdin)')
     .action(async (opts: { file: string }, cmd: Command) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
-      const body = await loadAgentFile(opts.file, { requireModel: true })
+      const body = await loadAgentFile(opts.file, { requireModel: false })
+      if (!hasModel(body)) {
+        // The picker opens only for a person at a terminal; scripts and
+        // --json name the model in the file, as before.
+        if (flags.json || !interactive()) throw missingModel(opts.file === '-' ? 'stdin' : opts.file)
+        body.model = await pickModel(api)
+      }
       const created = await withApi(api, async (c) =>
         (await c.v1()).beta.agents.create(body as unknown as AgentCreateParams),
       )

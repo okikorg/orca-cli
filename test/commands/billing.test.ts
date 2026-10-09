@@ -21,6 +21,7 @@ const WALLET = {
   used_compute_seconds: 120,
   packs: [{ cents: 2000, fee_cents: 180, credited_micro_usd: 18_200_000 }],
   processing_fee: { bps: 650, flat_cents: 50 },
+  openrouter_fee_bps: 550,
 }
 
 const { run, stdout } = commandHarness(registerBilling)
@@ -41,6 +42,8 @@ describe('billing wallet', () => {
     // Field names as the server spells them, for grep and cut.
     expect(stdout()).toContain('period_start\t')
     expect(stdout()).toContain('included_compute_seconds\t36000')
+    // OpenRouter's fee on Orca credit, as the server sends it.
+    expect(stdout()).toContain('openrouter_fee_bps\t550')
   })
 
   it('shows paused as the server says, even with a positive balance', async () => {

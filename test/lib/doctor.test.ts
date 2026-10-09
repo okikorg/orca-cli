@@ -301,7 +301,7 @@ describe('checkBilling', () => {
       }),
     })
     expect(paused.status).toBe('warn')
-    expect(paused.message).toBe("paid work paused (balance $0.25, under the $0.50 minimum); turns on Orca's model keys will be refused")
+    expect(paused.message).toBe("paid work paused (balance $0.25, under the $0.50 minimum); turns on Orca credit will be refused")
   })
 
   it('warns when the wallet lacks the server\'s verdict', async () => {

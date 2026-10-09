@@ -1,7 +1,7 @@
 import { render } from 'ink'
 
 import { CliError, ExitCode } from '../lib/errors.js'
-import { Picker } from './Picker.js'
+import { Picker, type PickerItem } from './Picker.js'
 
 // pickOne mounts the generic filterable Picker and resolves with the chosen
 // value. Esc (onCancel) and Ctrl-C both reject with an interrupt (see
@@ -12,6 +12,12 @@ import { Picker } from './Picker.js'
 // since the Picker draws no separate title line. Callers must check
 // interactive() first.
 export async function pickOne(title: string, values: string[]): Promise<string> {
+  return pickItem(title, values.map((v) => ({ label: v, value: v })))
+}
+
+// pickItem is pickOne over items with a detail line each, starting on
+// `initial` when it is one of them: the model picker and the switch use it.
+export async function pickItem(title: string, items: PickerItem[], initial?: string): Promise<string> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(`cannot prompt for "${title}" without a terminal`)
   }
@@ -25,7 +31,8 @@ export async function pickOne(title: string, values: string[]): Promise<string> 
     }
     const instance = render(
       <Picker
-        items={values.map((v) => ({ label: v, value: v }))}
+        items={items}
+        initial={initial}
         placeholder={title}
         onSubmit={(value) => {
           if (settled) return

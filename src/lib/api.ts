@@ -1,7 +1,7 @@
 // Clients for the Orca server. Two surfaces, one bearer key:
 //
-// - /api: the server's own routes (whoami, keys, usage, billing, kits),
-//   through the thin fetch helper below.
+// - /api: the server's own routes (whoami, keys, usage, billing, models,
+//   kits), through the thin fetch helper below.
 // - /v1: the OpenAI-compatible Agents API (agents, sessions, skills, vaults,
 //   files), through the official `openai` package, exactly as any OpenAI
 //   client calls it. v1() builds that client lazily so commands that never
@@ -22,7 +22,9 @@ import type {
   KitCopyResult,
   KitInput,
   ListPage,
+  ModelGroups,
   PublicKit,
+  SessionModel,
   UsageEvent,
   UsageSummary,
   Wallet,
@@ -318,6 +320,22 @@ export class ApiClient {
   // it only when it is one of its dashboard origins.
   private returnTo(): Record<string, string> {
     return this.dashboardUrl ? { Origin: this.dashboardUrl } : {}
+  }
+
+  // -- Models -------------------------------------------------------------------
+
+  // models lists every model a member can pick, grouped by who pays.
+  models(): Promise<ModelGroups> {
+    return this.request<ModelGroups>('/api/models')
+  }
+
+  sessionModel(sessionId: string): Promise<SessionModel> {
+    return this.request<SessionModel>(`/api/sessions/${enc(sessionId)}/model`)
+  }
+
+  // setSessionModel switches who pays for one session, from its next turn.
+  setSessionModel(sessionId: string, model: string): Promise<SessionModel> {
+    return this.post<SessionModel>(`/api/sessions/${enc(sessionId)}/model`, { model })
   }
 
   // -- Kits ---------------------------------------------------------------------
