@@ -4,7 +4,30 @@
 // the server's group_costs entry for that key. Nothing here adds money up.
 
 import { usdMicro } from './money.js'
-import type { UsageEvent, UsageSummary } from './types.js'
+import type { UsageEvent, UsageSeriesInterval, UsageSummary } from './types.js'
+
+// The chart's label, the dashboard's too: buckets are UTC hours or days, and
+// the chart says so once.
+export const SERIES_INTERVAL_LABELS: Record<UsageSeriesInterval, string> = {
+  hour: 'Hourly (UTC)',
+  day: 'Daily (UTC)',
+}
+
+// UsageChart is what `orca usage` plots for one meter: the server's series as
+// sent (it picks the bucket and returns the empty ones, so nothing is filled
+// here), its caption, and what to print when there is nothing to plot.
+export type UsageChart = { values: number[]; caption?: string; empty: string }
+
+export function usageChart(summary: UsageSummary, meter: string, days: number): UsageChart {
+  const series = summary.series
+  if (series === undefined) return { values: [], empty: 'No chart: this server sends no series.' }
+  if (series === null) return { values: [], empty: 'No chart for a window over 366 days.' }
+  return {
+    values: series.points.filter((p) => p.meter === meter).map((p) => p.quantity),
+    caption: `${SERIES_INTERVAL_LABELS[series.interval]}, ${meter}, last ${days} ${days === 1 ? 'day' : 'days'}`,
+    empty: 'No usage in this window.',
+  }
+}
 
 // groupCost is a key's cost from group_costs, or undefined when the server
 // sent none for it.

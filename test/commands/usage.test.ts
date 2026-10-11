@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { dailySeries, registerUsage } from '../../src/commands/usage.js'
+import * as usageCommand from '../../src/commands/usage.js'
+import { registerUsage } from '../../src/commands/usage.js'
+import { usageChart } from '../../src/lib/usage.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import { commandHarness, list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
@@ -20,7 +22,15 @@ const SUMMARY = {
     { meter: 'web_searches', unit: 'searches', quantity: 2, cost_micro_usd: 50_000, buckets: {} },
     { meter: 'compute_seconds', unit: 'seconds', quantity: 0, cost_micro_usd: 0, buckets: {} },
   ],
-  daily: [{ date: '2026-07-04', meter: 'model_tokens', quantity: 4200, cost_micro_usd: 1_200_000 }],
+  series: {
+    interval: 'day',
+    points: [
+      { start: Date.UTC(2026, 6, 4) / 1000, meter: 'model_tokens', quantity: 4200, cost_micro_usd: 0 },
+      { start: Date.UTC(2026, 6, 4) / 1000, meter: 'web_searches', quantity: 2, cost_micro_usd: 50_000 },
+      { start: Date.UTC(2026, 6, 5) / 1000, meter: 'model_tokens', quantity: 0, cost_micro_usd: 0 },
+      { start: Date.UTC(2026, 6, 5) / 1000, meter: 'web_searches', quantity: 0, cost_micro_usd: 0 },
+    ],
+  },
 }
 
 const { run, stdout, stderr } = commandHarness(registerUsage)
@@ -133,20 +143,46 @@ describe('usage events', () => {
   })
 })
 
-describe('dailySeries', () => {
-  it('fills days without usage with zero', () => {
-    const start = Date.UTC(2026, 6, 1) / 1000
-    const end = Date.UTC(2026, 6, 4) / 1000
-    expect(
-      dailySeries(
-        [
-          { date: '2026-07-02', meter: 'model_tokens', quantity: 5, cost_micro_usd: 1 },
-          { date: '2026-07-02', meter: 'web_searches', quantity: 9, cost_micro_usd: 1 },
+describe('usageChart', () => {
+  it('plots one meter of the server\'s series as sent, captioned with its bucket', () => {
+    expect(usageChart(SUMMARY as never, 'model_tokens', 30)).toEqual({
+      values: [4200, 0],
+      caption: 'Daily (UTC), model_tokens, last 30 days',
+      empty: 'No usage in this window.',
+    })
+  })
+
+  it('labels an hourly series the same way the dashboard does', () => {
+    const hour = Date.UTC(2026, 6, 4, 23) / 1000
+    const summary = {
+      ...SUMMARY,
+      series: {
+        interval: 'hour',
+        points: [
+          { start: hour, meter: 'model_tokens', quantity: 100, cost_micro_usd: 0 },
+          { start: hour + 3600, meter: 'model_tokens', quantity: 40, cost_micro_usd: 0 },
         ],
-        'model_tokens',
-        start,
-        end,
-      ),
-    ).toEqual([0, 5, 0])
+      },
+    }
+    expect(usageChart(summary as never, 'model_tokens', 1)).toEqual({
+      values: [100, 40],
+      caption: 'Hourly (UTC), model_tokens, last 1 day',
+      empty: 'No usage in this window.',
+    })
+  })
+
+  it('says why there is no chart for a long window or an older server', () => {
+    expect(usageChart({ ...SUMMARY, series: null } as never, 'model_tokens', 400)).toEqual({
+      values: [],
+      empty: 'No chart for a window over 366 days.',
+    })
+    expect(usageChart({ ...SUMMARY, series: undefined } as never, 'model_tokens', 30)).toEqual({
+      values: [],
+      empty: 'No chart: this server sends no series.',
+    })
+  })
+
+  it('no longer fills a daily series of its own', () => {
+    expect('dailySeries' in usageCommand).toBe(false)
   })
 })

@@ -44,11 +44,23 @@ export type UsageMeter = {
   buckets: Record<string, number>
 }
 
-export type UsageDay = {
-  date: string
+// The series' bucket, which the server picks from the window: a UTC hour
+// for up to 2 days, a UTC day for up to 366 days.
+export type UsageSeriesInterval = 'hour' | 'day'
+
+// One meter in one bucket; start is the bucket's start in Unix seconds.
+export type UsageSeriesPoint = {
+  start: number
   meter: string
   quantity: number
   cost_micro_usd: number
+}
+
+// Every bucket of the window for every meter, empty ones at zero; null for a
+// window over 366 days.
+export type UsageSeries = {
+  interval: UsageSeriesInterval
+  points: UsageSeriesPoint[]
 }
 
 export type UsageGroup = {
@@ -74,7 +86,8 @@ export type UsageSummary = {
   session_id: string | null
   cost_micro_usd: number
   meters: UsageMeter[]
-  daily: UsageDay[]
+  // Absent only from a server older than the series.
+  series?: UsageSeries | null
   groups?: UsageGroup[]
   group_costs?: UsageGroupCost[]
 }

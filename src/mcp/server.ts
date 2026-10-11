@@ -429,7 +429,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'get_usage',
-    'Usage totals per meter with their cost in micro-USD, a daily series, and optional groups. With groupBy, group_costs gives each key\'s cost across every meter (a model\'s, session\'s or agent\'s cost); a call\'s money is on its model_calls row, not its token rows. Costs are the server\'s; do not recompute them.',
+    'Usage totals per meter with their cost in micro-USD, a series bucketed by the UTC hour (windows up to 2 days) or the UTC day (up to 366 days; null beyond), with every bucket and meter, and optional groups. daily is deprecated and goes on or after 2027-01-11. With groupBy, group_costs gives each key\'s cost across every meter (a model\'s, session\'s or agent\'s cost); a call\'s money is on its model_calls row, not its token rows. Costs are the server\'s; do not recompute them.',
     {
       days: z.number().int().min(1).max(366).optional().describe('look-back window (default 30)'),
       groupBy: z.enum(['model', 'provider', 'credential', 'session', 'agent']).optional(),

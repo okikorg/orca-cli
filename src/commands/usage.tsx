@@ -2,11 +2,11 @@ import type { Command } from 'commander'
 
 import { renderChart } from '../lib/chart.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { formatCount, formatDate, formatTime } from '../lib/format.js'
+import { formatCount, formatTime } from '../lib/format.js'
 import { usdMicro } from '../lib/money.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
-import type { UsageDay, UsageEvent, UsageMeter } from '../lib/types.js'
-import { eventCost, groupRows, type GroupRow } from '../lib/usage.js'
+import type { UsageEvent, UsageMeter } from '../lib/types.js'
+import { eventCost, groupRows, usageChart, type GroupRow } from '../lib/usage.js'
 import { hintText } from '../ui/theme.js'
 import {
   addPageFlags,
@@ -23,15 +23,6 @@ import {
 const GROUP_BY = ['model', 'provider', 'credential', 'session', 'agent'] as const
 const DAY = 86_400
 
-// dailySeries lays one meter's daily quantities over every day of the window,
-// so days without usage plot as zero instead of vanishing from the axis.
-export function dailySeries(daily: UsageDay[], meter: string, start: number, end: number): number[] {
-  const byDate = new Map(daily.filter((d) => d.meter === meter).map((d) => [d.date, d.quantity]))
-  const series: number[] = []
-  for (let t = start - (start % DAY); t < end; t += DAY) series.push(byDate.get(formatDate(t)) ?? 0)
-  return series
-}
-
 function groupKey(g: GroupRow): string {
   return g.key ?? '(none)'
 }
@@ -45,11 +36,11 @@ export function registerUsage(program: Command): void {
 
   usage
     .command('summary', { isDefault: true })
-    .description('totals per meter over a window, a daily chart, and optional groups (the default)')
-    .option('--days <n>', 'look-back window in days', (v) => parseInt(v, 10), 30)
+    .description('totals per meter over a window, a chart by the hour or the day, and optional groups (the default)')
+    .option('--days <n>', 'look-back window in days (1 or 2 chart by the hour)', (v) => parseInt(v, 10), 30)
     .option('--group-by <field>', `also total by ${GROUP_BY.join(' | ')}`)
     .option('--session <id>', 'only this session\'s usage')
-    .option('--meter <name>', 'the meter the daily chart plots', 'model_tokens')
+    .option('--meter <name>', 'the meter the chart plots', 'model_tokens')
     .action(async (opts: SummaryOpts, cmd: Command) => {
       const flags = globalFlags(cmd)
       if (!Number.isFinite(opts.days) || opts.days <= 0) {
@@ -86,9 +77,10 @@ export function registerUsage(program: Command): void {
       const { Table } = await import('../ui/Table.js')
       const { Box, Text } = await import('ink')
       const { theme } = await import('../ui/theme.js')
-      const chart = renderChart(dailySeries(summary.daily, opts.meter, summary.start, summary.end), {
-        caption: `${opts.meter} per day, last ${opts.days} days`,
-        empty: 'No usage in this window.',
+      const plot = usageChart(summary, opts.meter, opts.days)
+      const chart = renderChart(plot.values, {
+        caption: plot.caption,
+        empty: plot.empty,
         format: (v) => formatCount(Math.round(v)),
       })
       await renderStatic(
