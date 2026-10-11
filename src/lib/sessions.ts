@@ -23,6 +23,7 @@ import { formatCount } from './format.js'
 import { stripControlSequences } from './markdown.js'
 import { usdMicro } from './money.js'
 import type { SessionModel, UsageSummary } from './types.js'
+import { groupCost } from './usage.js'
 
 export type ChatToolStatus = 'running' | 'ok' | 'error'
 
@@ -290,8 +291,9 @@ const SESSION_METERS: { meter: string; label: string; unit: string }[] = [
 ]
 
 // sessionUsageRows renders a session's /api/usage summary (grouped by model):
-// the total cost, then each meter's quantity and cost, then tokens per model.
-// Every figure is the server's.
+// the total cost, then each meter's quantity and cost, then each model's
+// tokens and its cost across every meter (group_costs: a call's money is on
+// its call row, not its tokens). Every figure is the server's.
 export function sessionUsageRows(summary: UsageSummary): SessionUsageRow[] {
   const figure = (quantity: number, unit: string, cost: number) =>
     cost ? `${formatCount(quantity)} ${unit}, ${usdMicro(cost)}` : `${formatCount(quantity)} ${unit}`
@@ -305,7 +307,7 @@ export function sessionUsageRows(summary: UsageSummary): SessionUsageRow[] {
     if (meter !== 'model_tokens') continue
     for (const g of (summary.groups ?? []).filter((x) => x.meter === 'model_tokens')) {
       const model = g.key ?? 'unknown'
-      rows.push({ key: `model_tokens:${model}`, plain: String(g.quantity), label: `  ${model}`, shown: figure(g.quantity, 'tokens', g.cost_micro_usd) })
+      rows.push({ key: `model_tokens:${model}`, plain: String(g.quantity), label: `  ${model}`, shown: figure(g.quantity, 'tokens', groupCost(summary, g.key) ?? 0) })
     }
   }
   return rows

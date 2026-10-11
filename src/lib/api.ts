@@ -296,8 +296,10 @@ export class ApiClient {
     return this.request<UsageSummary>(`/api/usage${pageQuery(params)}`)
   }
 
-  async usageEvents(params: PageParams & { meter?: string }): Promise<Page<UsageEvent>> {
-    return toPage(await this.request<ListPage<UsageEvent>>(`/api/usage/events${pageQuery(params)}`))
+  async usageEvents(params: PageParams & { meter?: string; charged?: boolean }): Promise<Page<UsageEvent>> {
+    const { charged, ...rest } = params
+    const query = pageQuery({ ...rest, charged: charged ? 'true' : undefined })
+    return toPage(await this.request<ListPage<UsageEvent>>(`/api/usage/events${query}`))
   }
 
   wallet(): Promise<Wallet> {

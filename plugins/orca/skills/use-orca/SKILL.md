@@ -68,8 +68,10 @@ Account status (every figure is the server's, in micro-USD; never recompute cost
 ```bash
 orca billing wallet --json                   # balance, plan, packs on sale
 orca usage --json                            # cost per meter over the last 30 days
-orca usage --group-by agent --json
+orca usage --group-by agent --json           # group_costs: each agent's cost across every meter
 ```
+
+A call's money is on its `model_calls` row and a search's on its `web_searches` row; token rows are at cost 0. Read a model's, session's or agent's cost from `group_costs`, never from the `model_tokens` groups. In `orca usage events`, `charged_on` says where a row's money is (`call` or `search`); `--charged` lists only the rows with a cost.
 
 Buying credit or a plan (`orca billing buy pro|max|pack:<cents>`) returns a checkout link: give it to the user to open; never try to pay.
 

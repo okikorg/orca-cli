@@ -5,7 +5,8 @@ import { CliError, ExitCode } from '../lib/errors.js'
 import { formatCount, formatDate, formatTime } from '../lib/format.js'
 import { usdMicro } from '../lib/money.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
-import type { UsageDay, UsageEvent, UsageGroup, UsageMeter } from '../lib/types.js'
+import type { UsageDay, UsageEvent, UsageMeter } from '../lib/types.js'
+import { eventCost, groupRows, type GroupRow } from '../lib/usage.js'
 import { hintText } from '../ui/theme.js'
 import {
   addPageFlags,
@@ -31,7 +32,7 @@ export function dailySeries(daily: UsageDay[], meter: string, start: number, end
   return series
 }
 
-function groupKey(g: UsageGroup): string {
+function groupKey(g: GroupRow): string {
   return g.key ?? '(none)'
 }
 
@@ -70,12 +71,10 @@ export function registerUsage(program: Command): void {
       }
       const used = summary.meters.filter((m) => m.quantity !== 0 || m.cost_micro_usd !== 0)
       if (mode === 'plain') {
-        // One row shape per invocation: the groups when asked for, else the
-        // meter totals.
+        // One row shape per invocation: each key's tokens and cost when
+        // grouped, else the meter totals.
         if (opts.groupBy) {
-          printPlainRows(
-            (summary.groups ?? []).map((g) => [groupKey(g), g.meter, g.quantity, usdMicro(g.cost_micro_usd)]),
-          )
+          printPlainRows(groupRows(summary).map((g) => [groupKey(g), g.tokens, usdMicro(g.cost)]))
         } else {
           if (used.length === 0) console.error(hintText('No usage in this window.'))
           printPlainRows(used.map((m) => [m.meter, m.quantity, m.unit, usdMicro(m.cost_micro_usd)]))
@@ -111,18 +110,17 @@ export function registerUsage(program: Command): void {
           <Box marginTop={1} flexDirection="column">
             <Text>{chart}</Text>
           </Box>
-          {summary.groups?.length ? (
+          {opts.groupBy && groupRows(summary).length ? (
             <Box marginTop={1} flexDirection="column">
               <Table
                 title={`By ${opts.groupBy}`}
                 headers
                 columns={[
-                  { header: opts.groupBy ?? 'key', get: groupKey, bold: true },
-                  { header: 'meter', get: (g: UsageGroup) => g.meter },
-                  { header: 'quantity', get: (g: UsageGroup) => formatCount(g.quantity) },
-                  { header: 'cost', get: (g: UsageGroup) => usdMicro(g.cost_micro_usd) },
+                  { header: opts.groupBy, get: groupKey, bold: true },
+                  { header: 'tokens', get: (g: GroupRow) => (g.tokens ? formatCount(g.tokens) : '-') },
+                  { header: 'cost', get: (g: GroupRow) => usdMicro(g.cost) },
                 ]}
-                rows={summary.groups}
+                rows={groupRows(summary)}
               />
             </Box>
           ) : null}
@@ -134,13 +132,14 @@ export function registerUsage(program: Command): void {
     .command('events')
     .description('raw usage rows, newest first, each with its cost')
     .option('--meter <name>', 'only rows of this meter')
+    .option('--charged', 'only the rows with a cost: the ones the wallet\'s charges sum')
   addPageFlags(events)
-  events.action(async (opts: PageFlags & { meter?: string }, cmd: Command) => {
+  events.action(async (opts: PageFlags & { meter?: string; charged?: boolean }, cmd: Command) => {
     const flags = globalFlags(cmd)
     validatePage(opts, cmd)
     const api = await apiContext(cmd)
     const page = await fetchPageOrAll(opts, (params) =>
-      withApi(api, (c) => c.usageEvents({ ...params, meter: opts.meter })),
+      withApi(api, (c) => c.usageEvents({ ...params, meter: opts.meter, charged: opts.charged })),
     )
     const mode = outputMode(flags)
     if (mode === 'json') {
@@ -159,7 +158,7 @@ export function registerUsage(program: Command): void {
           e.meter,
           e.quantity,
           what(e),
-          usdMicro(e.cost_micro_usd),
+          eventCost(e),
           e.session_id ?? '-',
         ]),
       )
@@ -178,7 +177,7 @@ export function registerUsage(program: Command): void {
           { header: 'meter', get: (e: UsageEvent) => e.meter, bold: true },
           { header: 'quantity', get: (e: UsageEvent) => formatCount(e.quantity) },
           { header: 'detail', get: what },
-          { header: 'cost', get: (e: UsageEvent) => usdMicro(e.cost_micro_usd) },
+          { header: 'cost', get: eventCost },
           { header: 'session', get: (e: UsageEvent) => e.session_id ?? '-' },
         ]}
         rows={page.items}
