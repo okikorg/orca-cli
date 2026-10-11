@@ -40,7 +40,7 @@ async function renderWallet(w: Wallet): Promise<void> {
       <Field label="charged" value={usdMicro(w.charged_micro_usd)} />
       <Field label="period" value={`${formatDate(w.period_start)} to ${formatDate(w.period_end)}`} />
       <Field label="compute" value={`${w.used_compute_seconds}s used of ${w.included_compute_seconds}s included`} />
-      <Field label="tokens" value={`on Orca credit, OpenRouter's price plus its ${percentBps(w.openrouter_fee_bps)} fee`} />
+      <Field label="tokens" value={`on Orca credit, OpenRouter's price plus their ${percentBps(w.openrouter_fee_bps)} fee`} />
       {w.packs.length > 0 ? (
         <Field
           label="packs"
