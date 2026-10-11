@@ -18,7 +18,7 @@ const SESSION: UsageSummary = {
   meters: [
     { meter: 'model_tokens', unit: 'tokens', quantity: 70, cost_micro_usd: 0, buckets: {} },
     { meter: 'model_calls', unit: 'calls', quantity: 4, cost_micro_usd: 70 + 1_241 + 35, buckets: {} },
-    { meter: 'web_searches', unit: 'calls', quantity: 1, cost_micro_usd: 10_550, buckets: {} },
+    { meter: 'web_searches', unit: 'searches', quantity: 1, cost_micro_usd: 10_550, buckets: {} },
     { meter: 'compute_seconds', unit: 'seconds', quantity: 60, cost_micro_usd: 500, buckets: {} },
   ],
   daily: [],
@@ -77,7 +77,7 @@ describe('sessionUsageRows', () => {
     expect(shown.cost).toBe('$0.01')
     expect(shown['model_tokens:model-a']).toBe('60 tokens, $0.01')
     expect(shown['model_tokens:model-b']).toBe('10 tokens, $0.000035')
-    expect(shown.web_searches).toBe('1 calls, $0.01')
+    expect(shown.web_searches).toBe('1 searches, $0.01')
     expect(shown.model_calls).toBe('4 calls, $0.001346')
   })
 

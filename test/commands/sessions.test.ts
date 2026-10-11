@@ -103,6 +103,40 @@ describe('sessions', () => {
     expect(stdout()).toBe('user\thi\ntool\ttool lookup\nassistant\tHello there\n')
   })
 
+  it('shows a web search with its query, and failed with the reason when it failed', async () => {
+    const reason = 'openai/gpt-x answered without searching the web. Use a model with built-in web search: docs.orcapods.ai/providers#web-search'
+    const search = (id: string, status: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      type: 'web_search_call',
+      status,
+      turn_id: 'turn_1',
+      action: { type: 'search', query: 'orca pods', queries: null },
+      ...extra,
+    })
+    stubFetch({
+      [`GET /v1/agents/sessions/${SESSION_ID}/items?limit=20&order=desc`]: jsonResponse(
+        list([
+          // An older server's failed search: no action, no error.
+          search('ws_4', 'failed', { action: null }),
+          // Stopped by the turn's cancellation: not a failure.
+          search('ws_3', 'incomplete'),
+          search('ws_2', 'incomplete', { error: { code: 'no_search', message: reason } }),
+          search('ws_1', 'in_progress'),
+        ]),
+      ),
+    })
+    await run(['sessions', 'items', SESSION_ID])
+    expect(stdout()).toBe(
+      [
+        'tool\ttool web_search "orca pods"',
+        `tool\ttool web_search "orca pods" failed: ${reason}`,
+        'tool\ttool web_search "orca pods"',
+        'tool\ttool web_search failed',
+        '',
+      ].join('\n'),
+    )
+  })
+
   it('deletes with --yes and refuses without it', async () => {
     const calls = stubFetch({
       [`DELETE /v1/agents/sessions/${SESSION_ID}`]: jsonResponse({ id: SESSION_ID, deleted: true }),

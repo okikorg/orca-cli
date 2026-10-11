@@ -260,3 +260,64 @@ describe('Chat REPL', () => {
     expect(sent).toEqual(['summarize the tickets', 'summarize the tickets'])
   }, 20000)
 })
+
+describe('Chat web search lines', () => {
+  const QUERY = 'rust async runtimes 2026'
+  const NO_SEARCH = 'openai/gpt-x answered without searching the web. Use a model with built-in web search: docs.orcapods.ai/providers#web-search'
+
+  it('shows the query while a search runs, and failed with the reason when it fails', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const send: SendTurn = async (_message, handlers) => {
+      handlers.onEvent({ type: 'tool', id: 'ws_1', name: 'web_search', status: 'running', query: QUERY })
+      await gate
+      handlers.onEvent({ type: 'tool', id: 'ws_1', name: 'web_search', status: 'error', query: QUERY, reason: NO_SEARCH })
+      return { terminated: 'done', message: 'No results.' }
+    }
+
+    const { stdin, lastFrame } = render(<Chat agentLabel="support" send={send} onExit={() => {}} />)
+    await waitFor(() => lastFrame()?.includes('Chat') ?? false)
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('search')
+    await waitFor(() => lastFrame()?.includes('search') ?? false)
+    stdin.write('\r')
+
+    await waitFor(() => lastFrame()?.includes(QUERY) ?? false)
+    const live = (lastFrame() ?? '').replace(/\s+/g, ' ')
+    expect(live).toContain(`${glyphs.statusOpen} web_search "${QUERY}"`)
+    expect(live).not.toContain('failed')
+
+    release()
+    await waitFor(() => lastFrame()?.includes('No results.') ?? false)
+    // The reason may wrap at the test terminal's width.
+    const done = (lastFrame() ?? '').replace(/\s+/g, ' ')
+    expect(done).toContain(`${glyphs.statusFilled} web_search "${QUERY}" failed: ${NO_SEARCH}`)
+  }, 20000)
+
+  it("says failed for an older server's failed search, and stopped for one the turn stopped", async () => {
+    const send: SendTurn = async (_message, handlers) => {
+      // An older server: no query, no reason.
+      handlers.onEvent({ type: 'tool', id: 'ws_1', name: 'web_search', status: 'running' })
+      handlers.onEvent({ type: 'tool', id: 'ws_1', name: 'web_search', status: 'error' })
+      handlers.onEvent({ type: 'tool', id: 'ws_2', name: 'web_search', status: 'running', query: QUERY })
+      handlers.onEvent({ type: 'tool', id: 'ws_2', name: 'web_search', status: 'stopped', query: QUERY })
+      return { terminated: 'done', message: 'Done.' }
+    }
+
+    const { stdin, lastFrame } = render(<Chat agentLabel="support" send={send} onExit={() => {}} />)
+    await waitFor(() => lastFrame()?.includes('Chat') ?? false)
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('search')
+    await waitFor(() => lastFrame()?.includes('search') ?? false)
+    stdin.write('\r')
+
+    await waitFor(() => lastFrame()?.includes('Done.') ?? false)
+    const out = (lastFrame() ?? '').replace(/\s+/g, ' ')
+    expect(out).toContain(`${glyphs.statusFilled} web_search failed`)
+    expect(out).not.toContain('web_search failed:')
+    expect(out).toContain(`${glyphs.statusFilled} web_search "${QUERY}" stopped`)
+    expect(out).not.toContain(`"${QUERY}" failed`)
+  }, 20000)
+})

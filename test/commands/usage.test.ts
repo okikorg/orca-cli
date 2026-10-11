@@ -17,7 +17,7 @@ const SUMMARY = {
   cost_micro_usd: 1_250_000,
   meters: [
     { meter: 'model_tokens', unit: 'tokens', quantity: 4200, cost_micro_usd: 1_200_000, buckets: { output: 200 } },
-    { meter: 'web_searches', unit: 'calls', quantity: 2, cost_micro_usd: 50_000, buckets: {} },
+    { meter: 'web_searches', unit: 'searches', quantity: 2, cost_micro_usd: 50_000, buckets: {} },
     { meter: 'compute_seconds', unit: 'seconds', quantity: 0, cost_micro_usd: 0, buckets: {} },
   ],
   daily: [{ date: '2026-07-04', meter: 'model_tokens', quantity: 4200, cost_micro_usd: 1_200_000 }],
@@ -39,7 +39,7 @@ describe('usage summary', () => {
     const calls = stubFetch({ [`GET /api/usage?start=${START}&end=${END}`]: jsonResponse(SUMMARY) })
     await run(['usage'])
     expect(calls).toHaveLength(1)
-    expect(stdout()).toBe('model_tokens\t4200\ttokens\t$1.20\nweb_searches\t2\tcalls\t$0.05\n')
+    expect(stdout()).toBe('model_tokens\t4200\ttokens\t$1.20\nweb_searches\t2\tsearches\t$0.05\n')
   })
 
   it('says so when nothing was used, rather than printing nothing', async () => {

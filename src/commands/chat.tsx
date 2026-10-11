@@ -44,8 +44,16 @@ function noteTool(event: Extract<ChatEvent, { type: 'tool' }>): void {
   const name = stripControlSequences(raw.split('__').at(-1) ?? raw)
   const color = process.env.NO_COLOR ? '' : ansi.subtle
   const reset = process.env.NO_COLOR ? '' : ansi.reset
-  const status = event.status === 'error' ? ' failed' : ''
-  process.stderr.write(`${color}${glyphs.treeLast} ${name}${status}${reset}\n`)
+  const query = event.query ? ` "${event.query}"` : ''
+  const status =
+    event.status === 'error'
+      ? event.reason
+        ? ` failed: ${event.reason}`
+        : ' failed'
+      : event.status === 'stopped'
+        ? ' stopped'
+        : ''
+  process.stderr.write(`${color}${glyphs.treeLast} ${name}${query}${status}${reset}\n`)
 }
 
 // openSession returns the session to talk to: the one --session names, or a
