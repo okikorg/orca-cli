@@ -21,7 +21,7 @@ const SESSION: UsageSummary = {
     { meter: 'web_searches', unit: 'searches', quantity: 1, cost_micro_usd: 10_550, buckets: {} },
     { meter: 'compute_seconds', unit: 'seconds', quantity: 60, cost_micro_usd: 500, buckets: {} },
   ],
-  daily: [],
+  series: null,
   groups: [
     { meter: 'model_tokens', key: 'model-a', quantity: 60, cost_micro_usd: 0 },
     { meter: 'model_tokens', key: 'model-b', quantity: 10, cost_micro_usd: 0 },
