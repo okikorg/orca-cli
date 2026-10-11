@@ -35,6 +35,8 @@ describe('billing wallet', () => {
     stubFetch({ 'GET /api/billing/wallet': jsonResponse(WALLET) })
     await run(['billing', 'wallet'])
     expect(stdout()).toContain('balance\t$18.50')
+    expect(stdout()).toContain('credited\t$20.00')
+    expect(stdout()).toContain('charged\t$1.50')
     expect(stdout()).toContain('min_balance\t$0.50')
     expect(stdout()).toContain('paid_work_paused\tfalse')
     expect(stdout()).toContain('tier\tpro')
