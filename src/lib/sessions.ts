@@ -25,11 +25,16 @@ import { usdMicro } from './money.js'
 import type { SessionModel, UsageSummary } from './types.js'
 import { groupCost } from './usage.js'
 
-export type ChatToolStatus = 'running' | 'ok' | 'error'
+// A tool line's status: running, done, failed, or stopped (cut off by the
+// turn's cancellation or interruption, which is not a failure).
+export type ChatToolStatus = 'running' | 'ok' | 'error' | 'stopped'
 
+// A tool event carries a web search's query and, when it failed, the
+// server's reason (model-billing, Web search, The item), both one line of
+// remote text with control bytes stripped. Other tools carry neither.
 export type ChatEvent =
   | { type: 'delta'; text: string }
-  | { type: 'tool'; id: string; name?: string; status: ChatToolStatus }
+  | { type: 'tool'; id: string; name?: string; status: ChatToolStatus; query?: string; reason?: string }
 
 // How a turn ended:
 //   done    - the turn completed (message is the reply text)
@@ -76,10 +81,55 @@ function toolName(item: AgentOutputItem | AgentSessionItem): string | null {
   }
 }
 
-function toolStatus(status: string): ChatToolStatus {
-  if (status === 'completed') return 'ok'
-  if (status === 'in_progress') return 'running'
-  return 'error'
+// oneLine renders remote text as one line of at most max characters.
+function oneLine(text: string, max: number): string {
+  const line = stripControlSequences(text).replace(/\s+/g, ' ').trim()
+  return line.length > max ? `${line.slice(0, max - 3).trimEnd()}...` : line
+}
+
+// webSearchQuery is what a web search searched for. The server sets the
+// item's action from the start, so an in-progress or failed search has its
+// query too; an older server sends action null, and then there is none.
+export function webSearchQuery(item: AgentOutputItem | AgentSessionItem): string | undefined {
+  if (item.type !== 'web_search_call') return undefined
+  const action = item.action
+  if (!action || action.type !== 'search') return undefined
+  const query = action.query || (action.queries ?? []).filter(Boolean).join(', ')
+  return query ? oneLine(query, 100) : undefined
+}
+
+// webSearchReason is why a web search failed: the message of the item's
+// `error` {code, message}, an Orca addition to the contract written for the
+// user. An older server sends no error.
+export function webSearchReason(item: AgentOutputItem | AgentSessionItem): string | undefined {
+  if (item.type !== 'web_search_call') return undefined
+  const error = (item as { error?: { message?: unknown } | null }).error
+  return typeof error?.message === 'string' && error.message.trim() ? oneLine(error.message, 300) : undefined
+}
+
+// toolStatus reads an item's status as a tool line's. The contract's
+// statuses are in_progress, completed and incomplete; `failed` is a function
+// or MCP call's, and an older server's for a failed web search. An
+// incomplete item with an error failed (the server writes a failed web
+// search so); without one it was stopped by the turn's cancellation or
+// interruption. A status the CLI does not know returns null: the line keeps
+// what it last showed rather than being called failed.
+function toolStatus(item: AgentOutputItem | AgentSessionItem): ChatToolStatus | null {
+  const status = 'status' in item ? (item.status as string | null) : null
+  switch (status) {
+    case 'completed':
+      return 'ok'
+    case 'in_progress':
+      return 'running'
+    case 'failed':
+      return 'error'
+    case 'incomplete': {
+      const error = (item as { error?: unknown }).error
+      return error !== undefined && error !== null ? 'error' : 'stopped'
+    }
+    default:
+      return null
+  }
 }
 
 // streamTurn sends one message to an idle session and follows its turn to
@@ -135,8 +185,18 @@ export async function streamTurn(
         case 'agent.session.turn.item.done': {
           const item = event.item
           const name = toolName(item)
-          if (name !== null && item.id && 'status' in item && item.status) {
-            opts.onEvent?.({ type: 'tool', id: item.id, name, status: toolStatus(item.status) })
+          const status = toolStatus(item)
+          if (name !== null && item.id && status !== null) {
+            const query = webSearchQuery(item)
+            const reason = status === 'error' ? webSearchReason(item) : undefined
+            opts.onEvent?.({
+              type: 'tool',
+              id: item.id,
+              name,
+              status,
+              ...(query ? { query } : {}),
+              ...(reason ? { reason } : {}),
+            })
           }
           break
         }
@@ -193,8 +253,9 @@ export async function streamTurn(
 }
 
 // itemText renders one conversation item as a single line: a message's text,
-// or the name of the tool a call used. Remote text, so control bytes are
-// stripped before it reaches any sink.
+// or the name of the tool a call used; a web search adds its query, and
+// `failed` with the server's reason when it failed. Remote text, so control
+// bytes are stripped before it reaches any sink.
 export function itemText(item: AgentSessionItem): string {
   if (item.type === 'message' || item.type === 'agent_message') {
     const parts = (item.content as unknown as { text?: unknown }[])
@@ -204,7 +265,14 @@ export function itemText(item: AgentSessionItem): string {
   }
   if (item.type === 'function_call_output') return 'tool result'
   const name = toolName(item)
-  return name ? `tool ${stripControlSequences(name)}` : item.type
+  if (!name) return item.type
+  const line = `tool ${stripControlSequences(name)}`
+  if (item.type !== 'web_search_call') return line
+  const query = webSearchQuery(item)
+  const withQuery = query ? `${line} "${query}"` : line
+  if (toolStatus(item) !== 'error') return withQuery
+  const reason = webSearchReason(item)
+  return reason ? `${withQuery} failed: ${reason}` : `${withQuery} failed`
 }
 
 export function itemRole(item: AgentSessionItem): string {

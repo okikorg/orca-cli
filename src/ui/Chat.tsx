@@ -46,7 +46,7 @@ type Pause = { out: 'orca_credit' | 'provider_quota'; offer: SwitchOffer; resend
 // conversation.
 const CONTINUE_MESSAGE = 'Continue'
 
-type ToolState = { id: string; name?: string; status: ChatToolStatus }
+type ToolState = { id: string; name?: string; status: ChatToolStatus; query?: string; reason?: string }
 
 type Item =
   | { kind: 'intro'; key: number; agent: string; sessionId?: string }
@@ -102,7 +102,9 @@ function groupTools(tools: ToolState[]): ToolGroup[] {
 
 // A compact worklog inspired by coding-agent terminals: semantic phase
 // headings, one real tool per row, and status conveyed by a stable glyph.
-// No arguments or outputs are shown: they may contain secrets.
+// No arguments or outputs are shown: they may contain secrets. The one
+// exception is a web search's query, and the server's reason when it failed
+// (model-billing, Web search, The item); its sources stay hidden.
 function ToolActivity({ tools }: { tools: ToolState[] }) {
   const groups = groupTools(tools)
   return (
@@ -113,6 +115,7 @@ function ToolActivity({ tools }: { tools: ToolState[] }) {
           {group.tools.map((tool) => {
             const running = tool.status === 'running'
             const failed = tool.status === 'error'
+            const stopped = tool.status === 'stopped'
             const marker = running ? glyphs.statusOpen : glyphs.statusFilled
             const markerColor = failed ? theme.destructive : running ? theme.accent : theme.subtle
             const name = tool.name ? compactToolName(tool.name) : 'tool'
@@ -120,7 +123,9 @@ function ToolActivity({ tools }: { tools: ToolState[] }) {
               <Text key={tool.id || tool.name || 'tool'}>
                 <Text color={markerColor}>{marker}</Text>
                 <Text color={running ? undefined : theme.muted}> {name}</Text>
-                {failed ? <Text color={theme.destructive}> failed</Text> : null}
+                {tool.query ? <Text color={theme.subtle}> "{tool.query}"</Text> : null}
+                {failed ? <Text color={theme.destructive}> failed{tool.reason ? `: ${tool.reason}` : ''}</Text> : null}
+                {stopped ? <Text color={theme.subtle}> stopped</Text> : null}
               </Text>
             )
           })}
@@ -289,6 +294,9 @@ export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: C
               id: event.id,
               name: event.name ?? previous?.name,
               status: event.status,
+              query: event.query ?? previous?.query,
+              // A reason belongs to the failure it came with.
+              reason: event.status === 'error' ? event.reason ?? previous?.reason : undefined,
             })
             setLiveTools([...tools.values()])
           }
