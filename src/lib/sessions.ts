@@ -283,9 +283,12 @@ export function payerLabel(payer: SessionModel['payer']): string {
 export type SessionUsageRow = { key: string; plain: string; label: string; shown: string }
 
 // The meters a session view shows, in order (money-payments, Session view):
-// tokens, web searches, machine time. Each carries its server cost.
+// tokens, model calls, web searches, machine time. Each carries its server
+// cost; a call's money is on model calls, so these add up to the session's
+// cost.
 const SESSION_METERS: { meter: string; label: string; unit: string }[] = [
   { meter: 'model_tokens', label: 'tokens', unit: 'tokens' },
+  { meter: 'model_calls', label: 'model calls', unit: 'calls' },
   { meter: 'web_searches', label: 'web searches', unit: 'searches' },
   { meter: 'compute_seconds', label: 'machine time', unit: 'seconds' },
 ]
@@ -305,9 +308,10 @@ export function sessionUsageRows(summary: UsageSummary): SessionUsageRow[] {
     const quantity = m?.quantity ?? 0
     rows.push({ key: meter, plain: String(quantity), label, shown: figure(quantity, m?.unit ?? unit, m?.cost_micro_usd ?? 0) })
     if (meter !== 'model_tokens') continue
-    for (const g of (summary.groups ?? []).filter((x) => x.meter === 'model_tokens')) {
-      const model = g.key ?? 'unknown'
-      rows.push({ key: `model_tokens:${model}`, plain: String(g.quantity), label: `  ${model}`, shown: figure(g.quantity, 'tokens', groupCost(summary, g.key) ?? 0) })
+    // Each model's tokens and cost. Rows with no model (machine time) are
+    // not a model's: their cost is in their own meter's row.
+    for (const g of (summary.groups ?? []).filter((x) => x.meter === 'model_tokens' && x.key !== null)) {
+      rows.push({ key: `model_tokens:${g.key}`, plain: String(g.quantity), label: `  ${g.key}`, shown: figure(g.quantity, 'tokens', groupCost(summary, g.key) ?? 0) })
     }
   }
   return rows

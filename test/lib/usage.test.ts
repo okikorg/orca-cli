@@ -78,5 +78,12 @@ describe('sessionUsageRows', () => {
     expect(shown['model_tokens:model-a']).toBe('60 tokens, $0.01')
     expect(shown['model_tokens:model-b']).toBe('10 tokens, $0.000035')
     expect(shown.web_searches).toBe('1 calls, $0.01')
+    expect(shown.model_calls).toBe('4 calls, $0.001346')
+  })
+
+  it('lists no row for a token group with no model', () => {
+    const rows = sessionUsageRows({ ...SESSION, groups: [...SESSION.groups!, { meter: 'model_tokens', key: null, quantity: 5, cost_micro_usd: 0 }] })
+    expect(rows.map((row) => row.key)).not.toContain('model_tokens:null')
+    expect(rows.map((row) => row.key)).not.toContain('model_tokens:unknown')
   })
 })

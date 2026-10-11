@@ -31,8 +31,8 @@ B=https://api.orcapods.ai
 curl -s -H "$K" $B/api/whoami                                  # tenant, actor, role
 curl -s -H "$K" "$B/api/keys?limit=20"                         # API keys (no secrets)
 curl -s -H "$K" "$B/api/models"                                # every model you can pick, by who pays, with prices
-curl -s -H "$K" "$B/api/usage?group_by=model"                  # cost per meter and model, last 30 days
-curl -s -H "$K" "$B/api/usage/events?limit=20&meter=model_tokens"
+curl -s -H "$K" "$B/api/usage?group_by=model"                  # last 30 days; group_costs: each model's cost
+curl -s -H "$K" "$B/api/usage/events?limit=20&charged=true"   # the charged rows; charged_on says where others' money is
 curl -s -H "$K" $B/api/billing/wallet                          # balance and plan
 curl -s -H "$K" $B/api/kits                                    # this organization's kits
 curl -s $B/api/public/kits/kit-xxxxxxxxxxxxxxxxx               # a published kit, no auth

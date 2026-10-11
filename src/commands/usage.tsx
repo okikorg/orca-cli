@@ -101,7 +101,9 @@ export function registerUsage(program: Command): void {
                 columns={[
                   { header: 'meter', get: (m: UsageMeter) => m.meter, bold: true },
                   { header: 'quantity', get: (m: UsageMeter) => `${formatCount(m.quantity)} ${m.unit}` },
-                  { header: 'cost', get: (m: UsageMeter) => usdMicro(m.cost_micro_usd) },
+                  // A meter with no charge shows none: token rows are at cost
+                  // 0 because their call's row carries the money.
+                  { header: 'cost', get: (m: UsageMeter) => (m.cost_micro_usd ? usdMicro(m.cost_micro_usd) : '-') },
                 ]}
                 rows={used}
               />
