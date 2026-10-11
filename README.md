@@ -194,7 +194,7 @@ orca sessions items <id> [--limit n]
 orca sessions delete <id> [--yes]
 
 orca usage [--days n] [--group-by model|provider|credential|session|agent] [--session id] [--meter m]
-orca usage events [--meter m]
+orca usage events [--meter m] [--charged]
 
 orca skills list|get <id>|delete <id> [--yes]
 orca skills create <folder>                # an Agent Skills folder with SKILL.md
@@ -317,9 +317,9 @@ paused, as the server treats it.
 
 ```sh
 orca usage                                   # last 30 days: cost, meters, daily chart
-orca usage --days 7 --group-by agent         # also totals per agent
+orca usage --days 7 --group-by agent         # also each agent's tokens and cost
 orca usage --session sess_123                # one session
-orca usage events --meter model_tokens       # raw rows, each with its cost
+orca usage events --charged                  # the rows with a cost: what the wallet's charges sum
 orca billing wallet                          # balance, plan, period, packs on sale
 orca billing buy pro                         # checkout for the Pro plan
 orca billing buy pack:2000                   # checkout for the $20 credit pack

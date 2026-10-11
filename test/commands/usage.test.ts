@@ -49,17 +49,28 @@ describe('usage summary', () => {
     expect(stderr()).toContain('No usage in this window.')
   })
 
-  it('groups by agent and narrows to a session', async () => {
+  it('groups by agent, each with its tokens and its cost from group_costs, and narrows to a session', async () => {
+    // As the server sends it: tokens at cost 0, the money on the call and
+    // search rows, and each key's cost across every meter in group_costs.
     const groups = [
-      { meter: 'model_tokens', key: 'agent_1', quantity: 4000, cost_micro_usd: 1_100_000 },
-      { meter: 'model_tokens', key: null, quantity: 200, cost_micro_usd: 100_000 },
+      { meter: 'model_tokens', key: 'agent_1', quantity: 4000, cost_micro_usd: 0 },
+      { meter: 'model_calls', key: 'agent_1', quantity: 3, cost_micro_usd: 1_241 + 70 },
+      { meter: 'web_searches', key: 'agent_1', quantity: 1, cost_micro_usd: 10_550 },
+      { meter: 'model_tokens', key: null, quantity: 200, cost_micro_usd: 0 },
+      { meter: 'compute_seconds', key: null, quantity: 60, cost_micro_usd: 500 },
+      { meter: 'tool_calls', key: 'agent_2', quantity: 1, cost_micro_usd: 0 },
+    ]
+    const group_costs = [
+      { key: 'agent_1', cost_micro_usd: 11_861 },
+      { key: null, cost_micro_usd: 500 },
+      { key: 'agent_2', cost_micro_usd: 0 },
     ]
     const start = END - 7 * 86_400
     stubFetch({
-      [`GET /api/usage?start=${start}&end=${END}&group_by=agent&session=sess_1`]: jsonResponse({ ...SUMMARY, groups }),
+      [`GET /api/usage?start=${start}&end=${END}&group_by=agent&session=sess_1`]: jsonResponse({ ...SUMMARY, cost_micro_usd: 12_361, groups, group_costs }),
     })
     await run(['usage', '--days', '7', '--group-by', 'agent', '--session', 'sess_1'])
-    expect(stdout()).toBe('agent_1\tmodel_tokens\t4000\t$1.10\n(none)\tmodel_tokens\t200\t$0.10\n')
+    expect(stdout()).toBe('agent_1\t4000\t$0.01\n(none)\t200\t$0.0005\n')
   })
 
   it('rejects an unknown --group-by before any request', async () => {
@@ -76,28 +87,49 @@ describe('usage summary', () => {
 })
 
 describe('usage events', () => {
+  const row = (fields: Record<string, unknown>) => ({
+    id: 'use_1',
+    object: 'usage.event',
+    meter: 'model_tokens',
+    unit: 'tokens',
+    bucket: 'output',
+    quantity: 120,
+    provider: 'openai',
+    model: 'gpt-5',
+    session_id: 'sess_1',
+    recorded_at: NOW,
+    cost_micro_usd: 1200,
+    charged_on: null,
+    ...fields,
+  })
+
   it('lists raw rows with their cost', async () => {
+    stubFetch({ 'GET /api/usage/events?limit=10&meter=model_tokens': jsonResponse(list([row({})])) })
+    await run(['usage', 'events', '--meter', 'model_tokens'])
+    expect(stdout()).toBe('2026-07-05 10:00\tmodel_tokens\t120\topenai gpt-5 output\t$0.0012\tsess_1\n')
+  })
+
+  it('says where a row\'s money is when another row carries it, never $0.00', async () => {
     stubFetch({
-      'GET /api/usage/events?limit=10&meter=model_tokens': jsonResponse(
+      'GET /api/usage/events?limit=10': jsonResponse(
         list([
-          {
-            id: 'use_1',
-            object: 'usage.event',
-            meter: 'model_tokens',
-            unit: 'tokens',
-            bucket: 'output',
-            quantity: 120,
-            provider: 'openai',
-            model: 'gpt-5',
-            session_id: 'sess_1',
-            recorded_at: NOW,
-            cost_micro_usd: 1200,
-          },
+          row({ id: 'use_2', cost_micro_usd: 0, charged_on: 'call' }),
+          row({ id: 'use_3', meter: 'model_calls', bucket: 'complete', quantity: 1, cost_micro_usd: 35 }),
+          row({ id: 'use_4', cost_micro_usd: 0, charged_on: 'search' }),
         ]),
       ),
     })
-    await run(['usage', 'events', '--meter', 'model_tokens'])
-    expect(stdout()).toBe('2026-07-05 10:00\tmodel_tokens\t120\topenai gpt-5 output\t$0.0012\tsess_1\n')
+    await run(['usage', 'events'])
+    expect(stdout().split('\n').map((line) => line.split('\t')[4])).toEqual(['on its call', '$0.000035', 'on its search', undefined])
+  })
+
+  it('asks only for the charged rows with --charged', async () => {
+    const calls = stubFetch({
+      'GET /api/usage/events?limit=10&charged=true': jsonResponse(list([row({ meter: 'model_calls', cost_micro_usd: 35 })])),
+    })
+    await run(['usage', 'events', '--charged'])
+    expect(calls).toHaveLength(1)
+    expect(stdout()).toContain('$0.000035')
   })
 })
 

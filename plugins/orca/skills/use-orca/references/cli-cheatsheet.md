@@ -86,7 +86,7 @@ orca billing wallet --json                      # balance (micro-USD), plan, per
 orca billing buy pro|max|plan:pro|plan:max|pack:<cents> [--no-open]   # admin; prints the checkout link
 orca billing manage [--no-open]                 # admin; prints the billing portal link
 orca usage [summary] [--days n] [--group-by model|provider|credential|session|agent] [--session id] [--meter m] --json
-orca usage events [--meter m] --json            # raw rows with cost_micro_usd
+orca usage events [--meter m] [--charged] --json # raw rows with cost_micro_usd and charged_on
 orca keys list --json                           # API keys (no secrets)
 orca keys create <name>                         # secret on stdout when piped
 orca keys revoke <id> --yes

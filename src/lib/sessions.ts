@@ -23,6 +23,7 @@ import { formatCount } from './format.js'
 import { stripControlSequences } from './markdown.js'
 import { usdMicro } from './money.js'
 import type { SessionModel, UsageSummary } from './types.js'
+import { groupCost } from './usage.js'
 
 export type ChatToolStatus = 'running' | 'ok' | 'error'
 
@@ -282,16 +283,20 @@ export function payerLabel(payer: SessionModel['payer']): string {
 export type SessionUsageRow = { key: string; plain: string; label: string; shown: string }
 
 // The meters a session view shows, in order (money-payments, Session view):
-// tokens, web searches, machine time. Each carries its server cost.
+// tokens, model calls, web searches, machine time. Each carries its server
+// cost; a call's money is on model calls, so these add up to the session's
+// cost.
 const SESSION_METERS: { meter: string; label: string; unit: string }[] = [
   { meter: 'model_tokens', label: 'tokens', unit: 'tokens' },
+  { meter: 'model_calls', label: 'model calls', unit: 'calls' },
   { meter: 'web_searches', label: 'web searches', unit: 'searches' },
   { meter: 'compute_seconds', label: 'machine time', unit: 'seconds' },
 ]
 
 // sessionUsageRows renders a session's /api/usage summary (grouped by model):
-// the total cost, then each meter's quantity and cost, then tokens per model.
-// Every figure is the server's.
+// the total cost, then each meter's quantity and cost, then each model's
+// tokens and its cost across every meter (group_costs: a call's money is on
+// its call row, not its tokens). Every figure is the server's.
 export function sessionUsageRows(summary: UsageSummary): SessionUsageRow[] {
   const figure = (quantity: number, unit: string, cost: number) =>
     cost ? `${formatCount(quantity)} ${unit}, ${usdMicro(cost)}` : `${formatCount(quantity)} ${unit}`
@@ -303,9 +308,10 @@ export function sessionUsageRows(summary: UsageSummary): SessionUsageRow[] {
     const quantity = m?.quantity ?? 0
     rows.push({ key: meter, plain: String(quantity), label, shown: figure(quantity, m?.unit ?? unit, m?.cost_micro_usd ?? 0) })
     if (meter !== 'model_tokens') continue
-    for (const g of (summary.groups ?? []).filter((x) => x.meter === 'model_tokens')) {
-      const model = g.key ?? 'unknown'
-      rows.push({ key: `model_tokens:${model}`, plain: String(g.quantity), label: `  ${model}`, shown: figure(g.quantity, 'tokens', g.cost_micro_usd) })
+    // Each model's tokens and cost. Rows with no model (machine time) are
+    // not a model's: their cost is in their own meter's row.
+    for (const g of (summary.groups ?? []).filter((x) => x.meter === 'model_tokens' && x.key !== null)) {
+      rows.push({ key: `model_tokens:${g.key}`, plain: String(g.quantity), label: `  ${g.key}`, shown: figure(g.quantity, 'tokens', groupCost(summary, g.key) ?? 0) })
     }
   }
   return rows

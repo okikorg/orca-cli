@@ -89,6 +89,8 @@ export function registerBilling(program: Command): void {
       if (mode === 'plain') {
         printPlainRows([
           ['balance', usdMicro(wallet.balance_micro_usd)],
+          ['credited', usdMicro(wallet.credited_micro_usd)],
+          ['charged', usdMicro(wallet.charged_micro_usd)],
           ['min_balance', usdMicro(wallet.min_balance_micro_usd)],
           ['paid_work_paused', String(wallet.paid_work_paused)],
           ['tier', wallet.tier],

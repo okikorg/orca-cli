@@ -58,6 +58,14 @@ export type UsageGroup = {
   cost_micro_usd: number
 }
 
+// One key's cost across every meter: with group_by, they sum to the
+// summary's cost. A call's money is on its model_calls row, not its tokens,
+// so a model's, session's or agent's cost is read from here.
+export type UsageGroupCost = {
+  key: string | null
+  cost_micro_usd: number
+}
+
 // GET /api/usage.
 export type UsageSummary = {
   object: 'usage.summary'
@@ -68,6 +76,7 @@ export type UsageSummary = {
   meters: UsageMeter[]
   daily: UsageDay[]
   groups?: UsageGroup[]
+  group_costs?: UsageGroupCost[]
 }
 
 // GET /api/usage/events rows.
@@ -91,6 +100,10 @@ export type UsageEvent = {
   cost_micro_usd: number
   rate_id: string | null
   actor: string | null
+  // Where the row's money is when another row carries it: its call's
+  // model_calls row, or its search's web_searches row. Null when the row's
+  // own cost is its charge.
+  charged_on?: 'call' | 'search' | null
 }
 
 // -- Billing ------------------------------------------------------------------
