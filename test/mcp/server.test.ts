@@ -1,3 +1,7 @@
+import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -9,7 +13,17 @@ import { saveConfig } from '../../src/lib/config.js'
 import { useTmpConfigDir } from '../helpers/tmp-config.js'
 import { list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
-import { AGENT_ID, SESSION_ID, agentRoute, session, sessionModelRoute } from '../helpers/session-events.js'
+import {
+  AGENT_ID,
+  SESSION_ID,
+  agentRoute,
+  artifact,
+  bytesRoute,
+  hostedSession,
+  session,
+  sessionModelRoute,
+  uploadedFile,
+} from '../helpers/session-events.js'
 
 // connect builds the server against a ClientSource and returns a connected
 // MCP client over an in-memory transport pair: the same wire protocol a
@@ -53,6 +67,8 @@ describe('orca mcp serve', () => {
         'create_agent',
         'update_agent',
         'delete_agent',
+        // models
+        'list_models',
         // sessions and chat
         'list_sessions',
         'get_session',
@@ -60,6 +76,9 @@ describe('orca mcp serve', () => {
         'list_session_items',
         'delete_session',
         'chat',
+        // artifacts
+        'list_artifacts',
+        'download_artifact',
         // skills
         'list_skills',
         'get_skill',
@@ -234,5 +253,132 @@ describe('show_kit', () => {
     } finally {
       await tmp.cleanup()
     }
+  })
+})
+
+describe('orca mcp serve: models, artifacts and staged files', () => {
+  const MODELS = {
+    object: 'list',
+    openrouter_fee_bps: 550,
+    groups: [
+      {
+        payer: 'orca_credit',
+        provider: 'openrouter',
+        label: 'Orca credit',
+        available: true,
+        models: [{ id: 'orca/openrouter/openai/gpt-5.6-luna', input_micro_usd_per_million: 200_000, output_micro_usd_per_million: 1_200_000 }],
+      },
+      { payer: 'own_key', provider: 'anthropic', label: 'Anthropic', available: true, models: [{ id: 'anthropic/claude-sonnet-4-5' }] },
+    ],
+  }
+  const ARTIFACTS = `/v1/agents/sessions/${SESSION_ID}/artifacts`
+
+  it('list_models pages flat rows, narrowed by payer and query', async () => {
+    stubFetch({ 'GET /api/models': jsonResponse(MODELS) })
+    const client = await connect()
+    const all = JSON.parse(firstText(await client.callTool({ name: 'list_models', arguments: {} })))
+    expect(all).toEqual({
+      openrouter_fee_bps: 550,
+      items: [
+        { id: 'orca/openrouter/openai/gpt-5.6-luna', payer: 'orca', input_micro_usd_per_million: 200_000, output_micro_usd_per_million: 1_200_000 },
+        { id: 'anthropic/claude-sonnet-4-5', payer: 'anthropic' },
+      ],
+      hasMore: false,
+      lastId: 'anthropic/claude-sonnet-4-5',
+    })
+    const first = JSON.parse(firstText(await client.callTool({ name: 'list_models', arguments: { limit: 1 } })))
+    expect(first).toMatchObject({ hasMore: true, lastId: 'orca/openrouter/openai/gpt-5.6-luna' })
+    const next = JSON.parse(firstText(await client.callTool({ name: 'list_models', arguments: { limit: 1, after: first.lastId } })))
+    expect(next.items.map((m: { id: string }) => m.id)).toEqual(['anthropic/claude-sonnet-4-5'])
+    const narrowed = JSON.parse(firstText(await client.callTool({ name: 'list_models', arguments: { payer: 'anthropic' } })))
+    expect(narrowed.items.map((m: { id: string }) => m.id)).toEqual(['anthropic/claude-sonnet-4-5'])
+    const searched = JSON.parse(firstText(await client.callTool({ name: 'list_models', arguments: { query: 'LUNA' } })))
+    expect(searched.items.map((m: { id: string }) => m.id)).toEqual(['orca/openrouter/openai/gpt-5.6-luna'])
+    const unknown = (await client.callTool({ name: 'list_models', arguments: { payer: 'openai' } })) as ToolText
+    expect(unknown.isError).toBe(true)
+    expect(firstText(unknown)).toContain('Payers: orca, anthropic')
+  })
+
+  it('list_artifacts returns a page of the session\'s artifacts', async () => {
+    stubFetch({
+      [`GET ${ARTIFACTS}?limit=20`]: jsonResponse(list([artifact('art_2', '/workspace/outputs/primes.txt', 'turn_2')])),
+    })
+    const client = await connect()
+    const payload = JSON.parse(firstText(await client.callTool({ name: 'list_artifacts', arguments: { session: SESSION_ID } })))
+    expect(payload.items.map((a: { path: string }) => a.path)).toEqual(['/workspace/outputs/primes.txt'])
+  })
+
+  it('download_artifact saves one into a folder under its own name, and all of the newest turn', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'orca-mcp-'))
+    stubFetch({
+      [`GET ${ARTIFACTS}/art_2`]: jsonResponse(artifact('art_2', '/workspace/outputs/../primes.txt', 'turn_2')),
+      [`GET ${ARTIFACTS}/art_2/content`]: bytesRoute([1, 2, 3, 4, 5]),
+      [`GET ${ARTIFACTS}?limit=100&order=desc`]: jsonResponse(
+        list([artifact('art_2', '/workspace/outputs/primes.txt', 'turn_2'), artifact('art_1', '/workspace/outputs/old.txt', 'turn_1')]),
+      ),
+    })
+    const client = await connect()
+    const one = JSON.parse(
+      firstText(await client.callTool({ name: 'download_artifact', arguments: { session: SESSION_ID, artifact: 'art_2', path: dir } })),
+    )
+    expect(one).toEqual({ id: 'art_2', path: path.join(dir, 'primes.txt'), bytes: 5 })
+    expect(await readFile(path.join(dir, 'primes.txt'))).toEqual(Buffer.from([1, 2, 3, 4, 5]))
+
+    const into = path.join(dir, 'all')
+    const all = JSON.parse(
+      firstText(await client.callTool({ name: 'download_artifact', arguments: { session: SESSION_ID, all: true, path: into } })),
+    )
+    expect(all.map((a: { id: string }) => a.id)).toEqual(['art_2'])
+    expect(await readdir(into)).toEqual(['primes.txt'])
+
+    const neither = (await client.callTool({ name: 'download_artifact', arguments: { session: SESSION_ID, path: dir } })) as ToolText
+    expect(neither.isError).toBe(true)
+  })
+
+  it('create_session uploads files and creates a sandbox with them by file_id', async () => {
+    const local = path.join(await mkdtemp(path.join(os.tmpdir(), 'orca-mcp-')), 'data.csv')
+    await writeFile(local, 'a,b\n')
+    const calls = stubFetch({
+      ...agentRoute(),
+      'POST /v1/files': jsonResponse(uploadedFile('file_1', 'data.csv')),
+      'POST /v1/agents/sessions': jsonResponse(hostedSession()),
+    })
+    const client = await connect()
+    const res = (await client.callTool({
+      name: 'create_session',
+      arguments: { agent: AGENT_ID, files: [{ path: local }] },
+    })) as ToolText
+    expect(res.isError).toBeFalsy()
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}')).toEqual({
+      agent_id: AGENT_ID,
+      environment: { type: 'openai_hosted', files: [{ type: 'file_id', file_id: 'file_1', path: '/workspace/data.csv' }] },
+    })
+  })
+
+  it('chat stages files into the session it continues before sending', async () => {
+    const local = path.join(await mkdtemp(path.join(os.tmpdir(), 'orca-mcp-')), 'data.csv')
+    await writeFile(local, 'a,b\n')
+    const turn = { id: 'turn_2', status: 'completed', error: null }
+    let turnsListed = 0
+    const calls = stubFetch({
+      [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(hostedSession()),
+      'POST /v1/files': jsonResponse(uploadedFile('file_1', 'data.csv')),
+      'POST /v1/agents/environments/env_1/files': jsonResponse({ environment_id: 'env_1', object: 'agent.environment.file', path: '/workspace/data.csv', size_bytes: 4 }),
+      [`GET /v1/agents/sessions/${SESSION_ID}/turns?limit=1`]: () =>
+        jsonResponse(list(turnsListed++ === 0 ? [] : [turn]))({} as never),
+      [`POST /v1/agents/sessions/${SESSION_ID}/events`]: () => new Response(null, { status: 204 }),
+      [`GET /v1/agents/sessions/${SESSION_ID}/items?limit=50&order=desc`]: jsonResponse(
+        list([{ id: 'msg_2', type: 'message', role: 'assistant', turn_id: 'turn_2', content: [{ type: 'output_text', text: 'Read it.' }] }]),
+      ),
+    })
+    const client = await connect()
+    const payload = JSON.parse(
+      firstText(
+        await client.callTool({ name: 'chat', arguments: { session: SESSION_ID, message: 'read /workspace/data.csv', files: [{ path: local }] } }),
+      ),
+    )
+    expect(payload).toMatchObject({ done: true, reply: 'Read it.' })
+    const posts = calls.filter((c) => c.method === 'POST').map((c) => c.path)
+    expect(posts).toEqual(['/v1/files', '/v1/agents/environments/env_1/files', `/v1/agents/sessions/${SESSION_ID}/events`])
   })
 })

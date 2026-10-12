@@ -35,14 +35,19 @@ orca agents get <agent> --json
 orca agents create -f agent.yaml --json         # YAML or JSON POST /v1/agents body; - for stdin
 orca agents update <agent> -f fields.yaml       # only the fields in the file change
 orca agents delete <agent> --yes
+orca models [--payer orca|<provider>] --json    # every model name you can use, grouped by who pays; plain: id, payer, price
 
 orca chat <agent> "prompt"                      # new session, one turn
 orca chat <agent> --session <id> "prompt"       # continue a session
 orca chat <agent> --sandbox | --template <id> | --vault <id> "prompt"
+orca chat <agent> --file data.csv[:/workspace/in/data.csv] "prompt"   # stage a local file (repeatable; implies --sandbox; 16 MiB each)
 orca sessions list [--agent <agent>] --json
 orca sessions get <id> --json
-orca sessions create --agent <agent> [--sandbox] [--template id] [--vault id] --json
+orca sessions create --agent <agent> [--sandbox] [--template id] [--vault id] [--file path[:dest]] --json
 orca sessions items <id> [--limit n] --json
+orca sessions artifacts <id> --json             # files the turns saved under /workspace/outputs: id, path, size_bytes, turn_id
+orca sessions artifacts download <id> <artifact-id|path> [-o path|-]   # one, under its own file name by default
+orca sessions artifacts download <id> --all [-o folder]                # every file of the newest turn
 orca sessions delete <id> --yes
 ```
 

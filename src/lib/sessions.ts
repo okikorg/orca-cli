@@ -22,6 +22,16 @@ import { CliError, ExitCode } from './errors.js'
 import { formatCount } from './format.js'
 import { stripControlSequences } from './markdown.js'
 import { usdMicro } from './money.js'
+import {
+  deleteUploads,
+  environmentFiles,
+  parseFileFlag,
+  prepareFiles,
+  uploadStaged,
+  writeToEnvironment,
+  type StagedFile,
+  type StagedUpload,
+} from './staging.js'
 import type { SessionModel, UsageSummary } from './types.js'
 import { groupCost } from './usage.js'
 
@@ -283,37 +293,83 @@ export function itemRole(item: AgentSessionItem): string {
 
 // -- Creating sessions ----------------------------------------------------------
 
-export type SessionCreateFlags = { sandbox?: boolean; template?: string; vault: string[] }
+export type SessionCreateFlags = { sandbox?: boolean; template?: string; vault: string[]; file?: string[] }
+
+const repeat = (value: string, previous: string[]) => [...previous, value]
 
 // addSessionCreateOptions attaches the options every session-creating command
-// shares: where the session runs and which vaults it may use.
+// shares: where the session runs, which vaults it may use, and the files on
+// this machine staged into its sandbox.
 export function addSessionCreateOptions(cmd: Command): Command {
   return cmd
     .option('--sandbox', 'run in a hosted sandbox (default: no environment)')
     .option('--template <id>', 'run in a hosted sandbox built from this environment template')
+    .option('--vault <id>', 'make a vault\'s credentials available to the session (repeatable)', repeat, [] as string[])
     .option(
-      '--vault <id>',
-      'make a vault\'s credentials available to the session (repeatable)',
-      (value: string, previous: string[]) => [...previous, value],
+      '--file <path[:dest]>',
+      'stage a file on this machine into the sandbox, at /workspace/<name> unless dest says (repeatable; implies --sandbox)',
+      repeat,
       [] as string[],
     )
 }
 
 // sessionEnvironment maps the flags onto the session's environment: none by
-// default, a hosted sandbox with --sandbox, built from a template with
-// --template.
-export function sessionEnvironment(flags: SessionCreateFlags): EnvironmentParam {
+// default, a hosted sandbox with --sandbox or --file, built from a template
+// with --template. `files` go in a new sandbox's create body; a template's
+// session gets them after it exists (see createSession).
+export function sessionEnvironment(flags: SessionCreateFlags, files: readonly StagedUpload[] = []): EnvironmentParam {
   if (flags.template !== undefined) {
     if (!flags.template.trim()) throw new CliError('--template needs an id', ExitCode.Usage)
     return { type: 'openai_hosted', environment_template_id: flags.template }
   }
-  if (flags.sandbox) return { type: 'openai_hosted' }
+  if (files.length) return { type: 'openai_hosted', files: environmentFiles(files) }
+  if (flags.sandbox || flags.file?.length) return { type: 'openai_hosted' }
   return { type: 'none' }
 }
 
 // sessionCreateParams is the one session-create body every command sends.
-export function sessionCreateParams(agentId: string, flags: SessionCreateFlags) {
-  return { agent_id: agentId, environment: sessionEnvironment(flags), ...(flags.vault.length ? { vault_ids: flags.vault } : {}) }
+export function sessionCreateParams(agentId: string, flags: SessionCreateFlags, files: readonly StagedUpload[] = []) {
+  return {
+    agent_id: agentId,
+    environment: sessionEnvironment(flags, files),
+    ...(flags.vault.length ? { vault_ids: flags.vault } : {}),
+  }
+}
+
+// filesFromFlags reads and checks every --file before anything is sent.
+export async function filesFromFlags(flags: SessionCreateFlags): Promise<StagedFile[]> {
+  return prepareFiles(await Promise.all((flags.file ?? []).map(parseFileFlag)))
+}
+
+// createSession creates a session with the flags' environment and vaults,
+// staging `files` into its sandbox: in the create body for a new sandbox,
+// or after the create for a template's, since a create-time list would
+// replace the template's own files. Files uploaded for a create that fails
+// are deleted.
+export async function createSession(
+  client: OpenAI,
+  agentId: string,
+  flags: SessionCreateFlags,
+  files: readonly StagedFile[] = [],
+): Promise<AgentSession> {
+  const uploads = await uploadStaged(client, files)
+  const atCreate = flags.template === undefined
+  let session: AgentSession
+  try {
+    session = await client.beta.agents.sessions.create(sessionCreateParams(agentId, flags, atCreate ? uploads : []))
+  } catch (err) {
+    await deleteUploads(client, uploads)
+    throw err
+  }
+  if (!atCreate && uploads.length && session.environment.type === 'openai_hosted') {
+    try {
+      await writeToEnvironment(client, session.environment.id, uploads)
+    } catch (err) {
+      await deleteUploads(client, uploads)
+      throw err
+    }
+  }
+  return session
 }
 
 // SessionView is a session as the CLI shows it: the /v1 object without its

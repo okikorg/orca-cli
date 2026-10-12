@@ -10,6 +10,9 @@ export type Column<T> = {
   color?: (row: T) => string | undefined
   // Render the cell bold (used for the primary/name column).
   bold?: boolean
+  // A wider cap than MAX_COL, for a value that must be shown whole to be
+  // copied (a model name).
+  max?: number
 }
 
 // No single column is allowed to blow out the table past the terminal; cap
@@ -51,7 +54,7 @@ export function Table<T>({
 }) {
   const widths = columns.map((col) =>
     Math.min(
-      MAX_COL,
+      col.max ?? MAX_COL,
       Math.max(headers ? col.header.length : 0, ...rows.map((row) => col.get(row).length)),
     ),
   )
