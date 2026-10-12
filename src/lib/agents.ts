@@ -10,13 +10,10 @@ import { NotFoundError } from 'openai/error'
 
 import { FETCH_ALL_MAX_ROWS, FETCH_ALL_PAGE_SIZE } from './api.js'
 import { CliError, ExitCode } from './errors.js'
+import { readStdin } from './stdin.js'
 
 async function readSource(file: string): Promise<string> {
-  if (file === '-') {
-    const chunks: Buffer[] = []
-    for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
-    return Buffer.concat(chunks).toString('utf8')
-  }
+  if (file === '-') return readStdin()
   try {
     return await readFile(file, 'utf8')
   } catch (err) {

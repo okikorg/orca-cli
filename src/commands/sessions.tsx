@@ -141,22 +141,26 @@ export function registerSessions(program: Command): void {
       }
       const { Panel, Field } = await import('../ui/Panel.js')
       const { theme } = await import('../ui/theme.js')
+      // Wide enough for the 12-letter meter labels ("web searches", "machine
+      // time") plus a space, so every value in the panel starts in one column.
+      const LABEL_WIDTH = 14
       await renderStatic(
         <Panel title={session.id} subtitle={session.agent.id}>
-          <Field label="status" value={session.status} valueColor={sessionStatusColor(session.status, theme)} />
+          <Field width={LABEL_WIDTH} label="status" value={session.status} valueColor={sessionStatusColor(session.status, theme)} />
           <Field
+            width={LABEL_WIDTH}
             label="model"
             value={session.model === session.agent_model ? session.model : `${session.model} (switched from ${session.agent_model})`}
           />
-          <Field label="pays" value={payerLabel(session.payer)} />
-          <Field label="environment" value={session.environment.type} />
-          <Field label="created" value={formatTime(session.created_at)} />
-          <Field label="last active" value={formatTime(session.last_active_at)} />
+          <Field width={LABEL_WIDTH} label="pays" value={payerLabel(session.payer)} />
+          <Field width={LABEL_WIDTH} label="environment" value={session.environment.type} />
+          <Field width={LABEL_WIDTH} label="created" value={formatTime(session.created_at)} />
+          <Field width={LABEL_WIDTH} label="last active" value={formatTime(session.last_active_at)} />
           {rows.map((row) => (
-            <Field key={row.key} label={row.label} value={row.shown} />
+            <Field key={row.key} width={LABEL_WIDTH} label={row.label} value={row.shown} />
           ))}
-          {session.vault_ids.length ? <Field label="vaults" value={session.vault_ids.join(', ')} /> : null}
-          {session.error ? <Field label="error" value={session.error} valueColor={theme.destructive} /> : null}
+          {session.vault_ids.length ? <Field width={LABEL_WIDTH} label="vaults" value={session.vault_ids.join(', ')} /> : null}
+          {session.error ? <Field width={LABEL_WIDTH} label="error" value={session.error} valueColor={theme.destructive} /> : null}
         </Panel>,
       )
     })
