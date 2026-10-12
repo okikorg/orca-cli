@@ -28,3 +28,10 @@ export function percentBps(bps: number): string {
   const rest = String(Math.abs(bps % 100)).padStart(2, '0').replace(/0+$/, '')
   return `${whole}${rest ? `.${rest}` : ''}%`
 }
+
+// tokenPrice is what tokens and searches on Orca credit cost, in the one
+// wording every surface uses (orca-design plan-facts, P2-d): "OpenRouter's
+// price plus their 5.5% fee".
+export function tokenPrice(bps: number): string {
+  return `OpenRouter's price plus their ${percentBps(bps)} fee`
+}

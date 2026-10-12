@@ -265,8 +265,8 @@ reasoning: { effort: medium }
 Only the shape is checked locally; the server validates every field, checks the
 model against its provider's list, and the CLI prints its message and the field
 it is about. In a terminal, a file with no `model` opens a picker of every model
-you can use, grouped by who pays: Orca credit with OpenRouter's price per million
-tokens and its fee, then each provider you saved a key for. With `--json` or
+you can use, grouped by who pays: Orca credit, at OpenRouter's price per million
+tokens plus their fee, then each provider you saved a key for. With `--json` or
 outside a terminal the file must name the model.
 
 `orca chat <agent> [prompt]` runs a turn on a `/v1` session with your API key.
