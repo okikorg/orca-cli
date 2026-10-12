@@ -9,6 +9,7 @@ import { creditOut, otherSide, pickerItems, preselect, refusedAtAdmission } from
 import { CliError, ExitCode } from '../lib/errors.js'
 import { stripControlSequences } from '../lib/markdown.js'
 import { interactive } from '../lib/output.js'
+import { readStdin } from '../lib/stdin.js'
 import {
   addSessionCreateOptions,
   sessionCreateParams,
@@ -22,13 +23,6 @@ import type { SwitchChoice } from '../ui/SwitchPrompt.js'
 import { apiContext, fetchAll, globalFlags, withApi, type ApiContext } from './shared.js'
 
 type ChatOpts = SessionCreateFlags & { session?: string }
-
-// readStdin drains piped input for the single-shot "echo hi | orca chat" path.
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = []
-  for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
-  return Buffer.concat(chunks).toString('utf8')
-}
 
 // emitNdjson writes one line per raw session event for --json.
 function emitNdjson(event: AgentSessionEvent): void {

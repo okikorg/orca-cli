@@ -6,6 +6,7 @@ import { toPage } from '../lib/api.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatTime } from '../lib/format.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
+import { readStdin } from '../lib/stdin.js'
 import { accentVerb, hintText } from '../ui/theme.js'
 import { confirmDestructive } from './prompts.js'
 import {
@@ -26,12 +27,6 @@ function stripOneTrailingNewline(s: string): string {
   if (s.endsWith('\r\n')) return s.slice(0, -2)
   if (s.endsWith('\n')) return s.slice(0, -1)
   return s
-}
-
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = []
-  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
-  return Buffer.concat(chunks).toString('utf8')
 }
 
 // resolveToken obtains the bearer token WITHOUT ever echoing it. Precedence:

@@ -34,13 +34,25 @@ export function Panel({
   )
 }
 
-// A dim label / value pair line for detail views. The 12-col subtle label is
-// unchanged; the two-space indent comes from the Section's padded body, so a
+// A dim label / value pair line for detail views. The subtle label column is
+// 12 wide unless a view passes `width`, and always leaves a space before the
+// value: a longer label widens its own line instead of wrapping or touching
+// the value. The two-space indent comes from the Section's padded body, so a
 // Field used outside a Panel needs its own indent.
-export function Field({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
+export function Field({
+  label,
+  value,
+  valueColor,
+  width = 12,
+}: {
+  label: string
+  value: string
+  valueColor?: string
+  width?: number
+}) {
   return (
     <Box>
-      <Box width={12}>
+      <Box width={Math.max(width, label.length + 1)} flexShrink={0}>
         <Text color={theme.subtle}>{label}</Text>
       </Box>
       <Text color={valueColor}>{value}</Text>
