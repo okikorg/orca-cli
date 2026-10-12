@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { counterpart, creditOut, otherSide, payerOf, pickerItems, preselect, refusedAtAdmission } from '../../src/lib/models.js'
-import { percentBps } from '../../src/lib/money.js'
+import { percentBps, tokenPrice } from '../../src/lib/money.js'
 import type { ModelGroups } from '../../src/lib/types.js'
 import { glyphs } from '../../src/ui/theme.js'
 
@@ -46,12 +46,12 @@ describe('the model picker', () => {
       {
         label: 'orca/openrouter/openai/gpt-5.6-luna',
         value: 'orca/openrouter/openai/gpt-5.6-luna',
-        detail: `Orca credit, plus OpenRouter's 5.5% fee ${sep} $0.20 in, $1.20 out per million tokens`,
+        detail: `Orca credit, OpenRouter's price plus their 5.5% fee ${sep} $0.20 in, $1.20 out per million tokens`,
       },
       {
         label: 'orca/openrouter/openrouter/auto',
         value: 'orca/openrouter/openrouter/auto',
-        detail: `Orca credit, plus OpenRouter's 5.5% fee ${sep} varies in, varies out per million tokens`,
+        detail: `Orca credit, OpenRouter's price plus their 5.5% fee ${sep} varies in, varies out per million tokens`,
       },
       { label: 'openrouter/openai/gpt-5.6-luna', value: 'openrouter/openai/gpt-5.6-luna', detail: 'OpenRouter, billed by your provider' },
       { label: 'anthropic/claude-sonnet-4-5', value: 'anthropic/claude-sonnet-4-5', detail: 'Anthropic, billed by your provider' },
@@ -61,6 +61,10 @@ describe('the model picker', () => {
     expect(percentBps(550)).toBe('5.5%')
     expect(percentBps(600)).toBe('6%')
     expect(percentBps(5)).toBe('0.05%')
+  })
+  it("says the token price one way: OpenRouter's price plus their fee", () => {
+    expect(tokenPrice(550)).toBe("OpenRouter's price plus their 5.5% fee")
+    expect(tokenPrice(600)).toBe("OpenRouter's price plus their 6% fee")
   })
 })
 

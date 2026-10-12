@@ -3,7 +3,7 @@ import type { Command } from 'commander'
 import { openBrowser } from '../lib/browser.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatDate } from '../lib/format.js'
-import { percentBps, usdCents, usdMicro } from '../lib/money.js'
+import { tokenPrice, usdCents, usdMicro } from '../lib/money.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import type { BillingURL, Wallet } from '../lib/types.js'
 import { hintText } from '../ui/theme.js'
@@ -40,7 +40,7 @@ async function renderWallet(w: Wallet): Promise<void> {
       <Field label="charged" value={usdMicro(w.charged_micro_usd)} />
       <Field label="period" value={`${formatDate(w.period_start)} to ${formatDate(w.period_end)}`} />
       <Field label="compute" value={`${w.used_compute_seconds}s used of ${w.included_compute_seconds}s included`} />
-      <Field label="tokens" value={`on Orca credit, OpenRouter's price plus their ${percentBps(w.openrouter_fee_bps)} fee`} />
+      <Field label="tokens" value={`on Orca credit, ${tokenPrice(w.openrouter_fee_bps)}`} />
       {w.packs.length > 0 ? (
         <Field
           label="packs"

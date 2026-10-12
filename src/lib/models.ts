@@ -4,7 +4,7 @@
 // only rule mirrored is how a name says who pays.
 
 import { glyphs } from '../ui/theme.js'
-import { percentBps, usdMicro } from './money.js'
+import { tokenPrice, usdMicro } from './money.js'
 import type { ModelGroup, ModelGroups, Payer, PickModel } from './types.js'
 
 const ORCA_PREFIX = 'orca/openrouter/'
@@ -32,11 +32,11 @@ export function counterpart(model: string): string | null {
 export const SWITCH_WARNING =
   "Switching may re-send this conversation without the provider's cache, which uses more tokens. The model may behave differently through another route, and work in progress may not carry over correctly."
 
-// groupHeading names who pays for a group: Orca credit with OpenRouter's
-// fee, or the provider that bills.
+// groupHeading names who pays for a group: Orca credit at OpenRouter's price
+// plus their fee, or the provider that bills.
 export function groupHeading(group: ModelGroup, feeBps: number): string {
   return group.payer === 'orca_credit'
-    ? `Orca credit, plus OpenRouter's ${percentBps(feeBps)} fee`
+    ? `Orca credit, ${tokenPrice(feeBps)}`
     : `${group.label}, billed by your provider`
 }
 
