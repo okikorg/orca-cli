@@ -76,6 +76,8 @@ orca kits publish <kit-id> --json            # prints the public id and share li
 orca kits copy <link-or-public-id> --dry-run --json
 ```
 
+Okik's ready-made kits, each with its link and the code behind it, are listed at https://github.com/okikorg/orca-kits.
+
 Account status (every figure is the server's, in micro-USD; never recompute costs):
 
 ```bash
