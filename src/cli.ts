@@ -12,6 +12,7 @@ import { registerFiles } from './commands/files.js'
 import { registerKeys } from './commands/keys.js'
 import { registerKits } from './commands/kits.js'
 import { registerMcp } from './commands/mcp.js'
+import { registerModels } from './commands/models.js'
 import { registerSessions } from './commands/sessions.js'
 import { registerSkills } from './commands/skills.js'
 import { registerUpdate } from './commands/update.js'
@@ -53,6 +54,7 @@ const GROUP = {
 const COMMAND_GROUP: Record<string, string> = {
   chat: GROUP.CORE,
   agents: GROUP.CORE,
+  models: GROUP.CORE,
   sessions: GROUP.CORE,
   usage: GROUP.OBSERVE,
   doctor: GROUP.OBSERVE,
@@ -76,6 +78,7 @@ const COMMAND_GROUP: Record<string, string> = {
 // program.commands).
 registerChat(program)
 registerAgents(program)
+registerModels(program)
 registerSessions(program)
 
 registerUsage(program)
@@ -162,6 +165,16 @@ function firstRun(): boolean {
   return !existsSync(configPath())
 }
 
+// A reader that closes early (`orca models | head`) closes stdout: stop
+// quietly, as other command-line tools do, instead of printing a stack.
+function closedPipe(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === 'EPIPE'
+}
+process.stdout.on('error', (err) => {
+  if (!closedPipe(err)) throw err
+  process.exit(0)
+})
+
 async function main(): Promise<void> {
   try {
     // Bare `orca` (no subcommand) greets with the banner + command list (the
@@ -173,6 +186,7 @@ async function main(): Promise<void> {
     }
     await program.parseAsync()
   } catch (err) {
+    if (closedPipe(err)) process.exit(0)
     if (err instanceof CommanderError) {
       // Help/version output already happened; usage errors already printed
       // to stderr by commander. Map them onto the exit-code contract.

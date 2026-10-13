@@ -1,3 +1,6 @@
+import { mkdtemp, truncate, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { Readable } from 'node:stream'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -6,7 +9,16 @@ import { registerChat } from '../../src/commands/chat.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import { commandHarness, list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
-import { AGENT_ID, SESSION_ID, agentRoute, session, turnEvents, turnRoutes } from '../helpers/session-events.js'
+import {
+  AGENT_ID,
+  SESSION_ID,
+  agentRoute,
+  hostedSession,
+  session,
+  turnEvents,
+  turnRoutes,
+  uploadedFile,
+} from '../helpers/session-events.js'
 
 const { run, stdout, stderr } = commandHarness(registerChat)
 
@@ -139,5 +151,75 @@ describe('agent references', () => {
     })
     await run(['chat', lookalike, 'hi'])
     expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}').agent_id).toBe(AGENT_ID)
+  })
+})
+
+describe('orca chat --file', () => {
+  const local = async () => {
+    const file = path.join(await mkdtemp(path.join(os.tmpdir(), 'orca-chat-')), 'sales.csv')
+    await writeFile(file, 'month,total\n')
+    return file
+  }
+
+  it('uploads the file, then creates a sandbox with it by file_id, then sends the message', async () => {
+    const data = await local()
+    const calls = stubFetch({
+      ...agentRoute(),
+      'POST /v1/files': jsonResponse(uploadedFile('file_1', 'sales.csv')),
+      'POST /v1/agents/sessions': jsonResponse(hostedSession()),
+      ...turnRoutes(turnEvents()),
+    })
+    await run(['chat', AGENT_ID, '--file', `${data}:/workspace/in/sales.csv`, 'analyse /workspace/in/sales.csv'])
+    const posts = calls.filter((c) => c.method === 'POST').map((c) => c.path)
+    expect(posts).toEqual(['/v1/files', '/v1/agents/sessions', `/v1/agents/sessions/${SESSION_ID}/events`])
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}')).toEqual({
+      agent_id: AGENT_ID,
+      environment: { type: 'openai_hosted', files: [{ type: 'file_id', file_id: 'file_1', path: '/workspace/in/sales.csv' }] },
+    })
+    expect(stdout()).toContain('Hello there')
+  })
+
+  it('stages into the sandbox of the session --session continues', async () => {
+    const data = await local()
+    const calls = stubFetch({
+      ...turnRoutes(turnEvents()),
+      [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(hostedSession()),
+      'POST /v1/files': jsonResponse(uploadedFile('file_1', 'sales.csv')),
+      'POST /v1/agents/environments/env_1/files': jsonResponse({
+        environment_id: 'env_1',
+        object: 'agent.environment.file',
+        path: '/workspace/sales.csv',
+        size_bytes: 12,
+      }),
+    })
+    await run(['chat', 'support', '--session', SESSION_ID, '--file', data, 'again'])
+    expect(calls.some((c) => c.path === '/v1/agents/sessions')).toBe(false)
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/environments/env_1/files')?.body ?? '{}')).toEqual({
+      type: 'file_id',
+      file_id: 'file_1',
+      path: '/workspace/sales.csv',
+    })
+    const posts = calls.filter((c) => c.method === 'POST').map((c) => c.path)
+    expect(posts.indexOf('/v1/agents/environments/env_1/files')).toBeLessThan(posts.indexOf(`/v1/agents/sessions/${SESSION_ID}/events`))
+  })
+
+  it('refuses --file for a session with no sandbox, uploading nothing', async () => {
+    const data = await local()
+    const calls = stubFetch({ [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(session()) })
+    await expect(run(['chat', 'support', '--session', SESSION_ID, '--file', data, 'again'])).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+    })
+    expect(calls.map((c) => c.method)).toEqual(['GET'])
+  })
+
+  it('refuses a file over the staging limit before anything is sent', async () => {
+    const data = await local()
+    await truncate(data, 17 * 1024 * 1024)
+    const calls = stubFetch({})
+    await expect(run(['chat', AGENT_ID, '--file', data, 'go'])).rejects.toMatchObject({
+      exitCode: ExitCode.Usage,
+      message: expect.stringContaining('16 MiB'),
+    })
+    expect(calls).toHaveLength(0)
   })
 })

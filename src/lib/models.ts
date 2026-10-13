@@ -4,6 +4,7 @@
 // only rule mirrored is how a name says who pays.
 
 import { glyphs } from '../ui/theme.js'
+import { CliError, ExitCode } from './errors.js'
 import { tokenPrice, usdMicro } from './money.js'
 import type { ModelGroup, ModelGroups, Payer, PickModel } from './types.js'
 
@@ -47,6 +48,52 @@ export function priceLine(model: PickModel): string | undefined {
   if (input === undefined && output === undefined) return undefined
   const price = (micro: number | null | undefined) => (micro == null ? 'varies' : usdMicro(micro))
   return `${price(input)} in, ${price(output)} out per million tokens`
+}
+
+// payerWord is who pays for a group in one word, as `orca models --payer`
+// takes it: `orca` for Orca credit, else the provider whose key pays.
+export function payerWord(group: ModelGroup): string {
+  return group.payer === 'orca_credit' ? 'orca' : group.provider
+}
+
+// withPayer keeps the groups one payer pays for, in the server's body. No
+// payer keeps them all; a payer the server did not return is a usage error
+// naming the ones it did.
+export function withPayer(list: ModelGroups, payer?: string): ModelGroups {
+  if (payer === undefined) return list
+  const groups = list.groups.filter((group) => payerWord(group) === payer)
+  if (groups.length === 0) {
+    const known = list.groups.map(payerWord)
+    throw new CliError(`no models paid by "${payer}"`, ExitCode.Usage, [
+      known.length ? `Payers: ${known.join(', ')}` : 'The server returned no models.',
+    ])
+  }
+  return { ...list, groups }
+}
+
+// ModelRow is one model as a flat row: its name, who pays in one word, and
+// OpenRouter's price where the server gives one.
+export type ModelRow = {
+  id: string
+  payer: string
+  input_micro_usd_per_million?: number | null
+  output_micro_usd_per_million?: number | null
+}
+
+// modelRows flattens the groups into rows, in the server's order, keeping
+// the names that contain `query` (any case) when one is given.
+export function modelRows(list: ModelGroups, query?: string): ModelRow[] {
+  const needle = query?.trim().toLowerCase()
+  return list.groups.flatMap((group) =>
+    group.models
+      .filter((m) => !needle || m.id.toLowerCase().includes(needle))
+      .map((m) => ({
+        id: m.id,
+        payer: payerWord(group),
+        ...(m.input_micro_usd_per_million !== undefined ? { input_micro_usd_per_million: m.input_micro_usd_per_million } : {}),
+        ...(m.output_micro_usd_per_million !== undefined ? { output_micro_usd_per_million: m.output_micro_usd_per_million } : {}),
+      })),
+  )
 }
 
 export type ModelItem = { label: string; value: string; detail: string }

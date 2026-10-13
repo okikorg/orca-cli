@@ -1,7 +1,4 @@
-import { createWriteStream, promises as fs } from 'node:fs'
-import path from 'node:path'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
+import { promises as fs } from 'node:fs'
 
 import type { Command } from 'commander'
 import type { FileObject } from 'openai/resources/files'
@@ -10,6 +7,7 @@ import { toPage } from '../lib/api.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatCount, formatTime } from '../lib/format.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
+import { remoteName, saveBody, TRANSFER_TIMEOUT_MS, uploadFile } from '../lib/transfer.js'
 import { accentVerb, hintText } from '../ui/theme.js'
 import { confirm } from './prompts.js'
 import {
@@ -23,9 +21,6 @@ import {
   withApi,
   type PageFlags,
 } from './shared.js'
-
-// Uploads can be large; give them longer than a JSON call.
-const TRANSFER_TIMEOUT_MS = 10 * 60_000
 
 // Files are the organization's uploaded bytes on /v1/files, which sessions
 // and environment templates stage into a workspace.
@@ -85,14 +80,7 @@ export function registerFiles(program: Command): void {
       const stat = await fs.stat(target).catch(() => null)
       if (!stat || !stat.isFile()) throw new CliError(`not a file: ${target}`, ExitCode.Usage)
       const api = await apiContext(cmd)
-      const { toFile } = await import('openai/uploads')
-      const bytes = await fs.readFile(target)
-      const file = await withApi(api, async (c) =>
-        (await c.v1()).files.create(
-          { file: await toFile(bytes, opts.name ?? path.basename(target)), purpose: 'user_data' },
-          { timeout: TRANSFER_TIMEOUT_MS },
-        ),
-      )
+      const file = await withApi(api, async (c) => uploadFile(await c.v1(), target, opts.name))
       if (outputMode(flags) === 'json') {
         printJson(file)
         return
@@ -115,15 +103,13 @@ export function registerFiles(program: Command): void {
       const target =
         opts.output ?? (await withApi(api, () => client.files.retrieve(id))).filename
       const res = await withApi(api, () => client.files.content(id, { timeout: TRANSFER_TIMEOUT_MS }))
-      if (!res.body) throw new CliError(`file ${id} has no content`, ExitCode.Failure)
-      const body = Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0])
       if (target === '-') {
-        await pipeline(body, process.stdout)
+        await saveBody(res, '-', `file ${id}`)
         return
       }
       // A stored name is remote text: never let it climb out of this directory.
-      const dest = opts.output ?? path.basename(target)
-      await pipeline(body, createWriteStream(dest))
+      const dest = opts.output ?? remoteName(target)
+      await saveBody(res, dest, `file ${id}`)
       if (outputMode(flags) === 'json') printJson({ id, path: dest })
       else console.error(`${accentVerb('Saved')} ${id} to ${dest}.`)
     })

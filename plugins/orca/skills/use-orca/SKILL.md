@@ -55,6 +55,19 @@ orca sessions items <id> --json              # the conversation so far
 
 `<agent>` is an agent id or the name of exactly one agent (the server says which; a shared name is refused with the ids). Add `--sandbox` (or `--template <id>`) to `chat` for a hosted sandbox, and `--vault <id>` to let the session use a vault's MCP credentials (`orca vaults credentials add`).
 
+Pick a model name for `agents create` from `orca models --json` (`--payer orca` for Orca credit, `--payer anthropic` for one provider's key).
+
+Work on a file in a sandbox, and get the results back:
+
+```bash
+orca chat <agent> --file sales.csv "Chart /workspace/sales.csv into /workspace/outputs/chart.png"
+orca sessions artifacts <session-id> --json             # what the agent saved under /workspace/outputs
+orca sessions artifacts download <session-id> --all -o results
+orca sessions delete <session-id> --yes                 # stops the sandbox; its artifacts go with it
+```
+
+`--file <path>[:<dest>]` uploads the file and stages it at `/workspace/<its name>` (or `dest`); it implies `--sandbox` and works with `--session` on a session that has one. Only files saved under `/workspace/outputs` come back as artifacts, when the turn completes.
+
 Share and reuse setups as kits:
 
 ```bash
@@ -83,7 +96,7 @@ For extended work, register Orca's MCP server once:
 claude mcp add orca -- orca mcp serve
 ```
 
-It exposes one tool per CLI action: whoami and keys, agents, sessions, `chat` (sends a message and waits for the reply, returning the session id), skills, vaults, files, usage and billing, and kits.
+It exposes one tool per CLI action: whoami and keys, agents and `list_models`, sessions, `chat` (sends a message and waits for the reply, returning the session id; it and `create_session` take `files` to stage into the sandbox), `list_artifacts` and `download_artifact`, skills, vaults, files, usage and billing, and kits.
 
 ## References
 
@@ -95,6 +108,6 @@ It exposes one tool per CLI action: whoami and keys, agents, sessions, `chat` (s
 - Exit 3 or 401: run `orca login` again (or check `ORCA_API_KEY`).
 - "Out of Orca credit" (HTTP 429, or a turn that fails with `usage_limit_exceeded` and `param` `orca_credit`): paid work is paused because the balance is under the plan's minimum; `orca billing wallet --json` shows `paid_work_paused` and `min_balance_micro_usd`. Add credit, then continue the session, or switch this session to a model on your own key: `POST /api/sessions/{id}/model {"model": "..."}` (in a terminal, `orca chat` offers it).
 - `param` `provider_quota`: your own provider account is out of quota. Top up there, or switch the session to Orca credit the same way.
-- 400 on `model` when saving: the name must say who pays (`orca/openrouter/<OpenRouter id>` for Orca credit, `<provider>/<id>` with your own key), the provider must list it, and an own key must be saved. `GET /api/models` lists every name you can use.
+- 400 on `model` when saving: the name must say who pays (`orca/openrouter/<OpenRouter id>` for Orca credit, `<provider>/<id>` with your own key), the provider must list it, and an own key must be saved. `orca models --json` lists every name you can use.
 - "does not support device login": the API URL does not point at an Orca server; check `orca auth status`, or use `orca login --with-token <key>` with a key minted in the dashboard.
 - Anything else: `orca doctor --json` names the failing check and the fix.

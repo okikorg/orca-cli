@@ -95,3 +95,32 @@ export function sessionModelRoute(
     }),
   }
 }
+
+// hostedSession is SESSION_ID in a managed sandbox, environment env_1.
+export function hostedSession(status = 'idle') {
+  return session(status, { environment: { type: 'openai_hosted', id: 'env_1', files: [] } })
+}
+
+// artifact is one of SESSION_ID's artifacts, five bytes, from env_1.
+export function artifact(id: string, path: string, turn: string, created = 1_783_245_600) {
+  return {
+    id,
+    object: 'agent.session.artifact',
+    created_at: created,
+    environment_id: 'env_1',
+    path,
+    session_id: SESSION_ID,
+    size_bytes: 5,
+    turn_id: turn,
+  }
+}
+
+// uploadedFile is what POST /v1/files answers for a staged file.
+export function uploadedFile(id: string, filename: string, bytes = 5) {
+  return { id, object: 'file', bytes, created_at: 1_783_245_600, filename, purpose: 'user_data', status: 'processed' }
+}
+
+// bytesRoute serves raw bytes, as a content route does.
+export function bytesRoute(bytes: number[]): () => Response {
+  return () => new Response(new Uint8Array(bytes), { headers: { 'Content-Type': 'application/octet-stream' } })
+}

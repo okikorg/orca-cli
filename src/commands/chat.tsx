@@ -12,11 +12,14 @@ import { interactive } from '../lib/output.js'
 import { readStdin } from '../lib/stdin.js'
 import {
   addSessionCreateOptions,
+  createSession,
+  filesFromFlags,
   sessionCreateParams,
   streamTurn,
   type ChatEvent,
   type SessionCreateFlags,
 } from '../lib/sessions.js'
+import { stageIntoSession, stagedNote, type StagedFile } from '../lib/staging.js'
 import { ansi, glyphs, hintText } from '../ui/theme.js'
 import type { SendTurn, Switcher } from '../ui/Chat.js'
 import type { SwitchChoice } from '../ui/SwitchPrompt.js'
@@ -51,12 +54,23 @@ function noteTool(event: Extract<ChatEvent, { type: 'tool' }>): void {
 }
 
 // openSession returns the session to talk to: the one --session names, or a
-// new session of the agent, with the environment and vaults the flags ask
-// for.
-async function openSession(client: OpenAI, agentId: string | undefined, opts: ChatOpts): Promise<string> {
+// new session of the agent, with the environment, vaults and staged files
+// the flags ask for.
+async function openSession(
+  client: OpenAI,
+  agentId: string | undefined,
+  opts: ChatOpts,
+  files: readonly StagedFile[],
+): Promise<string> {
   if (opts.session) return opts.session
-  const session = await client.beta.agents.sessions.create(sessionCreateParams(agentId as string, opts))
+  const session = await createSession(client, agentId as string, opts, files)
   return session.id
+}
+
+// noteStaged names each staged file and where it went, on a terminal.
+function noteStaged(files: readonly StagedFile[]): void {
+  if (!process.stderr.isTTY) return
+  for (const line of stagedNote(files)) process.stderr.write(`${hintText(line)}\n`)
 }
 
 // What a continue after a switch sends, as the dashboard's Continue does:
@@ -127,9 +141,11 @@ async function runSingleShot(
   message: string,
   opts: ChatOpts,
   json: boolean,
+  files: readonly StagedFile[] = [],
 ): Promise<void> {
   const client = await api.client.v1()
-  const sessionId = await withApi(api, () => openSession(client, agentId, opts))
+  const sessionId = await withApi(api, () => openSession(client, agentId, opts, files))
+  if (!opts.session) noteStaged(files)
   // The session id goes to stderr so scripts can capture it and resume
   // (stdout is reserved for the answer or the NDJSON events), however the
   // turn ends, a refusal included.
@@ -215,6 +231,7 @@ async function runRepl(
   agentId: string | undefined,
   label: string,
   opts: ChatOpts,
+  files: readonly StagedFile[],
 ): Promise<void> {
   const client = await api.client.v1()
   const { render } = await import('ink')
@@ -228,7 +245,7 @@ async function runRepl(
     // one the next message continues.
     let id = sessionId
     try {
-      id = id ?? (await openSession(client, agentId, opts))
+      id = id ?? (await openSession(client, agentId, opts, files))
       const result = await streamTurn(client, id, message, { signal: handlers.signal, onEvent: handlers.onEvent })
       return { ...result, sessionId: id }
     } catch (err) {
@@ -279,6 +296,8 @@ export function registerChat(program: Command): void {
     const json = Boolean(flags.json)
     const piped = !process.stdin.isTTY
     const api = await apiContext(cmd)
+    // Every --file is read and checked before anything is sent.
+    const files = await filesFromFlags(opts)
 
     // The agent names the session's agent for a new session. Continuing one
     // (--session) needs no agent; when both are given the agent is a label.
@@ -300,9 +319,16 @@ export function registerChat(program: Command): void {
       label = picked.label
     }
 
+    // Continuing a session stages the files into its sandbox first.
+    if (opts.session && files.length) {
+      const session = opts.session
+      await withApi(api, async (c) => stageIntoSession(await c.v1(), session, files))
+      noteStaged(files)
+    }
+
     const prompt = promptParts.join(' ').trim()
     if (!json && !prompt && !piped && interactive()) {
-      await runRepl(api, agentId, label, opts)
+      await runRepl(api, agentId, label, opts, files)
       return
     }
 
@@ -314,6 +340,6 @@ export function registerChat(program: Command): void {
         'Or pipe stdin: echo hi | orca chat <agent>',
       ])
     }
-    await runSingleShot(api, agentId, message, opts, json)
+    await runSingleShot(api, agentId, message, opts, json, files)
   })
 }

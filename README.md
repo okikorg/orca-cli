@@ -179,7 +179,7 @@ orca auth status
 orca auth logout [--revoke] [--yes]
 orca context list|use [name]|show
 
-orca chat [agent] [prompt...] [--session id] [--sandbox] [--template id] [--vault id]...
+orca chat [agent] [prompt...] [--session id] [--sandbox] [--template id] [--vault id]... [--file path[:dest]]...
 
 orca agents list
 orca agents get [agent]
@@ -187,10 +187,14 @@ orca agents create -f agent.yaml           # YAML or JSON; - for stdin
 orca agents update <agent> -f fields.yaml  # only the fields in the file change
 orca agents delete [agent] [--yes]
 
+orca models [--payer orca|<provider>]   # every model you can use, grouped by who pays
+
 orca sessions list [--agent agent]
 orca sessions get <id>
-orca sessions create --agent <agent> [--sandbox] [--template id] [--vault id]...
+orca sessions create --agent <agent> [--sandbox] [--template id] [--vault id]... [--file path[:dest]]...
 orca sessions items <id> [--limit n]
+orca sessions artifacts <session>       # files its turns saved under /workspace/outputs
+orca sessions artifacts download <session> [artifact] [-o path|-] [--all]
 orca sessions delete <id> [--yes]
 
 orca usage [--days n] [--group-by model|provider|credential|session|agent] [--session id] [--meter m]
@@ -267,15 +271,34 @@ model against its provider's list, and the CLI prints its message and the field
 it is about. In a terminal, a file with no `model` opens a picker of every model
 you can use, grouped by who pays: Orca credit, at OpenRouter's price per million
 tokens plus their fee, then each provider you saved a key for. With `--json` or
-outside a terminal the file must name the model.
+outside a terminal the file must name the model; `orca models` lists the same
+names anywhere (`--payer orca` or `--payer anthropic` for one group, `--json`
+for the server's list).
 
 `orca chat <agent> [prompt]` runs a turn on a `/v1` session with your API key.
 Without `--session` it creates a session of the agent first (no environment by
 default; `--sandbox` for a hosted sandbox, `--template id` to build it from an
 environment template, `--vault id` to let it use a vault's credentials).
 
+`--file <path>[:<dest>]` (repeatable, on `chat` and `sessions create`) stages a
+file on this machine into the session's sandbox, at `/workspace/<its name>`
+unless a destination follows the colon, and implies `--sandbox`. Each file is
+uploaded to your files first. A file over the server's staging limit (16 MiB,
+64 MiB for all of a sandbox's files together) is refused before anything is
+uploaded. With `--session`, the files go into that session's sandbox before the
+message; a session without one is refused.
+
+Files the agent saves under `/workspace/outputs` are kept as artifacts when its
+turn completes. `orca sessions artifacts <session>` lists them, and `orca
+sessions artifacts download <session> <artifact>` saves one (an id, or its path
+as listed) under its own file name, or to `-o path`, or to stdout with `-o -`.
+`--all` saves every artifact of the newest turn into the current folder, or the
+folder `-o` names. A file name from the server never leaves that folder.
+
 ```sh
 orca chat support                            # interactive REPL
+orca chat support --file sales.csv "chart /workspace/sales.csv into /workspace/outputs/chart.png"
+orca sessions artifacts download sess_123 --all -o results
 orca chat support "summarize the open tickets"   # one turn, streamed to stdout
 echo "and the oldest?" | orca chat support --session sess_123
 orca chat support "hi" --json                # NDJSON, one session event per line
@@ -379,8 +402,9 @@ claude mcp add orca -- orca mcp serve
 ```
 
 `orca mcp serve` speaks MCP over stdio with one tool per CLI action: identity
-and keys, agents, sessions and `chat` (which sends a message and waits for the
-reply), skills, vaults, files, usage and billing, and kits. The
+and keys, agents and models, sessions and `chat` (which sends a message and
+waits for the reply; it and `create_session` take `files` to stage), a session's
+artifacts, skills, vaults, files, usage and billing, and kits. The
 commands that only touch this machine (login, logout, context, doctor, update)
 have no tool. Other MCP clients (Cursor, Codex) use `{"command": "orca",
 "args": ["mcp", "serve"]}`. Login for agent contexts is `orca login` (device

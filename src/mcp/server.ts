@@ -28,8 +28,12 @@ import { resolveAgentId } from '../lib/agents.js'
 import { ApiClient, mapApiError, toPage } from '../lib/api.js'
 import { resolveContext, type GlobalFlags } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { itemText, sessionCreateParams, sessionView } from '../lib/sessions.js'
+import { findArtifact, oneDestination, saveArtifact, saveNewestTurn } from '../lib/artifacts.js'
+import { modelRows, withPayer } from '../lib/models.js'
+import { createSession, itemText, sessionCreateParams, sessionView } from '../lib/sessions.js'
 import { collectSkillFiles } from '../lib/skills.js'
+import { prepareFiles, stageIntoSession, type FileSpec } from '../lib/staging.js'
+import { uploadFile } from '../lib/transfer.js'
 import type { KitInput } from '../lib/types.js'
 import { VERSION } from '../version.js'
 
@@ -150,6 +154,17 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     ...(args.after ? { after: args.after as string } : {}),
   })
   const agentId = async (client: ApiClient, ref: unknown) => resolveAgentId(await client.v1(), ref as string)
+  // Files on this machine to stage into a session's sandbox, as --file does.
+  const files = z
+    .array(
+      z.object({
+        path: z.string().describe('the file on this machine'),
+        dest: z.string().optional().describe('where it goes in the sandbox (default /workspace/<its name>)'),
+      }),
+    )
+    .optional()
+    .describe('files on this machine to stage into the sandbox (implies sandbox; up to 16 MiB each, 64 MiB together)')
+  const stagedFiles = (args: Record<string, unknown>) => prepareFiles((args.files as FileSpec[] | undefined) ?? [])
 
   // -- Identity and keys ------------------------------------------------------
 
@@ -212,6 +227,32 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
       (await client.v1()).beta.agents.update(await agentId(client, args.agent), args.spec as AgentUpdateParams),
   )
 
+  tool(
+    'list_models',
+    'List the model names an agent can use, one row each: id, payer (orca for Orca credit, else the provider whose saved key pays) and, for Orca credit, OpenRouter\'s price per million tokens in micro-USD; Orca credit pays that plus OpenRouter\'s fee (openrouter_fee_bps). The list is long: narrow it with query (part of the name, such as luna or claude) or payer, and page with limit and after. Use an id as an agent\'s model.',
+    {
+      payer: z.string().optional().describe('orca, or a provider such as anthropic'),
+      query: z.string().optional().describe('only names containing this, in any case'),
+      limit,
+      after: z.string().optional().describe('cursor: the last id of the previous page'),
+    },
+    async (client, args) => {
+      const list = withPayer(await client.models(), args.payer as string | undefined)
+      const rows = modelRows(list, args.query as string | undefined)
+      const start = args.after ? rows.findIndex((row) => row.id === args.after) + 1 : 0
+      if (args.after && start === 0) throw new CliError(`unknown cursor ${String(args.after)}`, ExitCode.Usage)
+      const items = rows.slice(start, start + ((args.limit as number | undefined) ?? 20))
+      const unavailable = list.groups.filter((g) => !g.available).map((g) => g.label)
+      return {
+        openrouter_fee_bps: list.openrouter_fee_bps,
+        items,
+        hasMore: start + items.length < rows.length,
+        lastId: items.at(-1)?.id ?? null,
+        ...(unavailable.length ? { unavailable } : {}),
+      }
+    },
+  )
+
   tool('delete_agent', 'Delete an agent.', { agent: z.string().describe('agent id or name') }, async (client, args) =>
     (await client.v1()).beta.agents.delete(await agentId(client, args.agent)),
   )
@@ -237,20 +278,23 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'create_session',
-    'Create a session of an agent without sending anything. Use chat to talk to it.',
+    'Create a session of an agent without sending anything. Use chat to talk to it. files stages files on this machine into its sandbox.',
     {
       agent: z.string().describe('agent id or name'),
       sandbox: z.boolean().optional().describe('run in a hosted sandbox (default: no environment)'),
       template: z.string().optional().describe('environment template id for a hosted sandbox'),
       vaults: z.array(z.string()).optional().describe('vault ids the session may use'),
+      files,
     },
     async (client, args) => {
-      const params = sessionCreateParams(await agentId(client, args.agent), {
+      const staged = await stagedFiles(args)
+      const flags = {
         sandbox: args.sandbox as boolean | undefined,
         template: args.template as string | undefined,
         vault: (args.vaults as string[] | undefined) ?? [],
-      })
-      return (await client.v1()).beta.agents.sessions.create(params)
+        file: staged.map((f) => f.local),
+      }
+      return createSession(await client.v1(), await agentId(client, args.agent), flags, staged)
     },
   )
 
@@ -267,25 +311,66 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     },
   )
 
+  tool(
+    'list_artifacts',
+    'List a session\'s artifacts, newest first: the files its turns saved under /workspace/outputs, kept when each turn completes. Each has id, path, size_bytes and turn_id.',
+    { session: z.string(), limit, after },
+    async (client, args) =>
+      toPage(await (await client.v1()).beta.agents.sessions.artifacts.list(args.session as string, page(args))),
+  )
+
+  tool(
+    'download_artifact',
+    'Download a session\'s artifacts to this machine. Pass artifact (an id, or a path as list_artifacts shows it) to save one to path, a file, or a folder to save it in under its own name; or all: true to save every artifact of the newest turn into the folder path. A file name never leaves the folder.',
+    {
+      session: z.string(),
+      artifact: z.string().optional().describe('artifact id, or its path in the sandbox'),
+      all: z.boolean().optional().describe('every artifact of the newest turn'),
+      path: z.string().describe('where to save: a file or folder for one artifact, a folder for all'),
+    },
+    async (client, args) => {
+      const v1 = await client.v1()
+      const sessionId = args.session as string
+      const target = args.path as string
+      if (Boolean(args.all) === (args.artifact !== undefined)) {
+        throw new CliError('pass artifact, or all: true', ExitCode.Usage)
+      }
+      if (args.all) return saveNewestTurn(v1, sessionId, target)
+      const artifact = await findArtifact(v1, sessionId, args.artifact as string)
+      return saveArtifact(v1, artifact, await oneDestination(artifact, target))
+    },
+  )
+
   tool('delete_session', 'Delete a session and its history.', { id: z.string() }, async (client, args) =>
     (await client.v1()).beta.agents.sessions.delete(args.id as string),
   )
 
   tool(
     'chat',
-    'Send a message to an agent and wait for its reply. Pass session to continue a conversation, otherwise agent starts a new session. Returns the reply and the session id; if the turn outlasts timeoutSeconds, done is false and the reply is read later with list_session_items.',
+    'Send a message to an agent and wait for its reply. Pass session to continue a conversation, otherwise agent starts a new session. files stages files on this machine into the sandbox first (a new session gets one; a session continued must have one). Returns the reply and the session id; if the turn outlasts timeoutSeconds, done is false and the reply is read later with list_session_items. Files the agent saves under /workspace/outputs come back with list_artifacts and download_artifact.',
     {
       message: z.string().describe('the message for the agent'),
       agent: z.string().optional().describe('agent id or name, for a new session'),
       session: z.string().optional().describe('existing session to continue'),
       timeoutSeconds: z.number().int().min(1).max(600).optional().describe('max wait (default 120)'),
+      files,
     },
     async (client, args) => {
       const v1 = await client.v1()
       const message = args.message as string
       const deadline = Date.now() + ((args.timeoutSeconds as number | undefined) ?? 120) * 1000
+      const staged = await stagedFiles(args)
       let sessionId = args.session as string | undefined
       let previous: string | null = null
+      if (!sessionId && staged.length) {
+        // A new session with files: created first, so the message goes to a
+        // sandbox that has them.
+        if (!args.agent) throw new CliError('pass agent for a new session, or session to continue one', ExitCode.Usage)
+        const flags = { vault: [], file: staged.map((f) => f.local) }
+        sessionId = (await createSession(v1, await agentId(client, args.agent), flags, staged)).id
+      } else if (sessionId) {
+        await stageIntoSession(v1, sessionId, staged)
+      }
       if (sessionId) {
         previous = (await v1.beta.agents.sessions.turns.list(sessionId, { limit: 1 })).data[0]?.id ?? null
         await v1.beta.agents.sessions.events.create(sessionId, {
@@ -401,12 +486,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     'upload_file',
     'Upload a file on this machine.',
     { path: z.string(), name: z.string().optional().describe('store it under this name') },
-    async (client, args) => {
-      const target = args.path as string
-      const { toFile } = await import('openai/uploads')
-      const file = await toFile(await fs.readFile(target), (args.name as string | undefined) ?? path.basename(target))
-      return (await client.v1()).files.create({ file, purpose: 'user_data' })
-    },
+    async (client, args) => uploadFile(await client.v1(), args.path as string, args.name as string | undefined),
   )
 
   tool(
