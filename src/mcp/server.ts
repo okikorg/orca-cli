@@ -30,7 +30,7 @@ import { resolveContext, type GlobalFlags } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { findArtifact, oneDestination, saveArtifact, saveNewestTurn } from '../lib/artifacts.js'
 import { modelRows, withPayer } from '../lib/models.js'
-import { createSession, itemText, sessionCreateParams, sessionView } from '../lib/sessions.js'
+import { createSession, messageText, sessionCreateParams, sessionView } from '../lib/sessions.js'
 import { collectSkillFiles } from '../lib/skills.js'
 import { prepareFiles, stageIntoSession, type FileSpec } from '../lib/staging.js'
 import { uploadFile } from '../lib/transfer.js'
@@ -108,13 +108,14 @@ async function waitForTurn(
   return null
 }
 
-// replyText joins the assistant's messages in one turn, oldest first.
+// replyText joins the assistant's messages in one turn, oldest first, each
+// as written (line breaks kept).
 async function replyText(v1: OpenAI, sessionId: string, turnId: string): Promise<string> {
   const items = (await v1.beta.agents.sessions.items.list(sessionId, { limit: 50, order: 'desc' })).data
   return items
     .filter((item) => item.type === 'message' && item.role === 'assistant' && item.turn_id === turnId)
     .reverse()
-    .map(itemText)
+    .map(messageText)
     .join('\n\n')
 }
 
