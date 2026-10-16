@@ -151,6 +151,40 @@ describe('orca mcp serve', () => {
     expect(reply).not.toHaveProperty('usage')
   })
 
+  // chatReply runs `chat` against a turn whose one assistant message is text.
+  async function chatReply(text: string): Promise<string> {
+    const turn = { id: 'turn_1', status: 'completed', error: null }
+    stubFetch({
+      ...agentRoute(),
+      'POST /v1/agents/sessions': jsonResponse(session('in_progress')),
+      [`GET /v1/agents/sessions/${SESSION_ID}/turns?limit=1`]: jsonResponse(list([turn])),
+      [`GET /v1/agents/sessions/${SESSION_ID}/items?limit=50&order=desc`]: jsonResponse(
+        list([{ id: 'msg_2', type: 'message', role: 'assistant', turn_id: 'turn_1', content: [{ type: 'output_text', text }] }]),
+      ),
+    })
+    const client = await connect()
+    const res = await client.callTool({ name: 'chat', arguments: { agent: AGENT_ID, message: 'check the deal' } })
+    return JSON.parse(firstText(res)).reply
+  }
+
+  it('chat keeps a reply\'s line breaks and indentation', async () => {
+    const text = [
+      '| Line | Margin |',
+      '| --- | --- |',
+      '| Freight | 12% |',
+      '',
+      '1. Check the quote.',
+      '2. Flag the gap:',
+      '   - freight under 15%',
+      '\tthen ask.',
+    ].join('\n')
+    expect(await chatReply(text)).toBe(text)
+  })
+
+  it('chat still strips ANSI escapes from a reply', async () => {
+    expect(await chatReply('\x1b[31mred\x1b[0m\n\x1b]0;title\x07done')).toBe('red\ndone')
+  })
+
   it('get_session answers with its usage from /api/usage, not the session object\'s', async () => {
     const summary = { object: 'usage.summary', start: 0, end: 1, session_id: SESSION_ID, cost_micro_usd: 47, meters: [], daily: [], groups: [] }
     stubFetch({

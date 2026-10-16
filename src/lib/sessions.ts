@@ -285,6 +285,19 @@ export function itemText(item: AgentSessionItem): string {
   return reason ? `${withQuery} failed: ${reason}` : `${withQuery} failed`
 }
 
+// messageText returns a message item's text as written: its parts one per
+// line, with line breaks and indentation kept, so a reply's tables, lists and
+// code survive. itemText is the one-line form for a table row. Remote text,
+// so control bytes are stripped (stripControlSequences keeps \n and \t);
+// blank lines at the start and whitespace at the end are trimmed.
+export function messageText(item: AgentSessionItem): string {
+  if (item.type !== 'message' && item.type !== 'agent_message') return itemText(item)
+  const parts = (item.content as unknown as { text?: unknown }[])
+    .map((part) => (typeof part.text === 'string' ? part.text : ''))
+    .filter(Boolean)
+  return stripControlSequences(parts.join('\n')).replace(/^\n+/, '').trimEnd()
+}
+
 export function itemRole(item: AgentSessionItem): string {
   if (item.type === 'message') return item.role
   if (item.type === 'agent_message') return 'subagent'
