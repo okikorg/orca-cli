@@ -1,3 +1,4 @@
+import { list } from './cli.js'
 import { jsonResponse, type RouteHandler } from './fetch-mock.js'
 import { chunkedBytes, streamResponse } from './sse-stream.js'
 
@@ -123,4 +124,57 @@ export function uploadedFile(id: string, filename: string, bytes = 5) {
 // bytesRoute serves raw bytes, as a content route does.
 export function bytesRoute(bytes: number[]): () => Response {
   return () => new Response(new Uint8Array(bytes), { headers: { 'Content-Type': 'application/octet-stream' } })
+}
+
+export const TEMPLATE_ID = 'envtmpl_' + 'b'.repeat(32)
+export const VAULT_ID = 'vault_' + 'c'.repeat(32)
+
+export function template(id = TEMPLATE_ID, name: string | null = 'seo-helper') {
+  return {
+    id,
+    object: 'agent.environment.template',
+    name,
+    capability_directories: [],
+    files: [],
+    network: { access: 'disabled' },
+    packages: {},
+    plugins: [],
+    skills: [],
+    created_at: 1_783_245_600,
+    updated_at: 1_783_245_600,
+  }
+}
+
+export function vault(id = VAULT_ID, name: string | null = 'dataforseo') {
+  return { id, object: 'vault', name, metadata: {}, created_at: 1_783_245_600 }
+}
+
+const TEMPLATES = '/v1/agents/environments/templates'
+
+// templateRoute and vaultRoute answer one by its id: an id the user typed is
+// retrieved and then used as given.
+export function templateRoute(id = TEMPLATE_ID, name: string | null = 'seo-helper'): Record<string, RouteHandler> {
+  return { [`GET ${TEMPLATES}/${id}`]: jsonResponse(template(id, name)) }
+}
+
+export function vaultRoute(id = VAULT_ID, name: string | null = 'dataforseo'): Record<string, RouteHandler> {
+  return { [`GET /v1/vaults/${id}`]: jsonResponse(vault(id, name)) }
+}
+
+const notFound = (what: string) => jsonResponse({ error: { message: `No such ${what}` } }, { status: 404 })
+
+// templateByName and vaultByName are what a name costs: its retrieve as an
+// id answers 404, then the list is scanned for the name.
+export function templateByName(name: string, rows: ReturnType<typeof template>[]): Record<string, RouteHandler> {
+  return {
+    [`GET ${TEMPLATES}/${name}`]: notFound('environment template'),
+    [`GET ${TEMPLATES}?limit=100`]: jsonResponse(list(rows)),
+  }
+}
+
+export function vaultByName(name: string, rows: ReturnType<typeof vault>[]): Record<string, RouteHandler> {
+  return {
+    [`GET /v1/vaults/${name}`]: notFound('vault'),
+    'GET /v1/vaults?limit=100': jsonResponse(list(rows)),
+  }
 }

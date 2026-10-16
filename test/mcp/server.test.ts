@@ -16,6 +16,8 @@ import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
 import {
   AGENT_ID,
   SESSION_ID,
+  TEMPLATE_ID,
+  VAULT_ID,
   agent,
   agentRoute,
   artifact,
@@ -23,8 +25,14 @@ import {
   hostedSession,
   session,
   sessionModelRoute,
+  template,
+  templateByName,
   uploadedFile,
+  vault,
+  vaultByName,
+  vaultRoute,
 } from '../helpers/session-events.js'
+import type { RouteHandler } from '../helpers/fetch-mock.js'
 
 // connect builds the server against a ClientSource and returns a connected
 // MCP client over an in-memory transport pair: the same wire protocol a
@@ -116,6 +124,26 @@ describe('orca mcp serve', () => {
     )
     // The old orca://openapi resource is gone: /api/openapi answers 410.
     await expect(client.listResources()).rejects.toThrow()
+  })
+
+  it('gives chat, create_session and add_credential these fields', async () => {
+    const client = await connect()
+    const fields = Object.fromEntries(
+      (await client.listTools()).tools
+        .filter((t) => ['chat', 'create_session', 'add_credential'].includes(t.name))
+        .map((t) => [t.name, { all: Object.keys(t.inputSchema.properties ?? {}), required: t.inputSchema.required ?? [] }]),
+    )
+    expect(fields).toEqual({
+      create_session: { all: ['agent', 'sandbox', 'template', 'vaults', 'files'], required: ['agent'] },
+      chat: {
+        all: ['message', 'agent', 'session', 'sandbox', 'template', 'vaults', 'timeoutSeconds', 'files'],
+        required: ['message'],
+      },
+      add_credential: {
+        all: ['vault', 'name', 'server', 'type', 'token', 'login', 'password'],
+        required: ['vault', 'name', 'server'],
+      },
+    })
   })
 
   it('whoami returns the server\'s identity plus the context', async () => {
@@ -416,6 +444,259 @@ describe('orca mcp serve: models, artifacts and staged files', () => {
     expect(payload).toMatchObject({ done: true, reply: 'Read it.' })
     const posts = calls.filter((c) => c.method === 'POST').map((c) => c.path)
     expect(posts).toEqual(['/v1/files', '/v1/agents/environments/env_1/files', `/v1/agents/sessions/${SESSION_ID}/events`])
+  })
+})
+
+describe('orca mcp serve: chat starts a session with a sandbox, a template and vaults', () => {
+  const DIGEST = '/workspace/site-digest.md'
+  const digest = async () => {
+    const local = path.join(await mkdtemp(path.join(os.tmpdir(), 'orca-mcp-')), 'site-digest.md')
+    await writeFile(local, '# Posts\n')
+    return local
+  }
+
+  // newSessionTurn is everything one chat on a new session calls after its
+  // lookups: the upload, the create, a template's staging, then the message
+  // as an event and its turn. It returns the recorded calls.
+  function newSessionTurn(lookups: Record<string, RouteHandler>, created: Record<string, unknown>) {
+    const turn = { id: 'turn_1', status: 'completed', error: null }
+    let turnsListed = 0
+    return stubFetch({
+      ...agentRoute(),
+      ...lookups,
+      'POST /v1/files': jsonResponse(uploadedFile('file_1', 'site-digest.md')),
+      'POST /v1/agents/sessions': jsonResponse(created),
+      'POST /v1/agents/environments/env_1/files': jsonResponse({ environment_id: 'env_1', object: 'agent.environment.file', path: DIGEST, size_bytes: 8 }),
+      [`GET /v1/agents/sessions/${SESSION_ID}/turns?limit=1`]: () => jsonResponse(list(turnsListed++ === 0 ? [] : [turn]))({} as never),
+      [`POST /v1/agents/sessions/${SESSION_ID}/events`]: () => new Response(null, { status: 204 }),
+      [`GET /v1/agents/sessions/${SESSION_ID}/items?limit=50&order=desc`]: jsonResponse(
+        list([{ id: 'msg_2', type: 'message', role: 'assistant', turn_id: 'turn_1', content: [{ type: 'output_text', text: '5 topics.' }] }]),
+      ),
+    })
+  }
+
+  const templateLookup = templateByName('seo-helper', [template('envtmpl_other', 'other'), template()])
+  const vaultLookup = vaultByName('dataforseo', [vault()])
+  const staged = { type: 'file_id', file_id: 'file_1', path: DIGEST }
+
+  const cases: {
+    name: string
+    args: Record<string, unknown>
+    lookups: Record<string, RouteHandler>
+    created: Record<string, unknown>
+    body: Record<string, unknown>
+    // Staged after the create, through the environment (a template's).
+    after?: boolean
+  }[] = [
+    {
+      name: 'sandbox',
+      args: { sandbox: true },
+      lookups: {},
+      created: hostedSession(),
+      body: { environment: { type: 'openai_hosted' } },
+    },
+    {
+      name: 'sandbox with files',
+      args: { sandbox: true, files: true },
+      lookups: {},
+      created: hostedSession(),
+      body: { environment: { type: 'openai_hosted', files: [staged] } },
+    },
+    {
+      name: 'template by name',
+      args: { template: 'seo-helper' },
+      lookups: templateLookup,
+      created: hostedSession(),
+      body: { environment: { type: 'openai_hosted', environment_template_id: TEMPLATE_ID } },
+    },
+    {
+      name: 'template with files, staged after the create',
+      args: { template: 'seo-helper', files: true },
+      lookups: templateLookup,
+      created: hostedSession(),
+      body: { environment: { type: 'openai_hosted', environment_template_id: TEMPLATE_ID } },
+      after: true,
+    },
+    {
+      name: 'vaults by name',
+      args: { vaults: ['dataforseo'] },
+      lookups: vaultLookup,
+      created: session(),
+      body: { environment: { type: 'none' }, vault_ids: [VAULT_ID] },
+    },
+    {
+      name: 'vaults by id, with files',
+      args: { vaults: [VAULT_ID], files: true },
+      lookups: vaultRoute(),
+      created: hostedSession(),
+      body: { environment: { type: 'openai_hosted', files: [staged] }, vault_ids: [VAULT_ID] },
+    },
+    {
+      name: 'template, vaults and files, as the seo-helper kit starts',
+      args: { template: 'seo-helper', vaults: ['dataforseo'], files: true },
+      lookups: { ...templateLookup, ...vaultLookup },
+      created: hostedSession(),
+      body: { environment: { type: 'openai_hosted', environment_template_id: TEMPLATE_ID }, vault_ids: [VAULT_ID] },
+      after: true,
+    },
+  ]
+
+  for (const c of cases) {
+    it(`chat with ${c.name} creates the session, then sends the message`, async () => {
+      const { files, ...rest } = c.args
+      const args = { agent: AGENT_ID, message: 'Give me the top 5 topics.', ...rest, ...(files ? { files: [{ path: await digest() }] } : {}) }
+      const calls = newSessionTurn(c.lookups, c.created)
+      const client = await connect()
+      const res = (await client.callTool({ name: 'chat', arguments: args })) as ToolText
+      expect(res.isError).toBeFalsy()
+      expect(JSON.parse(firstText(res))).toMatchObject({ sessionId: SESSION_ID, done: true, reply: '5 topics.' })
+      const create = calls.find((call) => call.path === '/v1/agents/sessions')
+      expect(JSON.parse(create?.body ?? '{}')).toEqual({ agent_id: AGENT_ID, ...c.body })
+      const posts = calls.filter((call) => call.method === 'POST').map((call) => call.path)
+      expect(posts).toEqual([
+        ...(files ? ['/v1/files'] : []),
+        '/v1/agents/sessions',
+        ...(c.after ? ['/v1/agents/environments/env_1/files'] : []),
+        `/v1/agents/sessions/${SESSION_ID}/events`,
+      ])
+      if (c.after) {
+        expect(JSON.parse(calls.find((call) => call.path === '/v1/agents/environments/env_1/files')?.body ?? '{}')).toEqual(staged)
+      }
+    })
+  }
+
+  it('chat refuses a template two share before anything is uploaded or created, listing both ids', async () => {
+    const calls = stubFetch({
+      ...agentRoute(),
+      ...templateByName('seo-helper', [template('envtmpl_1', 'seo-helper'), template('envtmpl_2', 'seo-helper')]),
+    })
+    const client = await connect()
+    const res = (await client.callTool({
+      name: 'chat',
+      arguments: { agent: AGENT_ID, template: 'seo-helper', files: [{ path: await digest() }], message: 'hi' },
+    })) as ToolText
+    expect(res.isError).toBe(true)
+    expect(firstText(res)).toContain('2 environment templates are named "seo-helper"')
+    expect(firstText(res)).toContain('envtmpl_1, envtmpl_2')
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0)
+  })
+
+  it('chat refuses a sandbox, template or vaults for a session it continues', async () => {
+    const calls = stubFetch({})
+    const client = await connect()
+    for (const extra of [{ sandbox: true }, { template: 'seo-helper' }, { vaults: ['dataforseo'] }]) {
+      const res = (await client.callTool({ name: 'chat', arguments: { session: SESSION_ID, message: 'more', ...extra } })) as ToolText
+      expect(res.isError).toBe(true)
+      expect(firstText(res)).toContain('are for a new session')
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  it('chat that outlasts its wait says to poll get_session and never resend', async () => {
+    stubFetch({
+      ...agentRoute(),
+      'POST /v1/agents/sessions': jsonResponse(session('in_progress')),
+      [`GET /v1/agents/sessions/${SESSION_ID}/turns?limit=1`]: jsonResponse(list([])),
+    })
+    const client = await connect()
+    const res = await client.callTool({ name: 'chat', arguments: { agent: AGENT_ID, message: 'write it', timeoutSeconds: 1 } })
+    const payload = JSON.parse(firstText(res))
+    expect(payload).toMatchObject({ sessionId: SESSION_ID, done: false })
+    expect(payload.next).toContain('never send the message again')
+    expect(payload.next).toContain('get_session')
+  })
+
+  it('create_session takes a template and vaults by name too', async () => {
+    const calls = stubFetch({
+      ...agentRoute(),
+      ...templateLookup,
+      ...vaultLookup,
+      'POST /v1/agents/sessions': jsonResponse(hostedSession()),
+    })
+    const client = await connect()
+    const res = (await client.callTool({
+      name: 'create_session',
+      arguments: { agent: AGENT_ID, template: 'seo-helper', vaults: ['dataforseo'] },
+    })) as ToolText
+    expect(res.isError).toBeFalsy()
+    expect(JSON.parse(calls.find((call) => call.path === '/v1/agents/sessions')?.body ?? '{}')).toEqual({
+      agent_id: AGENT_ID,
+      environment: { type: 'openai_hosted', environment_template_id: TEMPLATE_ID },
+      vault_ids: [VAULT_ID],
+    })
+  })
+})
+
+describe('orca mcp serve: add_credential', () => {
+  const CREDENTIAL = {
+    id: 'cred_1',
+    object: 'vault.credential',
+    vault_id: VAULT_ID,
+    name: 'dataforseo',
+    created_at: 1,
+    updated_at: 1,
+  }
+  const SERVER = 'https://mcp.dataforseo.com/mcp'
+
+  it('sends a bearer token through /v1, the default type', async () => {
+    const calls = stubFetch({
+      [`POST /v1/vaults/${VAULT_ID}/credentials`]: jsonResponse({ ...CREDENTIAL, auth: { type: 'static_bearer', mcp_server_url: SERVER } }),
+    })
+    const client = await connect()
+    for (const type of [undefined, 'static_bearer']) {
+      const res = (await client.callTool({
+        name: 'add_credential',
+        arguments: { vault: VAULT_ID, name: 'dataforseo', server: SERVER, token: 'tok-1', ...(type ? { type } : {}) },
+      })) as ToolText
+      expect(res.isError).toBeFalsy()
+    }
+    expect(calls.map((c) => JSON.parse(c.body ?? '{}'))).toEqual([
+      { name: 'dataforseo', auth: { type: 'static_bearer', mcp_server_url: SERVER, token: 'tok-1' } },
+      { name: 'dataforseo', auth: { type: 'static_bearer', mcp_server_url: SERVER, token: 'tok-1' } },
+    ])
+  })
+
+  it('sends a login and password through /api for static_basic, and returns neither', async () => {
+    const created = { ...CREDENTIAL, auth: { type: 'static_basic', mcp_server_url: SERVER } }
+    const calls = stubFetch({ [`POST /api/vaults/${VAULT_ID}/credentials`]: jsonResponse(created) })
+    const client = await connect()
+    const res = (await client.callTool({
+      name: 'add_credential',
+      arguments: { vault: VAULT_ID, name: 'dataforseo', server: SERVER, type: 'static_basic', login: 'seo@acme.dev', password: 'pw-secret' },
+    })) as ToolText
+    expect(res.isError).toBeFalsy()
+    expect(calls.map((c) => [c.method, c.path])).toEqual([['POST', `/api/vaults/${VAULT_ID}/credentials`]])
+    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({
+      name: 'dataforseo',
+      auth: { type: 'static_basic', mcp_server_url: SERVER, login: 'seo@acme.dev', password: 'pw-secret' },
+    })
+    expect(calls[0].headers.Authorization).toBe('Bearer orca_sk_x')
+    expect(JSON.parse(firstText(res))).toEqual(created)
+    expect(firstText(res)).not.toContain('pw-secret')
+  })
+
+  it('refuses fields of the other type, or a missing secret, before any request', async () => {
+    const calls = stubFetch({})
+    const client = await connect()
+    const base = { vault: VAULT_ID, name: 'dataforseo', server: SERVER }
+    for (const [args, error] of [
+      [{ type: 'static_basic', login: 'seo@acme.dev' }, 'static_basic needs login and password'],
+      [{ type: 'static_basic', login: 'seo@acme.dev', password: 'pw', token: 'tok' }, 'token is for static_bearer'],
+      [{ token: 'tok', password: 'pw' }, 'login and password are for type static_basic'],
+      [{}, 'static_bearer needs token'],
+    ] as const) {
+      const res = (await client.callTool({ name: 'add_credential', arguments: { ...base, ...args } })) as ToolText
+      expect(res.isError).toBe(true)
+      expect(firstText(res)).toContain(error)
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  it('tells the coding agent to prefer the terminal', async () => {
+    const client = await connect()
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'add_credential')
+    expect(tool?.description).toContain('Prefer the terminal')
+    expect(tool?.description).toContain('--basic --login <login>')
   })
 })
 

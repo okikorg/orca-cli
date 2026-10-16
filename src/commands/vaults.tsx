@@ -1,10 +1,11 @@
-import type { Command } from 'commander'
+import { Option, type Command } from 'commander'
 import type { Vault } from 'openai/resources/beta/agents/vaults/vaults'
 import type { Credential } from 'openai/resources/beta/agents/vaults/credentials'
 
 import { toPage } from '../lib/api.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatTime } from '../lib/format.js'
+import { findVault } from '../lib/names.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import { readStdin } from '../lib/stdin.js'
 import { accentVerb, hintText } from '../ui/theme.js'
@@ -29,33 +30,70 @@ function stripOneTrailingNewline(s: string): string {
   return s
 }
 
-// resolveToken obtains the bearer token WITHOUT ever echoing it. Precedence:
-// --token, then piped stdin, then a masked interactive prompt. The value flows
-// only into the request body; it is never logged, printed, or placed in an
-// error message, and the server never returns it.
-async function resolveToken(name: string, flag?: string): Promise<string> {
-  if (flag !== undefined) {
-    if (flag === '') throw new CliError('--token must not be empty', ExitCode.Usage)
-    return flag
-  }
+// Where a secret can come from, in the words of the errors: a bearer token
+// also from --token, a password never from a flag (shell history keeps it).
+const SECRET_SOURCES = {
+  token: {
+    label: 'Token',
+    missing: 'Pass --token, pipe the token on stdin, or run in a terminal to be prompted.',
+    unreadable: 'Pass --token or pipe the token on stdin.',
+  },
+  password: {
+    label: 'Password',
+    missing: 'Pipe the password on stdin, or run in a terminal to be prompted.',
+    unreadable: 'Pipe the password on stdin.',
+  },
+} as const
+
+// readSecret obtains a token or password WITHOUT ever echoing it: piped
+// stdin, then a masked interactive prompt. The value flows only into the
+// request body; it is never logged, printed, or placed in an error message,
+// and the server never returns it.
+async function readSecret(kind: keyof typeof SECRET_SOURCES, name: string): Promise<string> {
+  const source = SECRET_SOURCES[kind]
   if (!process.stdin.isTTY) {
     const piped = stripOneTrailingNewline(await readStdin())
     if (piped === '') {
-      throw new CliError(`no token provided for credential "${name}"`, ExitCode.Usage, [
-        'Pass --token, pipe the token on stdin, or run in a terminal to be prompted.',
-      ])
+      throw new CliError(`no ${kind} provided for credential "${name}"`, ExitCode.Usage, [source.missing])
     }
     return piped
   }
   if (interactive()) {
     const { promptText } = await import('../ui/PromptInput.js')
-    const entered = await promptText({ label: `Token for "${name}"`, hint: '(hidden)', mask: true })
-    if (entered === '') throw new CliError('token must not be empty', ExitCode.Usage)
+    const entered = await promptText({ label: `${source.label} for "${name}"`, hint: '(hidden)', mask: true })
+    if (entered === '') throw new CliError(`${kind} must not be empty`, ExitCode.Usage)
     return entered
   }
-  throw new CliError(`cannot read a token for credential "${name}"`, ExitCode.Usage, [
-    'Pass --token or pipe the token on stdin.',
-  ])
+  throw new CliError(`cannot read a ${kind} for credential "${name}"`, ExitCode.Usage, [source.unreadable])
+}
+
+// resolveToken is the bearer token: --token, else stdin or the prompt.
+async function resolveToken(name: string, flag?: string): Promise<string> {
+  if (flag !== undefined) {
+    if (flag === '') throw new CliError('--token must not be empty', ExitCode.Usage)
+    return flag
+  }
+  return readSecret('token', name)
+}
+
+type AddOpts = { name: string; server: string; token?: string; basic?: boolean; login?: string; password?: string }
+
+// checkAddFlags refuses a mix of the two kinds before any secret is read. A
+// refusal never repeats a flag's value.
+function checkAddFlags(opts: AddOpts): void {
+  if (opts.password !== undefined) {
+    throw new CliError('a password is never a flag: it would stay in your shell history', ExitCode.Usage, [
+      'Use --basic --login <login>, then pipe the password on stdin or type it at the hidden prompt.',
+    ])
+  }
+  if (opts.basic) {
+    if (opts.token !== undefined) {
+      throw new CliError('--token is for a bearer token; with --basic the password comes from stdin or a hidden prompt', ExitCode.Usage)
+    }
+    if (!opts.login) throw new CliError('--basic needs --login <login>', ExitCode.Usage)
+  } else if (opts.login !== undefined) {
+    throw new CliError('--login needs --basic', ExitCode.Usage)
+  }
 }
 
 function serverCell(c: Credential): string {
@@ -193,22 +231,41 @@ export function registerVaults(program: Command): void {
 
   credentials
     .command('add <vault>')
-    .description('add a bearer token for an MCP server (admin; the token from --token, stdin, or a hidden prompt)')
+    .description(
+      'add a credential for an MCP server (admin): a bearer token from --token, stdin, or a hidden prompt; or with --basic, a login and a password from stdin or a hidden prompt, sent as HTTP Basic',
+    )
     .requiredOption('--name <name>', 'credential name')
-    .requiredOption('--server <url>', 'the MCP server URL the token is for (https)')
-    .option('--token <token>', 'the token (omit to read from stdin or a hidden prompt)')
-    .action(async (vault: string, opts: { name: string; server: string; token?: string }, cmd: Command) => {
+    .requiredOption('--server <url>', 'the MCP server URL the credential is for (https)')
+    .option('--token <token>', 'the bearer token (omit to read from stdin or a hidden prompt)')
+    .option('--basic', 'a login and password instead of a token, sent as HTTP Basic (the password from stdin or a hidden prompt)')
+    .option('--login <login>', 'the login, with --basic')
+    // Declared only to refuse it without echoing the value.
+    .addOption(new Option('--password <password>').hideHelp())
+    .action(async (vault: string, opts: AddOpts, cmd: Command) => {
       const flags = globalFlags(cmd)
+      checkAddFlags(opts)
       const api = await apiContext(cmd)
-      const token = await resolveToken(opts.name, opts.token)
-      const credential = await withApi(api, async (c) =>
-        (await c.v1()).beta.agents.vaults.credentials.create(vault, {
-          name: opts.name,
-          auth: { type: 'static_bearer', mcp_server_url: opts.server, token },
-        }),
-      )
+      const vaultId = await withApi(api, async (c) => (await findVault(await c.v1(), vault)).id)
+      let credential: Credential
+      if (opts.basic) {
+        // A login and password go through Orca's own route; /v1 lists them.
+        const password = await readSecret('password', opts.name)
+        const login = opts.login as string
+        credential = await withApi(api, (c) =>
+          c.createBasicCredential(vaultId, { name: opts.name, server: opts.server, login, password }),
+        )
+      } else {
+        const token = await resolveToken(opts.name, opts.token)
+        credential = await withApi(api, async (c) =>
+          (await c.v1()).beta.agents.vaults.credentials.create(vaultId, {
+            name: opts.name,
+            auth: { type: 'static_bearer', mcp_server_url: opts.server, token },
+          }),
+        )
+      }
+      const where = vaultId === vault ? vault : `"${vault}" (${vaultId})`
       if (outputMode(flags) === 'json') printJson(credential)
-      else console.log(`${accentVerb('Added')} credential "${opts.name}" (${credential.id}) to vault ${vault}.`)
+      else console.log(`${accentVerb('Added')} credential "${opts.name}" (${credential.id}) to vault ${where}.`)
     })
 
   credentials

@@ -179,7 +179,7 @@ orca auth status
 orca auth logout [--revoke] [--yes]
 orca context list|use [name]|show
 
-orca chat [agent] [prompt...] [--session id] [--sandbox] [--template id] [--vault id]... [--file path[:dest]]...
+orca chat [agent] [prompt...] [--session id] [--sandbox] [--template t] [--vault v]... [--file path[:dest]]...
 
 orca agents list
 orca agents get [agent]
@@ -191,7 +191,7 @@ orca models [--payer orca|<provider>]   # every model you can use, grouped by wh
 
 orca sessions list [--agent agent]
 orca sessions get <id>
-orca sessions create --agent <agent> [--sandbox] [--template id] [--vault id]... [--file path[:dest]]...
+orca sessions create --agent <agent> [--sandbox] [--template t] [--vault v]... [--file path[:dest]]...
 orca sessions items <id> [--limit n]
 orca sessions artifacts <session>       # files its turns saved under /workspace/outputs
 orca sessions artifacts download <session> [artifact] [-o path|-] [--all]
@@ -206,6 +206,7 @@ orca skills create <folder>                # an Agent Skills folder with SKILL.m
 orca vaults list|create <name>|delete <id> [--yes]
 orca vaults credentials list <vault>
 orca vaults credentials add <vault> --name n --server https://... [--token t]
+orca vaults credentials add <vault> --name n --server https://... --basic --login l   # password from stdin or a hidden prompt
 orca vaults credentials delete <vault> <id> [--yes]
 
 orca files list
@@ -277,8 +278,16 @@ for the server's list).
 
 `orca chat <agent> [prompt]` runs a turn on a `/v1` session with your API key.
 Without `--session` it creates a session of the agent first (no environment by
-default; `--sandbox` for a hosted sandbox, `--template id` to build it from an
-environment template, `--vault id` to let it use a vault's credentials).
+default; `--sandbox` for a hosted sandbox, `--template` to build it from an
+environment template, `--vault` to let it use a vault's credentials). A template
+or vault is an id or the name of exactly one; a name two of them share is
+refused with their ids.
+
+`orca vaults credentials add` stores a bearer token for an MCP server, from
+`--token`, stdin or a hidden prompt. With `--basic --login <login>` it stores a
+login and password instead, which Orca sends to that server as HTTP Basic (such
+as DataForSEO's API login): the password comes from stdin or a hidden prompt,
+never a flag, and is never printed. `<vault>` is an id or a name.
 
 `--file <path>[:<dest>]` (repeatable, on `chat` and `sessions create`) stages a
 file on this machine into the session's sandbox, at `/workspace/<its name>`

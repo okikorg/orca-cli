@@ -6,10 +6,10 @@ import { readFile } from 'node:fs/promises'
 import { load as parseYaml, YAMLException } from 'js-yaml'
 import type OpenAI from 'openai'
 import type { Agent } from 'openai/resources/beta/agents/agents'
-import { NotFoundError } from 'openai/error'
 
-import { FETCH_ALL_MAX_ROWS, FETCH_ALL_PAGE_SIZE } from './api.js'
+import { FETCH_ALL_PAGE_SIZE } from './api.js'
 import { CliError, ExitCode } from './errors.js'
+import { findByIdOrName } from './names.js'
 import { readStdin } from './stdin.js'
 
 async function readSource(file: string): Promise<string> {
@@ -68,31 +68,13 @@ export function missingModel(label: string): CliError {
 }
 
 // findAgent turns what the user typed into an agent: the agent with that id,
-// else the one agent with that name. The server says which, never the
-// text's shape. A name two agents share is ambiguous, so the error lists
-// their ids; the name scan stops at the same cap as every --all list.
-export async function findAgent(client: OpenAI, ref: string): Promise<Agent> {
-  try {
-    return await client.beta.agents.retrieve(ref)
-  } catch (err) {
-    if (!(err instanceof NotFoundError)) throw err
-  }
-  const matches: Agent[] = []
-  let seen = 0
-  for await (const agent of client.beta.agents.list({ limit: FETCH_ALL_PAGE_SIZE })) {
-    if (++seen > FETCH_ALL_MAX_ROWS) {
-      throw new CliError(`too many agents to find "${ref}" by name`, ExitCode.Usage, ['Pass its id instead.'])
-    }
-    if (agent.name === ref) matches.push(agent)
-  }
-  if (matches.length === 1) return matches[0]
-  if (matches.length === 0) {
-    throw new CliError(`no agent named "${ref}"`, ExitCode.NotFound, ['List agents with: orca agents list'])
-  }
-  throw new CliError(`${matches.length} agents are named "${ref}"`, ExitCode.Usage, [
-    `Pass an id instead: ${matches.map((agent) => agent.id).join(', ')}`,
-  ])
+// else the one agent with that name (see names.ts).
+export function findAgent(client: OpenAI, ref: string): Promise<Agent> {
+  const agents = client.beta.agents
+  return findByIdOrName(ref, AGENT, (id) => agents.retrieve(id), () => agents.list({ limit: FETCH_ALL_PAGE_SIZE }))
 }
+
+const AGENT = { one: 'agent', many: 'agents', listHint: 'List agents with: orca agents list' }
 
 // resolveAgentId is findAgent's id.
 export async function resolveAgentId(client: OpenAI, ref: string): Promise<string> {
