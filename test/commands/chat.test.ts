@@ -13,11 +13,19 @@ import {
   AGENT_ID,
   SESSION_ID,
   agentRoute,
+  TEMPLATE_ID,
+  VAULT_ID,
   hostedSession,
   session,
+  template,
+  templateByName,
+  templateRoute,
   turnEvents,
   turnRoutes,
   uploadedFile,
+  vault,
+  vaultByName,
+  vaultRoute,
 } from '../helpers/session-events.js'
 
 const { run, stdout, stderr } = commandHarness(registerChat)
@@ -53,6 +61,8 @@ describe('orca chat (single shot)', () => {
   it('asks for a hosted sandbox from a template and attaches vaults', async () => {
     const calls = stubFetch({
       ...agentRoute(),
+      ...templateRoute('tmpl_1'),
+      ...vaultRoute('vault_1'),
       'POST /v1/agents/sessions': jsonResponse(session()),
       ...turnRoutes(turnEvents()),
     })
@@ -61,6 +71,22 @@ describe('orca chat (single shot)', () => {
       agent_id: AGENT_ID,
       environment: { type: 'openai_hosted', environment_template_id: 'tmpl_1' },
       vault_ids: ['vault_1'],
+    })
+  })
+
+  it('takes a template and a vault by name', async () => {
+    const calls = stubFetch({
+      ...agentRoute(),
+      ...templateByName('seo-helper', [template('envtmpl_other', 'other'), template()]),
+      ...vaultByName('dataforseo', [vault()]),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
+    })
+    await run(['chat', AGENT_ID, '--template', 'seo-helper', '--vault', 'dataforseo', 'go'])
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}')).toEqual({
+      agent_id: AGENT_ID,
+      environment: { type: 'openai_hosted', environment_template_id: TEMPLATE_ID },
+      vault_ids: [VAULT_ID],
     })
   })
 

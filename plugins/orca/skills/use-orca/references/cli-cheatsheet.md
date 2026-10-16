@@ -8,7 +8,7 @@ Global contract, gh-style:
 - Config: contexts in `~/.config/orca/config.json` (kubectl-style, local only). Precedence: flag > env > config file > baked-in production default.
 - Env: `ORCA_API_KEY`, `ORCA_API_URL`, `ORCA_CONTEXT`, `ORCA_DASHBOARD_URL`, `ORCA_CONFIG_DIR`.
 - CI needs no config file: `ORCA_API_KEY=... orca agents list --json`.
-- `<agent>` is an agent id or the name of exactly one agent: the CLI asks the server for the id first, then matches names (a shared name exits 2 with the ids).
+- `<agent>` is an agent id or the name of exactly one agent: the CLI asks the server for the id first, then matches names (a shared name exits 2 with the ids). `--template`, `--vault` and `credentials add <vault>` take an id or a name the same way.
 - Lists: `--limit n` (1 to 100), `--after <id>` (the cursor the previous page printed), `--all`.
 
 ## Setup
@@ -39,11 +39,11 @@ orca models [--payer orca|<provider>] --json    # every model name you can use, 
 
 orca chat <agent> "prompt"                      # new session, one turn; <agent> may be a name, no lookup first
 orca chat <agent> --session <id> "prompt"       # continue a session
-orca chat <agent> --sandbox | --template <id> | --vault <id> "prompt"
+orca chat <agent> --sandbox | --template <template> | --vault <vault> "prompt"   # template and vault: id or name
 orca chat <agent> --file data.csv[:/workspace/in/data.csv] "prompt"   # stage a local file (repeatable; implies --sandbox; 16 MiB each)
 orca sessions list [--agent <agent>] --json
 orca sessions get <id> --json
-orca sessions create --agent <agent> [--sandbox] [--template id] [--vault id] [--file path[:dest]] --json
+orca sessions create --agent <agent> [--sandbox] [--template t] [--vault v] [--file path[:dest]] --json
 orca sessions items <id> [--limit n] --json
 orca sessions artifacts <id> --json             # files the turns saved under /workspace/outputs: id, path, size_bytes, turn_id
 orca sessions artifacts download <id> <artifact-id|path> [-o path|-]   # one, under its own file name by default
@@ -64,6 +64,7 @@ orca vaults create <name>                       # admin
 orca vaults delete <id> --yes                   # admin
 orca vaults credentials list <vault> --json
 printf %s "$TOKEN" | orca vaults credentials add <vault> --name n --server https://mcp.example.com   # or --token t
+orca vaults credentials add <vault> --name n --server https://mcp.example.com --basic --login <login>   # login and password, sent as HTTP Basic; the password from a hidden prompt or stdin, never a flag
 orca vaults credentials delete <vault> <id> --yes
 
 orca files list --json

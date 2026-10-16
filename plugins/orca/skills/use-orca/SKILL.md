@@ -58,7 +58,7 @@ orca agents create -f agent.yaml --json      # the POST /v1/agents body: model (
 orca agents list --json                      # only when the user does not know the agent's name
 ```
 
-`<agent>` is an agent id or the name of exactly one agent (the server says which; a shared name is refused with the ids). Add `--sandbox` (or `--template <id>`) to `chat` for a hosted sandbox, and `--vault <id>` to let the session use a vault's MCP credentials (`orca vaults credentials add`).
+`<agent>` is an agent id or the name of exactly one agent (the server says which; a shared name is refused with the ids). Add `--sandbox` (or `--template <template>`) to `chat` for a hosted sandbox, and `--vault <vault>` to let the session use a vault's MCP credentials (`orca vaults credentials add`); a template or vault is an id or a name, like an agent.
 
 Pick a model name for `agents create` from `orca models --json` (`--payer orca` for Orca credit, `--payer anthropic` for one provider's key).
 
@@ -103,7 +103,19 @@ claude mcp add orca -- orca mcp serve
 
 It exposes one tool per CLI action: whoami and keys, agents and `list_models`, sessions, `chat` (sends a message and waits for the reply, returning the session id; it and `create_session` take `files` to stage into the sandbox), `list_artifacts` and `download_artifact`, skills, vaults, files, usage and billing, and kits.
 
-To ask a named agent something, call `chat` with `agent` set to that name and nothing before it: no `list_agents`, no `get_agent`. List tools return summaries (an agent's id, name, model and tool types, never its instructions); `get_agent`, `get_session` and `get_kit` return one item in full. Every result is valid JSON: a page too large for one result comes back shorter with `hasMore: true` and `lastId` to pass as `after`, and a long string cut to fit ends in `[shortened from N characters]`.
+To ask a named agent something, call `chat` with `agent` set to that name and nothing before it: no `list_agents`, no `get_agent`. A new session's `sandbox`, `template` and `vaults` go on that same first `chat` (or on `create_session`). List tools return summaries (an agent's id, name, model and tool types, never its instructions); `get_agent`, `get_session` and `get_kit` return one item in full. Every result is valid JSON: a page too large for one result comes back shorter with `hasMore: true` and `lastId` to pass as `after`, and a long string cut to fit ends in `[shortened from N characters]`.
+
+### Kits that need a template and a vault
+
+Some kits only work with an environment template (it carries their skill) and a vault (it holds a credential for their MCP server). The kit's README and docs page name both, for example seo-helper: `template: "seo-helper"`, `vaults: ["dataforseo"]`.
+
+- Pass them on the first `chat`, with the agent, by name: `chat({agent: "seo-helper", template: "seo-helper", vaults: ["dataforseo"], files: [...], message: "..."})`. Later turns pass only `session` and `message`; a session keeps its template and vaults.
+- The credential is the user's step. Never ask the user for a password or token in the chat, and never pass one to `add_credential` yourself: anything in a tool call sits in your context. Give them the command to run in their own terminal, which reads the secret from a hidden prompt: `orca vaults create dataforseo`, then `orca vaults credentials add dataforseo --name dataforseo --server https://mcp.dataforseo.com/mcp --basic --login <their login>`.
+- A session create that fails with "No credential in the attached vaults for <url>" means that step is not done yet: relay the message and the command.
+
+### When `chat` returns `done: false`
+
+The turn outlasted `timeoutSeconds` (at most 600) and is still running in Orca; nothing is lost. Tell the user it is still working, then call `get_session({id})` about every 30 seconds until its `status` is `idle`, and read the reply with `list_session_items({id, limit: 5})` (messages keep their whole text). Never send the message again: that starts a second turn.
 
 ## References
 

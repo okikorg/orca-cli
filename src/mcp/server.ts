@@ -161,6 +161,20 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     .optional()
     .describe('files on this machine to stage into the sandbox (implies sandbox; up to 16 MiB each, 64 MiB together)')
   const stagedFiles = (args: Record<string, unknown>) => prepareFiles((args.files as FileSpec[] | undefined) ?? [])
+  // Where a new session runs and which credentials it may use, as
+  // create_session and a new chat take them. A template or vault is an id or
+  // the name of exactly one.
+  const sessionFields = {
+    sandbox: z.boolean().optional().describe('run in a hosted sandbox (default: no environment)'),
+    template: z.string().optional().describe('environment template id or name, for a hosted sandbox built from it'),
+    vaults: z.array(z.string()).optional().describe('vault ids or names whose credentials the session may use'),
+  }
+  const sessionFlags = (args: Record<string, unknown>, staged: readonly { local: string }[]) => ({
+    sandbox: args.sandbox as boolean | undefined,
+    template: args.template as string | undefined,
+    vault: (args.vaults as string[] | undefined) ?? [],
+    file: staged.map((f) => f.local),
+  })
 
   // -- Identity and keys ------------------------------------------------------
 
@@ -280,23 +294,15 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'create_session',
-    'Create a session of an agent without sending anything. Use chat to talk to it. files stages files on this machine into its sandbox.',
+    'Create a session of an agent without sending anything. Use chat to talk to it, or pass the same fields to chat to create and send in one call. template and vaults take ids or names. files stages files on this machine into its sandbox.',
     {
       agent: z.string().describe('agent id or name'),
-      sandbox: z.boolean().optional().describe('run in a hosted sandbox (default: no environment)'),
-      template: z.string().optional().describe('environment template id for a hosted sandbox'),
-      vaults: z.array(z.string()).optional().describe('vault ids the session may use'),
+      ...sessionFields,
       files,
     },
     async (client, args) => {
       const staged = await stagedFiles(args)
-      const flags = {
-        sandbox: args.sandbox as boolean | undefined,
-        template: args.template as string | undefined,
-        vault: (args.vaults as string[] | undefined) ?? [],
-        file: staged.map((f) => f.local),
-      }
-      return createSession(await client.v1(), await agentId(client, args.agent), flags, staged)
+      return createSession(await client.v1(), await agentId(client, args.agent), sessionFlags(args, staged), staged)
     },
   )
 
@@ -348,11 +354,12 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'chat',
-    'Send a message to an agent and wait for its reply. agent is an id or a name: pass the name the user gave as it is, with no list_agents or get_agent call first. Pass session to continue a conversation, otherwise agent starts a new session. files stages files on this machine into the sandbox first (a new session gets one; a session continued must have one). Returns the reply and the session id; if the turn outlasts timeoutSeconds, done is false and the reply is read later with list_session_items. Files the agent saves under /workspace/outputs come back with list_artifacts and download_artifact.',
+    'Send a message to an agent and wait for its reply. agent is an id or a name: pass the name the user gave as it is, with no list_agents or get_agent call first. Pass session to continue a conversation, otherwise agent starts a new session. For a new session, sandbox, template and vaults say where it runs and which credentials it may use, as in create_session: template and vaults take ids or names, so a kit that needs them (its README names them, such as template: "seo-helper", vaults: ["dataforseo"]) starts with this one call. files stages files on this machine into the sandbox first (a new session gets one; a session continued must have one). Returns the reply and the session id; if the turn outlasts timeoutSeconds, done is false: the turn is still running, so never send the message again; poll get_session until its status is idle, then read the reply with list_session_items. Files the agent saves under /workspace/outputs come back with list_artifacts and download_artifact.',
     {
       message: z.string().describe('the message for the agent'),
       agent: z.string().optional().describe('agent id or name (a name needs no lookup first), for a new session'),
       session: z.string().optional().describe('existing session to continue'),
+      ...sessionFields,
       timeoutSeconds: z.number().int().min(1).max(600).optional().describe('max wait (default 120)'),
       files,
     },
@@ -363,12 +370,19 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
       const staged = await stagedFiles(args)
       let sessionId = args.session as string | undefined
       let previous: string | null = null
-      if (!sessionId && staged.length) {
-        // A new session with files: created first, so the message goes to a
-        // sandbox that has them.
+      const environment =
+        Boolean(args.sandbox) || args.template !== undefined || ((args.vaults as string[] | undefined) ?? []).length > 0
+      if (sessionId && environment) {
+        throw new CliError('sandbox, template and vaults are for a new session; a session continued keeps its own', ExitCode.Usage, [
+          'Drop them to continue this session, or drop session to start a new one.',
+        ])
+      }
+      if (!sessionId && (staged.length || environment)) {
+        // A new session with files, a sandbox, a template or vaults: created
+        // first, as create_session does, so the message goes to a session
+        // that has them (a template's files are staged after the create).
         if (!args.agent) throw new CliError('pass agent for a new session, or session to continue one', ExitCode.Usage)
-        const flags = { vault: [], file: staged.map((f) => f.local) }
-        sessionId = (await createSession(v1, await agentId(client, args.agent), flags, staged)).id
+        sessionId = (await createSession(v1, await agentId(client, args.agent), sessionFlags(args, staged), staged)).id
       } else if (sessionId) {
         await stageIntoSession(v1, sessionId, staged)
       }
@@ -392,7 +406,11 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
       }
       const turn = await waitForTurn(v1, sessionId, previous, deadline)
       if (!turn) {
-        return { sessionId, done: false, next: 'the turn is still running; read it later with list_session_items (newest first)' }
+        return {
+          sessionId,
+          done: false,
+          next: 'the turn is still running; never send the message again. Poll get_session about every 30 s until its status is idle, then read the reply with list_session_items (newest first)',
+        }
       }
       return {
         sessionId,
@@ -459,18 +477,34 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'add_credential',
-    'Add a bearer token for an MCP server to a vault (admin). The token is sealed and never returned.',
+    'Add a credential for an MCP server to a vault (admin): type static_bearer (the default) sends token as a bearer token; static_basic sends login and password as HTTP Basic (such as DataForSEO\'s API login). It is sealed and never returned. Prefer the terminal: a secret passed here sits in your context. Ask the user to run orca vaults credentials add <vault> --name <name> --server <url> (with --basic --login <login> for a login and password) themselves, which reads the secret from a hidden prompt, and never ask them to paste a password into the chat.',
     {
-      vault: z.string(),
+      vault: z.string().describe('vault id'),
       name: z.string(),
       server: z.string().describe('the MCP server URL (https)'),
-      token: z.string(),
+      type: z.enum(['static_bearer', 'static_basic']).optional().describe('static_bearer (default): token; static_basic: login and password'),
+      token: z.string().optional().describe('the bearer token, for static_bearer'),
+      login: z.string().optional().describe('the login, for static_basic'),
+      password: z.string().optional().describe('the password, for static_basic'),
     },
-    async (client, args) =>
-      (await client.v1()).beta.agents.vaults.credentials.create(args.vault as string, {
-        name: args.name as string,
-        auth: { type: 'static_bearer', mcp_server_url: args.server as string, token: args.token as string },
-      }),
+    async (client, args) => {
+      const vault = args.vault as string
+      const name = args.name as string
+      const server = args.server as string
+      if (args.type === 'static_basic') {
+        if (args.token !== undefined) throw new CliError('token is for static_bearer; static_basic takes login and password', ExitCode.Usage)
+        if (!args.login || !args.password) throw new CliError('static_basic needs login and password', ExitCode.Usage)
+        return client.createBasicCredential(vault, { name, server, login: args.login as string, password: args.password as string })
+      }
+      if (args.login !== undefined || args.password !== undefined) {
+        throw new CliError('login and password are for type static_basic', ExitCode.Usage)
+      }
+      if (!args.token) throw new CliError('static_bearer needs token', ExitCode.Usage)
+      return (await client.v1()).beta.agents.vaults.credentials.create(vault, {
+        name,
+        auth: { type: 'static_bearer', mcp_server_url: server, token: args.token as string },
+      })
+    },
   )
 
   tool('delete_credential', 'Delete a credential (admin).', { vault: z.string(), id: z.string() }, async (client, args) =>

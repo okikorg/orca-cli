@@ -22,6 +22,7 @@ import { CliError, ExitCode } from './errors.js'
 import { formatCount } from './format.js'
 import { stripControlSequences } from './markdown.js'
 import { usdMicro } from './money.js'
+import { findTemplate, findVault } from './names.js'
 import {
   deleteUploads,
   environmentFiles,
@@ -316,8 +317,13 @@ const repeat = (value: string, previous: string[]) => [...previous, value]
 export function addSessionCreateOptions(cmd: Command): Command {
   return cmd
     .option('--sandbox', 'run in a hosted sandbox (default: no environment)')
-    .option('--template <id>', 'run in a hosted sandbox built from this environment template')
-    .option('--vault <id>', 'make a vault\'s credentials available to the session (repeatable)', repeat, [] as string[])
+    .option('--template <template>', 'run in a hosted sandbox built from this environment template (id or name)')
+    .option(
+      '--vault <vault>',
+      'make a vault\'s credentials available to the session (id or name; repeatable)',
+      repeat,
+      [] as string[],
+    )
     .option(
       '--file <path[:dest]>',
       'stage a file on this machine into the sandbox, at /workspace/<name> unless dest says (repeatable; implies --sandbox)',
@@ -332,7 +338,7 @@ export function addSessionCreateOptions(cmd: Command): Command {
 // session gets them after it exists (see createSession).
 export function sessionEnvironment(flags: SessionCreateFlags, files: readonly StagedUpload[] = []): EnvironmentParam {
   if (flags.template !== undefined) {
-    if (!flags.template.trim()) throw new CliError('--template needs an id', ExitCode.Usage)
+    if (!flags.template.trim()) throw new CliError('--template needs an id or a name', ExitCode.Usage)
     return { type: 'openai_hosted', environment_template_id: flags.template }
   }
   if (files.length) return { type: 'openai_hosted', files: environmentFiles(files) }
@@ -354,17 +360,28 @@ export async function filesFromFlags(flags: SessionCreateFlags): Promise<StagedF
   return prepareFiles(await Promise.all((flags.file ?? []).map(parseFileFlag)))
 }
 
+// resolveSessionRefs turns the template and vaults the flags name, each an
+// id or the name of exactly one (names.ts), into ids.
+export async function resolveSessionRefs(client: OpenAI, flags: SessionCreateFlags): Promise<SessionCreateFlags> {
+  const template = flags.template?.trim() ? (await findTemplate(client, flags.template)).id : flags.template
+  const vault: string[] = []
+  for (const ref of flags.vault) vault.push((await findVault(client, ref)).id)
+  return { ...flags, template, vault }
+}
+
 // createSession creates a session with the flags' environment and vaults,
 // staging `files` into its sandbox: in the create body for a new sandbox,
 // or after the create for a template's, since a create-time list would
-// replace the template's own files. Files uploaded for a create that fails
-// are deleted.
+// replace the template's own files. A template or vault named by its name
+// is looked up first, so a wrong name uploads nothing. Files uploaded for a
+// create that fails are deleted.
 export async function createSession(
   client: OpenAI,
   agentId: string,
-  flags: SessionCreateFlags,
+  named: SessionCreateFlags,
   files: readonly StagedFile[] = [],
 ): Promise<AgentSession> {
+  const flags = await resolveSessionRefs(client, named)
   const uploads = await uploadStaged(client, files)
   const atCreate = flags.template === undefined
   let session: AgentSession

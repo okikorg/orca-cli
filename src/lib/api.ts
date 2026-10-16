@@ -1,7 +1,8 @@
 // Clients for the Orca server. Two surfaces, one bearer key:
 //
 // - /api: the server's own routes (whoami, keys, usage, billing, models,
-//   kits), through the thin fetch helper below.
+//   kits, login and password credentials), through the thin fetch helper
+//   below.
 // - /v1: the OpenAI-compatible Agents API (agents, sessions, skills, vaults,
 //   files), through the official `openai` package, exactly as any OpenAI
 //   client calls it. v1() builds that client lazily so commands that never
@@ -10,6 +11,7 @@
 // The server derives the tenant from the key, so no tenant header is sent.
 
 import type OpenAI from 'openai'
+import type { Credential } from 'openai/resources/beta/agents/vaults/credentials'
 import { APIConnectionTimeoutError, APIError as OpenAIAPIError, APIConnectionError } from 'openai/error'
 
 import { CliError, ExitCode } from './errors.js'
@@ -196,6 +198,8 @@ export const FETCH_ALL_MAX_ROWS = 10_000
 
 const enc = encodeURIComponent
 
+export type BasicCredentialInput = { name: string; server: string; login: string; password: string }
+
 export class ApiClient {
   readonly apiUrl: string
   readonly contextName: string
@@ -338,6 +342,19 @@ export class ApiClient {
   // setSessionModel switches who pays for one session, from its next turn.
   setSessionModel(sessionId: string, model: string): Promise<SessionModel> {
     return this.post<SessionModel>(`/api/sessions/${enc(sessionId)}/model`, { model })
+  }
+
+  // -- Credentials --------------------------------------------------------------
+
+  // createBasicCredential stores a login and password for an MCP server that
+  // takes HTTP Basic (decision 0031). /v1 lists, retrieves and deletes it,
+  // but only this route creates one; the answer is the credential as /v1
+  // shows it, which never holds the login or the password.
+  createBasicCredential(vaultId: string, input: BasicCredentialInput): Promise<Credential> {
+    return this.post<Credential>(`/api/vaults/${enc(vaultId)}/credentials`, {
+      name: input.name,
+      auth: { type: 'static_basic', mcp_server_url: input.server, login: input.login, password: input.password },
+    })
   }
 
   // -- Kits ---------------------------------------------------------------------

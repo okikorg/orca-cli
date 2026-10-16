@@ -17,6 +17,7 @@ import {
   hostedSession,
   session,
   sessionModelRoute,
+  templateRoute,
   uploadedFile,
 } from '../helpers/session-events.js'
 
@@ -323,6 +324,7 @@ describe('sessions create --file', () => {
     const data = await local()
     const calls = stubFetch({
       ...agentRoute(),
+      ...templateRoute('tmpl_1'),
       'POST /v1/files': jsonResponse(uploadedFile('file_1', 'data.csv')),
       'POST /v1/agents/sessions': jsonResponse(hostedSession()),
       'POST /v1/agents/environments/env_1/files': jsonResponse({
@@ -337,7 +339,7 @@ describe('sessions create --file', () => {
       agent_id: AGENT_ID,
       environment: { type: 'openai_hosted', environment_template_id: 'tmpl_1' },
     })
-    expect(JSON.parse(calls.find((c) => c.path.startsWith('/v1/agents/environments'))?.body ?? '{}')).toEqual({
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/environments/env_1/files')?.body ?? '{}')).toEqual({
       type: 'file_id',
       file_id: 'file_1',
       path: '/workspace/data.csv',
