@@ -10,6 +10,8 @@
 //   an in-band MCP error result (isError: true) whose text contains the fix,
 //   because agents act on error text. The process never mounts Ink.
 // - context economy: compact JSON, capped byte sizes, described truncation.
+//   Lists return summaries (a get tool has the whole item), and a result
+//   over the cap is still valid JSON: see results.ts.
 //   MCP tools are request/response, so `chat` waits for the turn up to a
 //   timeout and says how to pick it up when it runs longer.
 // - auth is the CLI's own: flag > ORCA_API_KEY > ~/.config/orca contexts,
@@ -36,24 +38,17 @@ import { prepareFiles, stageIntoSession, type FileSpec } from '../lib/staging.js
 import { uploadFile } from '../lib/transfer.js'
 import type { KitInput } from '../lib/types.js'
 import { VERSION } from '../version.js'
-
-// Result payloads are capped so one tool call cannot flood an agent's
-// context window. Truncation is always announced in the payload.
-const MAX_RESULT_BYTES = 50_000
+import { agentSummary, fitResult, itemSummary, kitSummary, mapPage, sessionSummary } from './results.js'
 
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>
   isError?: boolean
 }
 
-function jsonResult(value: unknown): ToolResult {
-  let text = JSON.stringify(value, null, 1)
-  if (text.length > MAX_RESULT_BYTES) {
-    text =
-      text.slice(0, MAX_RESULT_BYTES) +
-      `\n... [truncated at ${MAX_RESULT_BYTES} bytes; narrow the request (limit, after) for the rest]`
-  }
-  return { content: [{ type: 'text', text }] }
+// jsonResult is the value as JSON within MAX_RESULT_BYTES, always valid;
+// full says how to get a whole item when strings had to be shortened.
+function jsonResult(value: unknown, full?: string): ToolResult {
+  return { content: [{ type: 'text', text: fitResult(value, full) }] }
 }
 
 function errorResult(message: string, detail?: string[]): ToolResult {
@@ -133,17 +128,17 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     description: string,
     inputSchema: z.ZodRawShape,
     handler: (client: ApiClient, args: Record<string, unknown>) => Promise<unknown>,
-    opts: { anonymous?: boolean } = {},
+    opts: { anonymous?: boolean; full?: string } = {},
   ): void => {
     server.registerTool(name, { description, inputSchema }, async (args: Record<string, unknown>) => {
       let client: ApiClient
       try {
-        client = await getClient(opts)
+        client = await getClient({ anonymous: opts.anonymous })
       } catch (err) {
         return err instanceof CliError ? errorResult(err.message, err.detail) : errorResult(String(err))
       }
       try {
-        return jsonResult(await handler(client, args ?? {}))
+        return jsonResult(await handler(client, args ?? {}), opts.full)
       } catch (err) {
         const mapped = mapApiError(err, client)
         return errorResult(mapped.message, mapped.detail)
@@ -199,8 +194,12 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   // -- Agents -------------------------------------------------------------------
 
-  tool('list_agents', 'List the agents in this Orca organization, newest first.', { limit, after }, async (client, args) =>
-    toPage(await (await client.v1()).beta.agents.list(page(args))),
+  tool(
+    'list_agents',
+    'List the agents in this Orca organization, newest first, as summaries: id, name, model, tool types and created_at, no instructions. get_agent returns one agent in full. To talk to an agent, pass its name to chat; no list is needed first.',
+    { limit, after },
+    async (client, args) => mapPage(toPage(await (await client.v1()).beta.agents.list(page(args))), agentSummary),
+    { full: 'get_agent returns one agent in full' },
   )
 
   tool(
@@ -208,6 +207,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     'Fetch one agent (model, instructions, tools, everything) by id or name.',
     { agent: z.string().describe('agent id or name') },
     async (client, args) => (await client.v1()).beta.agents.retrieve(await agentId(client, args.agent)),
+    { full: 'the CLI prints the whole agent: orca agents get <agent> --json' },
   )
 
   tool(
@@ -262,12 +262,13 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'list_sessions',
-    'List sessions (conversations), newest first, optionally of one agent.',
+    'List sessions (conversations), newest first, optionally of one agent, as summaries: id, status, agent (id, name, model), environment type, created_at, last_active_at and any error. get_session returns one in full.',
     { agent: z.string().optional().describe('agent id or name'), limit, after },
     async (client, args) => {
       const filter = args.agent ? { agent_id: await agentId(client, args.agent) } : {}
-      return toPage(await (await client.v1()).beta.agents.sessions.list({ ...page(args), ...filter }))
+      return mapPage(toPage(await (await client.v1()).beta.agents.sessions.list({ ...page(args), ...filter })), sessionSummary)
     },
+    { full: 'get_session returns one session in full' },
   )
 
   tool(
@@ -301,14 +302,13 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'list_session_items',
-    'Read a session\'s latest conversation items (messages and tool calls), oldest first.',
-    { id: z.string(), limit },
+    'Read a session\'s conversation items, newest first: each message with its whole text, and each tool call with arguments and output over 2000 characters shortened. Page to older items with after.',
+    { id: z.string(), limit, after: z.string().optional().describe('cursor: the last id of the previous page (older items follow)') },
     async (client, args) => {
-      const items = await (await client.v1()).beta.agents.sessions.items.list(args.id as string, {
-        limit: (args.limit as number | undefined) ?? 20,
-        order: 'desc',
-      })
-      return [...items.data].reverse()
+      const list = await (await client.v1()).beta.agents.sessions.items.list(args.id as string, { ...page(args), order: 'desc' })
+      const items = list.data.map(itemSummary)
+      const lastId = [...items].reverse().find((item) => typeof item.id === 'string')?.id ?? null
+      return { items, hasMore: Boolean(list.has_more), lastId }
     },
   )
 
@@ -348,10 +348,10 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'chat',
-    'Send a message to an agent and wait for its reply. Pass session to continue a conversation, otherwise agent starts a new session. files stages files on this machine into the sandbox first (a new session gets one; a session continued must have one). Returns the reply and the session id; if the turn outlasts timeoutSeconds, done is false and the reply is read later with list_session_items. Files the agent saves under /workspace/outputs come back with list_artifacts and download_artifact.',
+    'Send a message to an agent and wait for its reply. agent is an id or a name: pass the name the user gave as it is, with no list_agents or get_agent call first. Pass session to continue a conversation, otherwise agent starts a new session. files stages files on this machine into the sandbox first (a new session gets one; a session continued must have one). Returns the reply and the session id; if the turn outlasts timeoutSeconds, done is false and the reply is read later with list_session_items. Files the agent saves under /workspace/outputs come back with list_artifacts and download_artifact.',
     {
       message: z.string().describe('the message for the agent'),
-      agent: z.string().optional().describe('agent id or name, for a new session'),
+      agent: z.string().optional().describe('agent id or name (a name needs no lookup first), for a new session'),
       session: z.string().optional().describe('existing session to continue'),
       timeoutSeconds: z.number().int().min(1).max(600).optional().describe('max wait (default 120)'),
       files,
@@ -392,7 +392,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
       }
       const turn = await waitForTurn(v1, sessionId, previous, deadline)
       if (!turn) {
-        return { sessionId, done: false, next: 'the turn is still running; read it later with list_session_items' }
+        return { sessionId, done: false, next: 'the turn is still running; read it later with list_session_items (newest first)' }
       }
       return {
         sessionId,
@@ -588,7 +588,21 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     }
   }
 
-  tool('list_kits', 'List this organization\'s kits.', {}, async (client) => client.listKits())
+  tool(
+    'list_kits',
+    'List this organization\'s kits as summaries: id, name, description, author, status, public id and share link, latest version, how many agents, skills and templates, updated_at. No readme or selection: get_kit returns one kit in full.',
+    {},
+    async (client) => (await client.listKits()).map(kitSummary),
+    { full: 'get_kit returns one kit in full' },
+  )
+
+  tool(
+    'get_kit',
+    'Fetch one of this organization\'s kits in full: readme, selection (agent, skill and template ids), status and versions.',
+    { id: z.string().describe('kit id') },
+    async (client, args) => client.getKit(args.id as string),
+    { full: 'the CLI prints the whole kit: orca kits list --json' },
+  )
 
   tool(
     'make_kit',

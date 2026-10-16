@@ -43,14 +43,19 @@ orca whoami --json
 
 ## Golden paths (always pass --json when parsing)
 
-Create an agent and talk to it:
+Talk to an agent the user names: pass the name straight to `chat`. Do not list agents first; a name needs no lookup.
 
 ```bash
-orca agents list --json
-orca agents create -f agent.yaml --json      # the POST /v1/agents body: model (who pays: orca/openrouter/<id> or <provider>/<id>), name, instructions, tools
-orca chat <agent> "summarize the open issues"     # one turn; the reply on stdout, "session <id>" on stderr
-orca chat <agent> --session <id> "and the oldest?"  # continue the same session
+orca chat margin-check "check this deal"     # one turn; the reply on stdout, "session <id>" on stderr
+orca chat margin-check --session <id> "and the freight?"  # continue the same session
 orca sessions items <id> --json              # the conversation so far
+```
+
+Create an agent:
+
+```bash
+orca agents create -f agent.yaml --json      # the POST /v1/agents body: model (who pays: orca/openrouter/<id> or <provider>/<id>), name, instructions, tools
+orca agents list --json                      # only when the user does not know the agent's name
 ```
 
 `<agent>` is an agent id or the name of exactly one agent (the server says which; a shared name is refused with the ids). Add `--sandbox` (or `--template <id>`) to `chat` for a hosted sandbox, and `--vault <id>` to let the session use a vault's MCP credentials (`orca vaults credentials add`).
@@ -97,6 +102,8 @@ claude mcp add orca -- orca mcp serve
 ```
 
 It exposes one tool per CLI action: whoami and keys, agents and `list_models`, sessions, `chat` (sends a message and waits for the reply, returning the session id; it and `create_session` take `files` to stage into the sandbox), `list_artifacts` and `download_artifact`, skills, vaults, files, usage and billing, and kits.
+
+To ask a named agent something, call `chat` with `agent` set to that name and nothing before it: no `list_agents`, no `get_agent`. List tools return summaries (an agent's id, name, model and tool types, never its instructions); `get_agent`, `get_session` and `get_kit` return one item in full. Every result is valid JSON: a page too large for one result comes back shorter with `hasMore: true` and `lastId` to pass as `after`, and a long string cut to fit ends in `[shortened from N characters]`.
 
 ## References
 

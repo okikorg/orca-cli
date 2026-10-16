@@ -37,7 +37,7 @@ orca agents update <agent> -f fields.yaml       # only the fields in the file ch
 orca agents delete <agent> --yes
 orca models [--payer orca|<provider>] --json    # every model name you can use, grouped by who pays; plain: id, payer, price
 
-orca chat <agent> "prompt"                      # new session, one turn
+orca chat <agent> "prompt"                      # new session, one turn; <agent> may be a name, no lookup first
 orca chat <agent> --session <id> "prompt"       # continue a session
 orca chat <agent> --sandbox | --template <id> | --vault <id> "prompt"
 orca chat <agent> --file data.csv[:/workspace/in/data.csv] "prompt"   # stage a local file (repeatable; implies --sandbox; 16 MiB each)

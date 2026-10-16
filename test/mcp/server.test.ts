@@ -16,6 +16,7 @@ import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
 import {
   AGENT_ID,
   SESSION_ID,
+  agent,
   agentRoute,
   artifact,
   bytesRoute,
@@ -104,6 +105,7 @@ describe('orca mcp serve', () => {
         'billing_portal',
         // kits
         'list_kits',
+        'get_kit',
         'make_kit',
         'edit_kit',
         'publish_kit',
@@ -414,5 +416,140 @@ describe('orca mcp serve: models, artifacts and staged files', () => {
     expect(payload).toMatchObject({ done: true, reply: 'Read it.' })
     const posts = calls.filter((c) => c.method === 'POST').map((c) => c.path)
     expect(posts).toEqual(['/v1/files', '/v1/agents/environments/env_1/files', `/v1/agents/sessions/${SESSION_ID}/events`])
+  })
+})
+
+describe('orca mcp serve: list summaries and capped results', () => {
+  const MAX = 50_000
+  // A realistic body: the Margin Check agent's instructions run to 9 KB.
+  const longText = (kb: number, seed: string) => `${seed}: ` + 'Check the freight line against the quote. '.repeat(Math.ceil((kb * 1024) / 43))
+  const agentNumber = (n: number) => 'agent_' + String(n).padStart(32, '0')
+
+  async function callJson(client: Awaited<ReturnType<typeof connect>>, name: string, args: Record<string, unknown>) {
+    const res = (await client.callTool({ name, arguments: args })) as ToolText
+    expect(res.isError).toBeFalsy()
+    const text = firstText(res)
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX)
+    return { text, payload: JSON.parse(text) }
+  }
+
+  it('list_agents returns summaries, no instructions, for an organization far over 50 KB', async () => {
+    const agents = Array.from({ length: 20 }, (_, i) =>
+      agent({
+        id: agentNumber(i),
+        name: `agent-${i}`,
+        instructions: longText(9, `agent ${i}`),
+        tools: [{ type: 'mcp', server_label: 'crm' }, { type: 'web_search' }, { type: 'mcp', server_label: 'mail' }],
+      }),
+    )
+    expect(JSON.stringify(agents).length).toBeGreaterThan(150_000)
+    stubFetch({ 'GET /v1/agents?limit=20': jsonResponse(list(agents)) })
+    const client = await connect()
+    const { text, payload } = await callJson(client, 'list_agents', {})
+    expect(text).not.toContain('instructions')
+    expect(text).not.toContain('Check the freight line')
+    expect(payload.items).toHaveLength(20)
+    expect(payload.items[0]).toEqual({
+      id: agentNumber(0),
+      name: 'agent-0',
+      model: 'orca/openrouter/openai/gpt-5.6-luna',
+      tools: ['mcp', 'web_search'],
+      created_at: 1_783_245_600,
+    })
+    expect(payload).toMatchObject({ hasMore: false, lastId: agentNumber(19) })
+  })
+
+  it('list_sessions and list_kits leave out the agent snapshot and the readme', async () => {
+    const snapshot = { id: AGENT_ID, name: 'margin-check', model: 'orca/openrouter/openai/gpt-5.6-luna', instructions: longText(9, 'snapshot'), tools: [] }
+    const kit = {
+      id: 'kit_1',
+      object: 'kit',
+      name: 'Margin Check',
+      description: 'Check a deal\'s margin',
+      author: 'Okik Labs',
+      readme: longText(6, 'readme'),
+      status: 'published',
+      public_id: 'kit-zK1zXb56TXYRZO94G',
+      url: 'https://app.example.test/kits/kit-zK1zXb56TXYRZO94G',
+      selection: { agents: [AGENT_ID], skills: ['skill_1', 'skill_2'], templates: [] },
+      latest_version: 2,
+      created_by: 'user_1',
+      created_at: 1,
+      updated_at: 2,
+    }
+    stubFetch({
+      'GET /v1/agents/sessions?limit=20': jsonResponse(list([session('idle', { agent: snapshot })])),
+      'GET /api/kits': jsonResponse(list([kit])),
+    })
+    const client = await connect()
+    const sessions = await callJson(client, 'list_sessions', {})
+    expect(sessions.text).not.toContain('instructions')
+    expect(sessions.payload.items[0]).toMatchObject({
+      id: SESSION_ID,
+      status: 'idle',
+      agent: { id: AGENT_ID, name: 'margin-check', model: 'orca/openrouter/openai/gpt-5.6-luna' },
+      environment: 'none',
+    })
+    const kits = await callJson(client, 'list_kits', {})
+    expect(kits.text).not.toContain('readme')
+    expect(kits.payload[0]).toMatchObject({ id: 'kit_1', name: 'Margin Check', agents: 1, skills: 2, templates: 0 })
+  })
+
+  it('a page over the cap drops items from its end and carries hasMore and the cursor', async () => {
+    const message = (i: number) => ({
+      id: `msg_${String(i).padStart(2, '0')}`,
+      type: 'message',
+      role: 'assistant',
+      turn_id: 'turn_1',
+      content: [{ type: 'output_text', text: longText(8, `reply ${i}`) }],
+    })
+    const newestFirst = Array.from({ length: 20 }, (_, i) => message(19 - i))
+    const calls = stubFetch({
+      [`GET /v1/agents/sessions/${SESSION_ID}/items?limit=20&order=desc`]: jsonResponse(list(newestFirst)),
+      [`GET /v1/agents/sessions/${SESSION_ID}/items?limit=20&after=msg_14&order=desc`]: jsonResponse(list([message(13)])),
+    })
+    const client = await connect()
+    const { payload } = await callJson(client, 'list_session_items', { id: SESSION_ID })
+    expect(payload.hasMore).toBe(true)
+    expect(payload.items.length).toBeGreaterThan(0)
+    expect(payload.items.length).toBeLessThan(20)
+    // Whole messages, newest first; the cursor is the last one kept.
+    expect(payload.items.map((i: { id: string }) => i.id)).toEqual(newestFirst.slice(0, payload.items.length).map((m) => m.id))
+    expect(payload.items[0].text).toBe(longText(8, 'reply 19').trimEnd())
+    expect(payload.lastId).toBe(payload.items.at(-1).id)
+    expect(payload.truncated).toContain(`pass after: "${payload.lastId}"`)
+    // Six 8 KB messages fit in 50 KB; the next page starts after the sixth.
+    expect(payload.lastId).toBe('msg_14')
+    const next = await callJson(client, 'list_session_items', { id: SESSION_ID, after: payload.lastId })
+    expect(next.payload.items.map((i: { id: string }) => i.id)).toEqual(['msg_13'])
+    expect(calls.at(-1)?.path).toContain('after=msg_14')
+  })
+
+  it('a value over the cap shortens its long strings, marked, and says how to get it whole', async () => {
+    const instructions = longText(80, 'margin check')
+    stubFetch({ [`GET /v1/agents/${AGENT_ID}`]: jsonResponse(agent({ instructions, metadata: { team: 'sales' } })) })
+    const client = await connect()
+    const { payload } = await callJson(client, 'get_agent', { agent: AGENT_ID })
+    expect(payload).toMatchObject({ id: AGENT_ID, name: 'support', metadata: { team: 'sales' } })
+    expect(payload.instructions.startsWith('margin check: Check the freight line')).toBe(true)
+    expect(payload.instructions).toMatch(new RegExp(`\\.\\.\\. \\[shortened from ${instructions.length} characters\\]$`))
+    expect(payload.shortened).toContain('orca agents get <agent> --json')
+  })
+
+  it('chat takes an agent by name with no list call first', async () => {
+    const turn = { id: 'turn_1', status: 'completed', error: null }
+    const calls = stubFetch({
+      'GET /v1/agents/margin-check': jsonResponse({ error: { message: 'No such agent' } }, { status: 404 }),
+      'GET /v1/agents?limit=100': jsonResponse(list([agent({ id: agentNumber(7), name: 'other' }), agent({ name: 'margin-check' })])),
+      'POST /v1/agents/sessions': jsonResponse(session('in_progress')),
+      [`GET /v1/agents/sessions/${SESSION_ID}/turns?limit=1`]: jsonResponse(list([turn])),
+      [`GET /v1/agents/sessions/${SESSION_ID}/items?limit=50&order=desc`]: jsonResponse(
+        list([{ id: 'msg_2', type: 'message', role: 'assistant', turn_id: 'turn_1', content: [{ type: 'output_text', text: 'Margin is 18%.' }] }]),
+      ),
+    })
+    const client = await connect()
+    const { payload } = await callJson(client, 'chat', { agent: 'margin-check', message: 'check the deal' })
+    expect(payload).toMatchObject({ done: true, reply: 'Margin is 18%.' })
+    expect(JSON.parse(calls.find((c) => c.path === '/v1/agents/sessions')?.body ?? '{}')).toMatchObject({ agent_id: AGENT_ID })
   })
 })
