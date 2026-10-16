@@ -1,6 +1,6 @@
 {
   "name": "@agent-orc/cli",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Orca CLI: manage agents, sessions, and kits on the Orca platform",
   "type": "module",
