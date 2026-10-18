@@ -119,11 +119,13 @@ Some kits research and hand back a brief, and you do the writing in the repo. se
 
 1. Send the repo's context in the message, after the user's words: today's date (the agent has no clock), the posts that exist and the topics picked before (title, URL, target keyword), and the essentials of the kit's site brief (seo-helper keeps it at `.orca/seo-helper/site-brief.md`). At most 8 KB; for a bigger repo, send the newest first. Never repo files, drafts or secrets.
 2. Check any JSON block the reply carries against what you sent, before the user sees it: every number against the thresholds you sent, every topic against the repo, which you can read in full. Drop what fails and say which and why ("Dropped #3: difficulty 67 is over your 35"). If the block is missing or does not parse, ask once: "Send the JSON block again, nothing else"; then show the reply and say the check could not run.
-3. Save the brief in the repo, as it came (seo-helper: `.orca/seo-helper/briefs/<slug>.md`).
-4. Write with the repo's own rules (its `CLAUDE.md` or `AGENTS.md`, its README, its existing files), never the agent's: the brief says what to cover, not how to write it.
-5. Check the result against the brief: run its "Check before commit" list on your file and fix what fails.
-6. Commit with your own git: a branch and a commit, or a pull request, with the brief beside the work. Orca never needs a GitHub token.
-7. Delete the session: `delete_session({id})`.
+3. Ask for a brief by the keyword exactly as it appears in the JSON block, never by number alone (seo-helper: `Brief: what is mcp`).
+4. Save the brief in the repo, as it came (seo-helper: `.orca/seo-helper/briefs/<slug>.md`).
+5. Measure the length yourself. The brief lists the top 3 competitor URLs and no word counts: fetch those pages and count their words before writing, and keep the post's length in that range unless the repo's rules say otherwise.
+6. Write with the repo's own rules (its `CLAUDE.md` or `AGENTS.md`, its README, its existing files), never the agent's: the brief says what to cover, not how to write it.
+7. Check the result against the brief: run its "Check before commit" list on your file and fix what fails.
+8. Commit with your own git: a branch and a commit, or a pull request, with the brief beside the work. Orca never needs a GitHub token.
+9. Delete the session: `delete_session({id})`.
 
 ### When `chat` returns `done: false`
 
