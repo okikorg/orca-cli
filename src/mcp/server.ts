@@ -36,9 +36,8 @@ import { createSession, messageText, sessionCreateParams, sessionView } from '..
 import { collectSkillFiles } from '../lib/skills.js'
 import { prepareFiles, stageIntoSession, type FileSpec } from '../lib/staging.js'
 import { uploadFile } from '../lib/transfer.js'
-import type { KitInput } from '../lib/types.js'
 import { VERSION } from '../version.js'
-import { agentSummary, fitResult, itemSummary, kitSummary, mapPage, sessionSummary } from './results.js'
+import { agentSummary, fitResult, itemSummary, mapPage, sessionSummary } from './results.js'
 
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>
@@ -60,7 +59,7 @@ function errorResult(message: string, detail?: string[]): ToolResult {
 // context switch applies to a running server. A missing key is reported
 // per-call with the exact fix, not at startup, so registering the server
 // before first login works.
-// A tool marked anonymous (a public kit page) needs only the server URL.
+// A tool marked anonymous (a kit's public review) needs only the server URL.
 export type ClientSource = (opts?: { anonymous?: boolean }) => Promise<ApiClient>
 
 export function makeClientSource(flags: GlobalFlags): ClientSource {
@@ -593,92 +592,26 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   // -- Kits -------------------------------------------------------------------------
 
-  const kitFields = {
-    name: z.string().optional(),
-    description: z.string().optional(),
-    author: z.string().optional().describe('who the kit\'s public page says it is by, up to 100 characters'),
-    readme: z.string().optional().describe('markdown'),
-    agents: z.array(z.string()).optional().describe('agent ids or names'),
-    skills: z.array(z.string()).optional().describe('skill ids'),
-    templates: z.array(z.string()).optional().describe('environment template ids'),
-  }
-  const kitInput = async (client: ApiClient, args: Record<string, unknown>): Promise<Partial<KitInput>> => {
-    const selection =
-      args.agents || args.skills || args.templates
-        ? {
-            selection: {
-              agents: await Promise.all(((args.agents as string[] | undefined) ?? []).map((a) => agentId(client, a))),
-              skills: (args.skills as string[] | undefined) ?? [],
-              templates: (args.templates as string[] | undefined) ?? [],
-            },
-          }
-        : {}
-    return {
-      ...(args.name !== undefined ? { name: args.name as string } : {}),
-      ...(args.description !== undefined ? { description: args.description as string } : {}),
-      ...(args.author !== undefined ? { author: args.author as string } : {}),
-      ...(args.readme !== undefined ? { readme: args.readme as string } : {}),
-      ...selection,
-    }
-  }
-
-  tool(
-    'list_kits',
-    'List this organization\'s kits as summaries: id, name, description, author, status, public id and share link, latest version, how many agents, skills and templates, updated_at. No readme or selection: get_kit returns one kit in full.',
-    {},
-    async (client) => (await client.listKits()).map(kitSummary),
-    { full: 'get_kit returns one kit in full' },
-  )
-
-  tool(
-    'get_kit',
-    'Fetch one of this organization\'s kits in full: readme, selection (agent, skill and template ids), status and versions.',
-    { id: z.string().describe('kit id') },
-    async (client, args) => client.getKit(args.id as string),
-    { full: 'the CLI prints the whole kit: orca kits list --json' },
-  )
-
-  tool(
-    'make_kit',
-    'Make a kit from agents, skills, and environment templates. Publish it with publish_kit.',
-    { ...kitFields, name: z.string() },
-    async (client, args) => {
-      const input = await kitInput(client, args)
-      return client.createKit({ selection: {}, ...input, name: args.name as string })
-    },
-  )
-
-  tool(
-    'edit_kit',
-    'Change a kit. Passing agents, skills, or templates replaces the whole selection. The public page changes on the next publish_kit.',
-    { id: z.string().describe('kit id'), ...kitFields },
-    async (client, args) => client.updateKit(args.id as string, await kitInput(client, args)),
-  )
-
-  tool('publish_kit', 'Publish a kit\'s current selection as its next version.', { id: z.string() }, async (client, args) =>
-    client.publishKit(args.id as string),
-  )
-
-  tool('withdraw_kit', 'Withdraw a published kit.', { id: z.string() }, async (client, args) =>
-    client.withdrawKit(args.id as string),
-  )
-
   tool(
     'show_kit',
-    'Read a published kit by its public id (kit-...): its author, share link, contents, each asset\'s key, and the credentials a copy needs.',
+    'Read the review of one of Orca\'s kits by its public id (kit-...), as orca kits show prints it: its version, what it runs, reaches and spends, every agent with its instructions and tools, every skill and template with its files and setup commands, and the credentials a copy needs. Show it to the person before copy_kit.',
     { publicId: z.string() },
-    async (client, args) => client.publicKit(args.publicId as string),
-    { anonymous: true },
+    async (client, args) => client.kitReview(args.publicId as string),
+    { anonymous: true, full: 'the CLI prints the whole review: orca kits show <link> --json' },
   )
 
   tool(
     'copy_kit',
-    'Copy a published kit into this organization. assets lists {key, name} for each asset to copy (keys from show_kit). A name already in use fails the whole copy with name_taken.',
+    'Copy one of Orca\'s kits into this organization, at the version show_kit returned. Show the person the review from show_kit first, and copy only after they say yes.',
     {
       publicId: z.string(),
-      assets: z.array(z.object({ key: z.string(), name: z.string() })),
+      version: z.number().int().min(1).describe('the version show_kit returned; a newer one fails with kit_changed and copies nothing'),
+      assets: z
+        .array(z.object({ key: z.string(), name: z.string() }))
+        .describe('{key, name} for each asset to copy (keys from show_kit); a name already in use fails the whole copy with name_taken'),
     },
-    async (client, args) => client.copyKit(args.publicId as string, args.assets as { key: string; name: string }[]),
+    async (client, args) =>
+      client.copyKit(args.publicId as string, args.version as number, args.assets as { key: string; name: string }[]),
   )
 
   return server

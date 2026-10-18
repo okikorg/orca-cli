@@ -191,8 +191,9 @@ export function registerVaults(program: Command): void {
     const flags = globalFlags(cmd)
     validatePage(opts, cmd)
     const api = await apiContext(cmd)
+    const vaultId = await withApi(api, async (c) => (await findVault(await c.v1(), vault)).id)
     const page = await fetchPageOrAll(opts, (params) =>
-      withApi(api, async (c) => toPage(await (await c.v1()).beta.agents.vaults.credentials.list(vault, params))),
+      withApi(api, async (c) => toPage(await (await c.v1()).beta.agents.vaults.credentials.list(vaultId, params))),
     )
     const mode = outputMode(flags)
     if (mode === 'json') {

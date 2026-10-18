@@ -214,11 +214,7 @@ orca files upload <path> [--name filename]
 orca files download <id> [-o path|-]
 orca files delete <id> [--yes]
 
-orca kits list
-orca kits make --name n [--description d] [--author who] [--readme file] [--agent a]... [--skill id]... [--template id]...
-orca kits edit <kit-id> [same flags]       # any selection flag replaces the whole selection; publish again to update the page
-orca kits publish|withdraw <kit-id>
-orca kits show <link|public-id>            # no login needed
+orca kits show <link|public-id>            # what the kit holds; no login needed
 orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run] [--yes]
 
 orca keys list
@@ -236,7 +232,7 @@ orca update [--check] [--tag t] [--force]
 
 List commands share `--limit N` (1 to 100, default 10), `--after <id>` (the
 cursor a previous page printed), and `--all` (follow the cursor through every
-page, up to 10,000 rows). `kits list` returns everything at once.
+page, up to 10,000 rows).
 
 Every list/get command supports `--json` (raw API payloads, stdout only).
 When stdout is not a TTY, output degrades to uncolored tab-separated lines,
@@ -364,30 +360,37 @@ the link.
 
 ## Kits
 
-A kit bundles agents, skills, and environment templates into a shareable,
-versioned snapshot. Publishing mints a public id (`kit-...`) and a share link on
-the dashboard; no secret ever enters a kit, so a copy lists the credentials to
-add.
+A kit is a set of agents, skills, and environment templates, ready to copy
+into your organization. Kits are published by Orca, and only Orca publishes
+them; each has a public id (`kit-...`) and a page on the dashboard. No secret
+ever enters a kit, so a copy lists the credentials to add.
 
-`--author` sets who the kit's page says it is by (up to 100 characters; pass
-`--author ""` to clear it). Like every other edit, a changed author reaches the
-public page on the next publish, and `kits show` prints the author and the share
-link the server gives.
+`orca kits show` prints what a kit holds, from the server's review of its newest
+version: who publishes it, the version, three summaries the server writes (what
+it runs, what it reaches, what it spends), then every agent with its
+instructions and tools, every skill with its files, every template with its
+network, packages, setup commands, files and plugins, and the credentials to
+add. `--json` prints the review as the server sends it.
 
 ```sh
-orca kits make --name "Support desk" --author "Okik Labs" --agent support --skill skill_123
-orca kits publish kit_abc                    # prints the share link
 orca kits show https://app.orcapods.ai/kits/kit-xxxxxxxxxxxxxxxxx
 orca kits copy kit-xxxxxxxxxxxxxxxxx --dry-run
-orca kits copy kit-xxxxxxxxxxxxxxxxx --name agent-1=my-support --skip skill-1 --yes
+orca kits copy kit-xxxxxxxxxxxxxxxxx --name agent-1=my-support --skip skill-1 --yes   # after the person says yes
 ```
+
+`copy` prints the same review, asks y/N, and copies the version it printed. If
+Orca published a newer version in between, it copies nothing, prints "This kit
+changed while you were reading" with the new review, and exits 1, so the person
+decides again. `--yes` skips the question: a coding agent passes it only after
+the person has read the review and said yes (without `--yes` and without a
+terminal, `copy` exits 2). `--dry-run` prints the review and the plan, and
+stops.
 
 `copy` copies every asset under its own name unless renamed with `--name
 key=name` or left out with `--skip key` (keys come from `kits show`). A skill
 renamed this way has its `SKILL.md` renamed too; skill names use only letters,
 digits, `_` and `-`. A name already used by the same kind fails the whole copy
-with "Name taken" and nothing is copied; rename and run it again. In a script,
-pass `--yes` (without it, a non-interactive run exits 2).
+with "Name taken" and nothing is copied; rename and run it again.
 
 Each credential a copy needs says where it goes: an MCP server's credential in
 a vault (`orca vaults credentials add`), an environment variable on the copied
@@ -413,7 +416,8 @@ claude mcp add orca -- orca mcp serve
 `orca mcp serve` speaks MCP over stdio with one tool per CLI action: identity
 and keys, agents and models, sessions and `chat` (which sends a message and
 waits for the reply; it and `create_session` take `files` to stage), a session's
-artifacts, skills, vaults, files, usage and billing, and kits. The
+artifacts, skills, vaults, files, usage and billing, and kits (`show_kit` and
+`copy_kit`, which copies the version `show_kit` returned). The
 commands that only touch this machine (login, logout, context, doctor, update)
 have no tool. Other MCP clients (Cursor, Codex) use `{"command": "orca",
 "args": ["mcp", "serve"]}`. Login for agent contexts is `orca login` (device

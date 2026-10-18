@@ -1,26 +1,22 @@
-import { readFile } from 'node:fs/promises'
-
 import type { Command } from 'commander'
 
-import { resolveAgentId } from '../lib/agents.js'
 import { ApiClient, ApiError, extractErrorBody, mapApiError } from '../lib/api.js'
 import { requireApiUrl, resolveContext } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatTime } from '../lib/format.js'
-import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
+import { interactive, outputMode, printJson, printPlainRows } from '../lib/output.js'
 import type {
-  Kit,
   KitCopyAsset,
   KitCopyResult,
   KitCredential,
-  KitInput,
-  KitSelection,
-  PublicKit,
-  PublicKitAsset,
+  KitReview,
+  KitReviewCapability,
+  KitReviewFile,
+  KitReviewTool,
 } from '../lib/types.js'
 import { accentVerb, hintText } from '../ui/theme.js'
 import { confirm } from './prompts.js'
-import { apiContext, globalFlags, withApi, type ApiContext } from './shared.js'
+import { apiContext, globalFlags, withApi } from './shared.js'
 
 // A kit's public id: kit- plus 17 letters or digits, minted on its first
 // publish and never changed. Checked here so a mistyped link fails before a
@@ -52,22 +48,18 @@ function kitLinkError(input: string): CliError {
   ])
 }
 
-// kitAssets lists everything a published kit holds, each with the key the
-// copy names it by and the name it is copied under by default.
-function kitAssets(kit: PublicKit): (PublicKitAsset & { kind: string })[] {
-  return [
-    ...kit.contents.agents.map((a) => ({ ...a, kind: 'agent' })),
-    ...kit.contents.skills.map((s) => ({ ...s, kind: 'skill' })),
-    ...kit.contents.templates.map((t) => ({ ...t, kind: 'template' })),
-  ]
+// kitAssets lists everything the reviewed version holds, each with the key
+// the copy names it by and the name it is copied under by default.
+function kitAssets(review: KitReview): KitCopyAsset[] {
+  return [...review.agents, ...review.skills, ...review.templates].map((a) => ({ key: a.key, name: a.name }))
 }
 
 // copyPlan applies --name and --skip to a kit's assets and returns the copy
 // request's assets. Every asset is copied under its own name unless renamed
 // or skipped; the server answers 409 name_taken for a name already in use
 // and copies nothing, so a collision is fixed with --name and a rerun.
-function copyPlan(kit: PublicKit, renames: Map<string, string>, skips: Set<string>): KitCopyAsset[] {
-  const assets = kitAssets(kit)
+function copyPlan(review: KitReview, renames: Map<string, string>, skips: Set<string>): KitCopyAsset[] {
+  const assets = kitAssets(review)
   const known = new Set(assets.map((a) => a.key))
   for (const key of [...renames.keys(), ...skips]) {
     if (!known.has(key)) {
@@ -112,14 +104,14 @@ function credentialLine(c: KitCredential, copy?: KitCopyResult): string {
   return `Environment variable ${c.name}, used by ${c.used_by}: set it on ${where}`
 }
 
-// fetchPublicKit reads a kit's public page. It needs no credential, so it
-// works before login against any server URL.
-async function fetchPublicKit(cmd: Command, publicId: string): Promise<PublicKit> {
+// fetchReview reads the review of a kit's newest version. It needs no
+// credential, so `show` works before login against any server URL.
+async function fetchReview(cmd: Command, publicId: string): Promise<KitReview> {
   const ctx = await resolveContext(globalFlags(cmd))
   const apiUrl = requireApiUrl(ctx)
   const client = new ApiClient({ apiUrl, apiKey: ctx.apiKey ?? '', contextName: ctx.name })
   try {
-    return await client.publicKit(publicId)
+    return await client.kitReview(publicId)
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
       throw new CliError(`no kit at ${publicId}`, ExitCode.NotFound, [
@@ -130,224 +122,165 @@ async function fetchPublicKit(cmd: Command, publicId: string): Promise<PublicKit
   }
 }
 
-type SelectionFlags = { agent: string[]; skill: string[]; template: string[] }
-
 const repeatable = (value: string, previous: string[]) => [...previous, value]
 
-function addKitFields(cmd: Command, nameRequired: boolean): Command {
-  return (nameRequired ? cmd.requiredOption('--name <name>', 'kit name') : cmd.option('--name <name>', 'kit name'))
-    .option('--description <text>', 'one-line description')
-    .option('--author <name>', 'who the kit\'s page says it is by')
-    .option('--readme <path>', 'a markdown file for the kit page')
-    .option('--agent <agent>', 'include an agent, by id or name (repeatable)', repeatable, [] as string[])
-    .option('--skill <id>', 'include a skill (repeatable)', repeatable, [] as string[])
-    .option('--template <id>', 'include an environment template (repeatable)', repeatable, [] as string[])
+// -- The review as text ----------------------------------------------------------
+// Everything the server's review holds, one fact per line, in its order: the
+// publisher, the version, the three summaries as the server wrote them, then
+// every asset in full. Text from the kit (descriptions, instructions, setup
+// commands, file contents) is quoted with `| ` so it never reads as the
+// CLI's own words.
+
+const listed = (values: string[] | null | undefined) => (values?.length ? values.join(', ') : 'none')
+
+function quoted(out: string[], indent: string, body: string | null | undefined): void {
+  for (const text of (body ?? '').split('\n')) out.push(`${indent}| ${text}`)
 }
 
-async function selectionFrom(api: ApiContext, flags: SelectionFlags): Promise<KitSelection> {
-  const agents: string[] = []
-  for (const ref of flags.agent) agents.push(await withApi(api, async (c) => resolveAgentId(await c.v1(), ref)))
-  return { agents, skills: flags.skill, templates: flags.template }
+const HASH_ONLY: Record<string, string> = {
+  binary: 'binary, listed by hash',
+  longer_than_64_kib: 'over 64 KiB, listed by hash',
+  review_limit: 'past the review\'s 2 MiB, listed by hash',
 }
 
-async function renderKits(kits: Kit[]): Promise<void> {
-  const { Table } = await import('../ui/Table.js')
-  const { theme } = await import('../ui/theme.js')
-  await renderStatic(
-    <Table
-      title="Kits"
-      meta={`${kits.length} total`}
-      headers
-      hint="orca kits publish <kit id> · orca kits show <public id>"
-      columns={[
-        { header: 'name', get: (k: Kit) => k.name, color: () => theme.accent, bold: true },
-        { header: 'author', get: (k: Kit) => k.author || '-' },
-        { header: 'status', get: (k: Kit) => k.status },
-        { header: 'version', get: (k: Kit) => (k.latest_version == null ? '-' : String(k.latest_version)) },
-        { header: 'public id', get: (k: Kit) => k.public_id ?? '-' },
-        { header: 'id', get: (k: Kit) => k.id, color: () => theme.subtle },
-      ]}
-      rows={kits}
-    />,
-  )
+function fileLines(out: string[], indent: string, files: KitReviewFile[]): void {
+  if (files.length === 0) out.push(`${indent}none`)
+  for (const file of files) {
+    const why = file.hash_only ? `  (${HASH_ONLY[file.hash_only] ?? `${file.hash_only}, listed by hash`})` : ''
+    out.push(`${indent}${file.path}  ${file.size_bytes} bytes  sha256 ${file.sha256}${why}`)
+    if (file.content != null) quoted(out, `${indent}  `, file.content)
+  }
 }
 
-async function renderPublicKit(kit: PublicKit): Promise<void> {
-  const { Panel, Field } = await import('../ui/Panel.js')
-  const { Table } = await import('../ui/Table.js')
-  const { Box, Text } = await import('ink')
-  const { theme } = await import('../ui/theme.js')
-  await renderStatic(
-    <Panel title={kit.name} subtitle={`${kit.public_id} · version ${kit.version}`}>
-      {kit.description ? <Field label="about" value={kit.description} /> : null}
-      {kit.author ? <Field label="by" value={kit.author} /> : null}
-      {kit.url ? <Field label="link" value={kit.url} /> : null}
-      <Field label="published" value={formatTime(kit.published_at)} />
-      <Box marginTop={1} flexDirection="column">
-        <Table
-          headers
-          columns={[
-            { header: 'key', get: (a: PublicKitAsset & { kind: string }) => a.key, color: () => theme.subtle },
-            { header: 'kind', get: (a: PublicKitAsset & { kind: string }) => a.kind },
-            { header: 'name', get: (a: PublicKitAsset & { kind: string }) => a.name, color: () => theme.accent, bold: true },
-          ]}
-          rows={kitAssets(kit)}
-          hint={`orca kits copy ${kit.public_id}`}
-        />
-      </Box>
-      {kit.credentials.length ? (
-        <Box marginTop={1} flexDirection="column">
-          <Text color={theme.subtle}>credentials to add after copying</Text>
-          {kit.credentials.map((c, i) => (
-            <Text key={i} color={theme.muted}>{`  ${credentialLine(c)}`}</Text>
-          ))}
-        </Box>
-      ) : null}
-    </Panel>,
-  )
+function toolLine(tool: KitReviewTool): string {
+  const t = tool as Record<string, unknown> & { type: string }
+  if (t.type === 'web_search') {
+    const domains = t.allowed_domains == null ? 'any' : listed(t.allowed_domains as string[])
+    return `web search, mode ${String(t.mode ?? 'default')}, context ${String(t.context_size ?? 'default')}, domains ${domains}`
+  }
+  if (t.type === 'function') return `function ${String(t.name)}: ${String(t.description ?? '')}`
+  if (t.type === 'mcp') {
+    const transport = (t.transport ?? {}) as Record<string, unknown>
+    const allowed = t.allowed_tools == null ? 'all' : listed(t.allowed_tools as string[])
+    if (transport.type === 'stdio') {
+      const command = [String(transport.command), ...((transport.args as string[] | null) ?? [])].join(' ')
+      const folder = (transport.cwd as string | null) ?? 'the default folder'
+      const env = listed(transport.env_var_names as string[] | null)
+      return `MCP ${String(t.server_label)} over stdio: ${command}, in ${folder}, allowed tools ${allowed}, environment variable names ${env}`
+    }
+    const headers = listed(transport.header_names as string[] | null)
+    return `MCP ${String(t.server_label)} over HTTP: ${String(transport.server_url)}, allowed tools ${allowed}, header names ${headers}`
+  }
+  return t.type
+}
+
+function capabilityLines(out: string[], capabilities: KitReviewCapability[]): void {
+  if (capabilities.length === 0) out.push('    none')
+  for (const capability of capabilities) {
+    if (capability.type === 'kit_skill') {
+      out.push(`    - the kit's ${capability.key}`)
+      continue
+    }
+    out.push(`    - inline ${capability.name}: ${capability.description ?? ''}`)
+    fileLines(out, '      ', capability.files)
+  }
+}
+
+export function reviewLines(review: KitReview): string[] {
+  const out: string[] = [accentVerb(review.name)]
+  if (review.publisher?.orca) out.push('  by Orca')
+  out.push(`  ${review.public_id} · version ${review.version} · published ${formatTime(review.published_at)}`)
+  if (review.description) quoted(out, '  ', review.description)
+  for (const [label, lines] of [
+    ['Runs code', review.summary.runs_code],
+    ['Reaches', review.summary.reaches],
+    ['Spends', review.summary.spends],
+  ] as const) {
+    out.push('', `${label}:`)
+    if (lines.length === 0) out.push('  - none')
+    for (const line of lines) out.push(`  - ${line}`)
+  }
+  for (const agent of review.agents) {
+    out.push('', `Agent ${agent.key}: ${agent.name}`)
+    out.push(`  Model: ${agent.model ?? 'none'}`)
+    out.push(`  Reasoning effort: ${agent.reasoning_effort ?? 'default'}`)
+    out.push(`  Service tier: ${agent.service_tier ?? 'default'}`)
+    out.push(
+      agent.team.enabled
+        ? `  Team: yes, at most ${agent.team.max_concurrent_subagents ?? 'the default number of'} subagents at once`
+        : '  Team: no',
+    )
+    out.push('  Instructions:')
+    quoted(out, '    ', agent.instructions)
+    out.push('  Tools:')
+    if (agent.tools.length === 0) out.push('    none')
+    for (const tool of agent.tools) out.push(`    - ${toolLine(tool)}`)
+  }
+  for (const skill of review.skills) {
+    out.push('', `Skill ${skill.key}: ${skill.name}`)
+    if (skill.description) quoted(out, '  ', skill.description)
+    out.push('  Files:')
+    fileLines(out, '    ', skill.files)
+  }
+  for (const template of review.templates) {
+    out.push('', `Template ${template.key}: ${template.name}`)
+    const network = template.network
+    out.push(
+      network.access === 'restricted'
+        ? `  Network: restricted to ${listed(network.allowed_domains)}`
+        : `  Network: ${network.access ?? 'disabled'}`,
+    )
+    for (const kind of ['system', 'python', 'npm'] as const) {
+      out.push(`  Packages, ${kind}: ${listed(template.packages?.[kind])}`)
+    }
+    out.push('  Setup commands, in order:')
+    const setup = template.setup_commands ?? []
+    if (setup.length === 0) out.push('    none')
+    setup.forEach((command, n) => {
+      out.push(`    ${n + 1}. in ${command.cwd ?? 'the workspace'}`)
+      quoted(out, '      ', command.command)
+    })
+    out.push(`  Capability directories: ${listed(template.capability_directories)}`)
+    out.push('  Files:')
+    fileLines(out, '    ', template.files)
+    out.push('  Skills:')
+    capabilityLines(out, template.skills)
+    out.push('  Plugins:')
+    capabilityLines(out, template.plugins)
+  }
+  out.push('', 'Credentials to add after copying:')
+  if (review.credentials.length === 0) out.push('  none')
+  for (const c of review.credentials) out.push(`  - ${credentialLine(c)}`)
+  return out
 }
 
 export function registerKits(program: Command): void {
   const kits = program
     .command('kits')
     .alias('kit')
-    .description('bundle agents, skills, and templates into a shareable kit, and copy kits in')
-
-  kits
-    .command('list')
-    .description('list this organization\'s kits, newest first')
-    .action(async (_opts: Record<string, never>, cmd: Command) => {
-      const flags = globalFlags(cmd)
-      const api = await apiContext(cmd)
-      const list = await withApi(api, (c) => c.listKits())
-      const mode = outputMode(flags)
-      if (mode === 'json') {
-        printJson(list)
-        return
-      }
-      if (list.length === 0) {
-        console.error(hintText('No kits yet.'))
-        console.error(hintText('  make one: orca kits make --name <name> --agent <agent>'))
-        return
-      }
-      if (mode === 'plain') {
-        printPlainRows(
-          list.map((k) => [k.id, k.name, k.status, k.latest_version ?? '-', k.public_id ?? '-', k.author || '-']),
-        )
-        return
-      }
-      await renderKits(list)
-    })
-
-  addKitFields(kits.command('make').description('make a kit from agents, skills, and templates'), true).action(
-    async (
-      opts: SelectionFlags & { name: string; description?: string; author?: string; readme?: string },
-      cmd: Command,
-    ) => {
-      const flags = globalFlags(cmd)
-      const api = await apiContext(cmd)
-      const input: KitInput = {
-        name: opts.name,
-        selection: await selectionFrom(api, opts),
-        ...(opts.description !== undefined ? { description: opts.description } : {}),
-        ...(opts.author !== undefined ? { author: opts.author } : {}),
-        ...(opts.readme !== undefined ? { readme: await readReadme(opts.readme) } : {}),
-      }
-      const kit = await withApi(api, (c) => c.createKit(input))
-      if (outputMode(flags) === 'json') printJson(kit)
-      else {
-        console.log(`${accentVerb('Made')} kit "${kit.name}" (${kit.id}).`)
-        console.error(hintText(`Publish it: orca kits publish ${kit.id}`))
-      }
-    },
-  )
-
-  addKitFields(
-    kits
-      .command('edit <kit-id>')
-      .description('change a kit; any --agent/--skill/--template replaces the whole selection'),
-    false,
-  ).action(
-    async (
-      id: string,
-      opts: SelectionFlags & { name?: string; description?: string; author?: string; readme?: string },
-      cmd: Command,
-    ) => {
-      const flags = globalFlags(cmd)
-      const api = await apiContext(cmd)
-      const changesSelection = opts.agent.length + opts.skill.length + opts.template.length > 0
-      const input: Partial<KitInput> = {
-        ...(opts.name !== undefined ? { name: opts.name } : {}),
-        ...(opts.description !== undefined ? { description: opts.description } : {}),
-        ...(opts.author !== undefined ? { author: opts.author } : {}),
-        ...(opts.readme !== undefined ? { readme: await readReadme(opts.readme) } : {}),
-        ...(changesSelection ? { selection: await selectionFrom(api, opts) } : {}),
-      }
-      if (Object.keys(input).length === 0) {
-        throw new CliError('nothing to change', ExitCode.Usage, [
-          'Pass --name, --description, --author, --readme, or a new selection.',
-        ])
-      }
-      const kit = await withApi(api, (c) => c.updateKit(id, input))
-      if (outputMode(flags) === 'json') printJson(kit)
-      else {
-        console.log(`${accentVerb('Updated')} kit "${kit.name}".`)
-        if (kit.public_id) console.error(hintText(`The public page changes when you publish again: orca kits publish ${kit.id}`))
-      }
-    },
-  )
-
-  kits
-    .command('publish <kit-id>')
-    .description('publish the kit\'s current selection as its next version')
-    .action(async (id: string, _opts: Record<string, never>, cmd: Command) => {
-      const flags = globalFlags(cmd)
-      const api = await apiContext(cmd)
-      const kit = await withApi(api, (c) => c.publishKit(id))
-      if (outputMode(flags) === 'json') {
-        printJson(kit)
-        return
-      }
-      console.log(`${accentVerb('Published')} kit "${kit.name}" version ${kit.latest_version} as ${kit.public_id}.`)
-      if (kit.url) console.log(`Share it: ${kit.url}`)
-    })
-
-  kits
-    .command('withdraw <kit-id>')
-    .description('withdraw a published kit: its page and copies answer gone until published again')
-    .action(async (id: string, _opts: Record<string, never>, cmd: Command) => {
-      const flags = globalFlags(cmd)
-      const api = await apiContext(cmd)
-      const kit = await withApi(api, (c) => c.withdrawKit(id))
-      if (outputMode(flags) === 'json') printJson(kit)
-      else console.log(`${accentVerb('Withdrew')} kit "${kit.name}".`)
-    })
+    .description('read and copy the kits Orca publishes: agents, skills, and templates, ready to copy in')
 
   kits
     .command('show <link>')
-    .description('show a published kit by its share link or public id (no login needed)')
+    .description('print everything a kit holds, by its share link or public id (no login needed)')
     .action(async (link: string, _opts: Record<string, never>, cmd: Command) => {
       const flags = globalFlags(cmd)
-      const kit = await fetchPublicKit(cmd, parseKitLink(link))
-      const mode = outputMode(flags)
-      if (mode === 'json') {
-        printJson(kit)
+      const review = await fetchReview(cmd, parseKitLink(link))
+      if (outputMode(flags) === 'json') {
+        printJson(review)
         return
       }
-      if (mode === 'plain') {
-        printPlainRows(kitAssets(kit).map((a) => [a.key, a.kind, a.name]))
-        return
-      }
-      await renderPublicKit(kit)
+      process.stdout.write(reviewLines(review).join('\n') + '\n')
+      console.error(hintText(`Copy it after a yes: orca kits copy ${review.public_id}`))
     })
 
   kits
     .command('copy <link>')
-    .description('copy a published kit into this organization, by share link or public id')
+    .description('print a kit\'s review, then copy the version shown into this organization after a yes')
     .option('--name <key=name>', 'copy one asset under a different name (repeatable)', repeatable, [] as string[])
     .option('--skip <key>', 'leave one asset out (repeatable)', repeatable, [] as string[])
-    .option('--dry-run', 'show what would be copied and stop')
-    .option('--yes', 'skip the confirmation prompt')
+    .option('--dry-run', 'print the review and what would be copied, and stop')
+    .option('--yes', 'skip the question, only after the person has read the review and said yes')
     .action(
       async (link: string, opts: { name: string[]; skip: string[]; dryRun?: boolean; yes?: boolean }, cmd: Command) => {
         const flags = globalFlags(cmd)
@@ -363,20 +296,24 @@ export function registerKits(program: Command): void {
           }
         }
         const api = await apiContext(cmd)
-        const kit = await fetchPublicKit(cmd, publicId)
-        const assets = copyPlan(kit, renames, skips)
+        const review = await fetchReview(cmd, publicId)
+        const assets = copyPlan(review, renames, skips)
 
+        // The review goes to stderr, so stdout stays the copy's result.
+        console.error(reviewLines(review).join('\n') + '\n')
         if (opts.dryRun) {
-          if (mode === 'json') printJson({ public_id: publicId, assets })
+          if (mode === 'json') printJson({ public_id: publicId, version: review.version, assets })
           else printPlainRows(assets.map((a) => [a.key, a.name]))
           return
         }
         if (!opts.yes) {
           if (!interactive()) {
-            throw new CliError('refusing to copy a kit without --yes in non-interactive mode', ExitCode.Usage)
+            throw new CliError('refusing to copy a kit without --yes in non-interactive mode', ExitCode.Usage, [
+              'Show the person the review above, and pass --yes only after they say yes.',
+            ])
           }
           for (const a of assets) console.error(hintText(`  ${a.key} as "${a.name}"`))
-          if (!(await confirm(`Copy "${kit.name}" into this organization?`))) {
+          if (!(await confirm(`Copy "${review.name}" version ${review.version} into this organization?`))) {
             console.error(hintText('Aborted.'))
             return
           }
@@ -384,11 +321,21 @@ export function registerKits(program: Command): void {
 
         const result = await withApi(api, async (c) => {
           try {
-            return await c.copyKit(publicId, assets)
+            return await c.copyKit(publicId, review.version, assets)
           } catch (err) {
             if (err instanceof ApiError && err.code === 'name_taken') {
               throw new CliError(extractErrorBody(err.body) || 'a name is taken', ExitCode.Failure, [
                 'Nothing was copied. Choose another name with --name <key>=<name> and run it again.',
+              ])
+            }
+            if (err instanceof ApiError && err.code === 'kit_changed') {
+              // A newer version was published after the review above: show
+              // it, copy nothing, and leave the decision to the person.
+              const fresh = await fetchReview(cmd, publicId)
+              console.error('This kit changed while you were reading. Here is the new version.\n')
+              console.error(reviewLines(fresh).join('\n') + '\n')
+              throw new CliError('nothing was copied', ExitCode.Failure, [
+                `Read version ${fresh.version} above, and run the copy again to copy it.`,
               ])
             }
             throw err
@@ -397,15 +344,6 @@ export function registerKits(program: Command): void {
         reportCopy(result, mode)
       },
     )
-}
-
-async function readReadme(file: string): Promise<string> {
-  try {
-    return await readFile(file, 'utf8')
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new CliError(`file not found: ${file}`, ExitCode.Usage)
-    throw err
-  }
 }
 
 function reportCopy(result: KitCopyResult, mode: 'json' | 'plain' | 'ink'): void {

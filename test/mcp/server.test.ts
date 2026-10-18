@@ -111,13 +111,7 @@ describe('orca mcp serve', () => {
         'get_wallet',
         'billing_checkout',
         'billing_portal',
-        // kits
-        'list_kits',
-        'get_kit',
-        'make_kit',
-        'edit_kit',
-        'publish_kit',
-        'withdraw_kit',
+        // kits: Orca publishes them, so only show and copy
         'show_kit',
         'copy_kit',
       ].sort(),
@@ -234,31 +228,55 @@ describe('orca mcp serve', () => {
     expect(payload).toMatchObject({ id: SESSION_ID, status: 'completed', usage: summary })
   })
 
-  it('make_kit and edit_kit send the author', async () => {
-    const kit = { id: 'kit_1', object: 'kit', name: 'Support desk', author: 'Okik Labs' }
-    const calls = stubFetch({
-      'POST /api/kits': jsonResponse(kit),
-      'PATCH /api/kits/kit_1': jsonResponse({ ...kit, author: '' }),
-    })
-    const client = await connect()
-    await client.callTool({ name: 'make_kit', arguments: { name: 'Support desk', author: 'Okik Labs', skills: ['skill_1'] } })
-    await client.callTool({ name: 'edit_kit', arguments: { id: 'kit_1', author: '' } })
-    expect(calls.map((c) => JSON.parse(c.body ?? '{}'))).toEqual([
-      { name: 'Support desk', author: 'Okik Labs', selection: { agents: [], skills: ['skill_1'], templates: [] } },
-      { author: '' },
-    ])
-  })
-
-  it('copy_kit posts the chosen assets', async () => {
+  it('copy_kit sends the version show_kit returned and the chosen assets', async () => {
     const calls = stubFetch({
       'POST /api/kits/kit-AbCdEfGhIjKlMnOpQ/copy': jsonResponse({ object: 'kit.copy', created: [], credentials: [] }),
     })
     const client = await connect()
     await client.callTool({
       name: 'copy_kit',
+      arguments: { publicId: 'kit-AbCdEfGhIjKlMnOpQ', version: 3, assets: [{ key: 'agent-1', name: 'support' }] },
+    })
+    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ version: 3, assets: [{ key: 'agent-1', name: 'support' }] })
+  })
+
+  it('copy_kit requires the version, and says to copy only after the person\'s yes', async () => {
+    const client = await connect()
+    const copyKit = (await client.listTools()).tools.find((t) => t.name === 'copy_kit')
+    expect(copyKit?.inputSchema.required).toEqual(['publicId', 'version', 'assets'])
+    expect(copyKit?.description).toBe(
+      'Copy one of Orca\'s kits into this organization, at the version show_kit returned. Show the person the review from show_kit first, and copy only after they say yes.',
+    )
+    const calls = stubFetch({})
+    const res = await client.callTool({
+      name: 'copy_kit',
       arguments: { publicId: 'kit-AbCdEfGhIjKlMnOpQ', assets: [{ key: 'agent-1', name: 'support' }] },
     })
-    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({ assets: [{ key: 'agent-1', name: 'support' }] })
+    expect((res as ToolText).isError).toBe(true)
+    expect(firstText(res)).toContain('version')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('copy_kit reports kit_changed and copies nothing', async () => {
+    stubFetch({
+      'POST /api/kits/kit-AbCdEfGhIjKlMnOpQ/copy': jsonResponse(
+        {
+          error: {
+            message: 'This kit has a newer version (4). Review it again before copying.',
+            code: 'kit_changed',
+            current_version: 4,
+          },
+        },
+        { status: 409 },
+      ),
+    })
+    const client = await connect()
+    const res = await client.callTool({
+      name: 'copy_kit',
+      arguments: { publicId: 'kit-AbCdEfGhIjKlMnOpQ', version: 3, assets: [{ key: 'agent-1', name: 'support' }] },
+    })
+    expect((res as ToolText).isError).toBe(true)
+    expect(firstText(res)).toContain('This kit has a newer version (4). Review it again before copying.')
   })
 
   it('reports the login fix when no credential is configured', async () => {
@@ -302,25 +320,26 @@ describe('the MCP server\'s credentials', () => {
 })
 
 describe('show_kit', () => {
-  it('reads a public kit before any login, as orca kits show does', async () => {
+  it('returns the review before any login, as orca kits show prints it', async () => {
     const tmp = await useTmpConfigDir()
     try {
       delete process.env.ORCA_API_KEY
       delete process.env.ORCA_API_URL
       await saveConfig({ currentContext: 'default', contexts: { default: { apiUrl: 'http://test:8080' } } })
-      const kit = {
-        object: 'kit.public',
+      const review = {
+        object: 'kit.review',
         public_id: 'kit-AbCdEfGhIjKlMnOpQ',
-        url: 'https://app.example.test/kits/kit-AbCdEfGhIjKlMnOpQ',
-        author: 'Okik Labs',
+        version: 3,
+        publisher: { orca: true },
+        summary: { runs_code: ['No code: instructions and tools only'], reaches: [], spends: ['Every run is paid from your organization\'s credit'] },
       }
-      const calls = stubFetch({ 'GET /api/public/kits/kit-AbCdEfGhIjKlMnOpQ': jsonResponse(kit) })
+      const calls = stubFetch({ 'GET /api/public/kits/kit-AbCdEfGhIjKlMnOpQ/review': jsonResponse(review) })
       const client = await connect(makeClientSource({}))
       const res = await client.callTool({ name: 'show_kit', arguments: { publicId: 'kit-AbCdEfGhIjKlMnOpQ' } })
       expect((res as ToolText).isError).toBeFalsy()
       expect(calls[0].headers.Authorization).toBeUndefined()
-      // The author and the share link are the server's, passed through.
-      expect(JSON.parse(firstText(res))).toMatchObject({ author: 'Okik Labs', url: kit.url })
+      // The version and the summaries are the server's, passed through.
+      expect(JSON.parse(firstText(res))).toEqual(review)
     } finally {
       await tmp.cleanup()
     }
@@ -747,27 +766,10 @@ describe('orca mcp serve: list summaries and capped results', () => {
     expect(payload).toMatchObject({ hasMore: false, lastId: agentNumber(19) })
   })
 
-  it('list_sessions and list_kits leave out the agent snapshot and the readme', async () => {
+  it('list_sessions leaves out the agent snapshot', async () => {
     const snapshot = { id: AGENT_ID, name: 'margin-check', model: 'orca/openrouter/openai/gpt-5.6-luna', instructions: longText(9, 'snapshot'), tools: [] }
-    const kit = {
-      id: 'kit_1',
-      object: 'kit',
-      name: 'Margin Check',
-      description: 'Check a deal\'s margin',
-      author: 'Okik Labs',
-      readme: longText(6, 'readme'),
-      status: 'published',
-      public_id: 'kit-zK1zXb56TXYRZO94G',
-      url: 'https://app.example.test/kits/kit-zK1zXb56TXYRZO94G',
-      selection: { agents: [AGENT_ID], skills: ['skill_1', 'skill_2'], templates: [] },
-      latest_version: 2,
-      created_by: 'user_1',
-      created_at: 1,
-      updated_at: 2,
-    }
     stubFetch({
       'GET /v1/agents/sessions?limit=20': jsonResponse(list([session('idle', { agent: snapshot })])),
-      'GET /api/kits': jsonResponse(list([kit])),
     })
     const client = await connect()
     const sessions = await callJson(client, 'list_sessions', {})
@@ -778,9 +780,6 @@ describe('orca mcp serve: list summaries and capped results', () => {
       agent: { id: AGENT_ID, name: 'margin-check', model: 'orca/openrouter/openai/gpt-5.6-luna' },
       environment: 'none',
     })
-    const kits = await callJson(client, 'list_kits', {})
-    expect(kits.text).not.toContain('readme')
-    expect(kits.payload[0]).toMatchObject({ id: 'kit_1', name: 'Margin Check', agents: 1, skills: 2, templates: 0 })
   })
 
   it('a page over the cap drops items from its end and carries hasMore and the cursor', async () => {

@@ -34,10 +34,10 @@ curl -s -H "$K" "$B/api/models"                                # every model you
 curl -s -H "$K" "$B/api/usage?group_by=model"                  # last 30 days; group_costs: each model's cost
 curl -s -H "$K" "$B/api/usage/events?limit=20&charged=true"   # the charged rows; charged_on says where others' money is
 curl -s -H "$K" $B/api/billing/wallet                          # balance and plan
-curl -s -H "$K" $B/api/kits                                    # this organization's kits
-curl -s $B/api/public/kits/kit-xxxxxxxxxxxxxxxxx               # a published kit, no auth
+curl -s $B/api/public/kits                                     # Orca's kits, no auth
+curl -s $B/api/public/kits/kit-xxxxxxxxxxxxxxxxx/review        # what a kit holds and its version, no auth
 curl -s -H "$K" -X POST $B/api/kits/kit-xxxxxxxxxxxxxxxxx/copy \
-  -H 'Content-Type: application/json' -d '{"assets":[{"key":"agent-1","name":"support"}]}'
+  -H 'Content-Type: application/json' -d '{"version":3,"assets":[{"key":"agent-1","name":"support"}]}'   # after the person's yes; a newer version is 409 kit_changed
 ```
 
 ## Notes

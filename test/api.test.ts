@@ -23,8 +23,8 @@ describe('ApiClient.request', () => {
   })
 
   it('sends no Authorization header without a key', async () => {
-    const calls = stubFetch({ 'GET /api/public/kits/kit-abcdefghijklmnopq': jsonResponse({ object: 'kit.public' }) })
-    await new ApiClient({ ...OPTS, apiKey: '' }).publicKit('kit-abcdefghijklmnopq')
+    const calls = stubFetch({ 'GET /api/public/kits/kit-abcdefghijklmnopq/review': jsonResponse({ object: 'kit.review' }) })
+    await new ApiClient({ ...OPTS, apiKey: '' }).kitReview('kit-abcdefghijklmnopq')
     expect(calls[0].headers.Authorization).toBeUndefined()
   })
 

@@ -76,14 +76,12 @@ orca files delete <id> --yes
 ## Kits
 
 ```bash
-orca kits list --json                           # `kit` works as well as `kits`
-orca kits make --name n [--description d] [--author who] [--agent a]... [--skill id]... [--template id]... [--readme file]
-orca kits edit <kit-id> [--name n] [--description d] [--author who] [--agent a]...   # the page changes on the next publish
-orca kits publish <kit-id> --json               # public id + share link
-orca kits withdraw <kit-id>
-orca kits show <link|public-id> --json          # author, share link, contents, asset keys, credentials to add (no login needed)
-orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run] --yes
+orca kits show <link|public-id> [--json]       # what the kit holds: version, what it runs, reaches and spends, every asset in full (no login needed)
+orca kits copy <link|public-id> [--name key=name]... [--skip key]... [--dry-run]   # prints the review, asks y/N
+orca kits copy <link|public-id> --yes           # only after the person has read the review and said yes
 ```
+
+Kits are published by Orca; `kit` works as well as `kits`. `copy` sends the version it printed: if the kit changed in between, it copies nothing, prints the new review and exits 1. Without `--yes` and without a terminal it exits 2.
 
 ## Account
 
