@@ -146,6 +146,13 @@ describe('orca mcp serve', () => {
     })
   })
 
+  it('names a kit\'s vault in chat\'s description, and no template', async () => {
+    const client = await connect()
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'chat')
+    expect(tool?.description).toContain('such as vaults: ["dataforseo"]')
+    expect(tool?.description).not.toContain('seo-helper')
+  })
+
   it('whoami returns the server\'s identity plus the context', async () => {
     stubFetch({
       'GET /api/whoami': jsonResponse({ object: 'whoami', tenant: 'org_1', actor: 'key_1', role: 'admin' }),

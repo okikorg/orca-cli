@@ -105,13 +105,27 @@ It exposes one tool per CLI action: whoami and keys, agents and `list_models`, s
 
 To ask a named agent something, call `chat` with `agent` set to that name and nothing before it: no `list_agents`, no `get_agent`. A new session's `sandbox`, `template` and `vaults` go on that same first `chat` (or on `create_session`). List tools return summaries (an agent's id, name, model and tool types, never its instructions); `get_agent`, `get_session` and `get_kit` return one item in full. Every result is valid JSON: a page too large for one result comes back shorter with `hasMore: true` and `lastId` to pass as `after`, and a long string cut to fit ends in `[shortened from N characters]`.
 
-### Kits that need a template and a vault
+### Kits that need a vault
 
-Some kits only work with an environment template (it carries their skill) and a vault (it holds a credential for their MCP server). The kit's README and docs page name both, for example seo-helper: `template: "seo-helper"`, `vaults: ["dataforseo"]`.
+Some kits only work with a vault: it holds the credential for their MCP server. The kit's README and docs page name it, for example seo-helper: `vaults: ["dataforseo"]`.
 
-- Pass them on the first `chat`, with the agent, by name: `chat({agent: "seo-helper", template: "seo-helper", vaults: ["dataforseo"], files: [...], message: "..."})`. Later turns pass only `session` and `message`; a session keeps its template and vaults.
-- The credential is the user's step. Never ask the user for a password or token in the chat, and never pass one to `add_credential` yourself: anything in a tool call sits in your context. Give them the command to run in their own terminal, which reads the secret from a hidden prompt: `orca vaults create dataforseo`, then `orca vaults credentials add dataforseo --name dataforseo --server https://mcp.dataforseo.com/mcp --basic --login <their login>`.
-- A session create that fails with "No credential in the attached vaults for <url>" means that step is not done yet: relay the message and the command.
+- Pass the vault on the first `chat`, with the agent, by name: `chat({agent: "seo-helper", vaults: ["dataforseo"], message: "..."})`. Later turns pass only `session` and `message`; a session keeps its vaults. Add `template`, `sandbox` or `files` only when the kit's README names them.
+- The credential is the user's step, in their own terminal. Never ask the user for a password or token in the chat, and never pass one to `add_credential` yourself: anything in a tool call sits in your context. Give them the commands, which read the secret from a hidden prompt: `orca vaults create dataforseo`, then `orca vaults credentials add dataforseo --name dataforseo --server https://mcp.dataforseo.com/mcp --basic --login <their login>`.
+- A first `chat` that fails with "No credential in the attached vaults for <url>" created no session: either `vaults` was left off the call, or the vault holds no credential for that server yet. Check the call first; otherwise the user's step is not done: relay the message and the commands, and send the message again once they say it is.
+
+### A research agent returns a brief
+
+Some kits research and hand back a brief, and you do the writing in the repo. seo-helper is one: topics for the next post, then an SEO brief for the one the user picks. The same steps fit any research kit (a competitor scan, a docs audit).
+
+1. Send the repo's context in the message, after the user's words: today's date (the agent has no clock), the posts that exist and the topics picked before (title, URL, target keyword), and the essentials of the kit's site brief (seo-helper keeps it at `.orca/seo-helper/site-brief.md`). At most 8 KB; for a bigger repo, send the newest first. Never repo files, drafts or secrets.
+2. Check any JSON block the reply carries against what you sent, before the user sees it: every number against the thresholds you sent, every topic against the repo, which you can read in full. Drop what fails and say which and why ("Dropped #3: difficulty 67 is over your 35"). If the block is missing or does not parse, ask once: "Send the JSON block again, nothing else"; then show the reply and say the check could not run.
+3. Ask for a brief by the keyword exactly as it appears in the JSON block, never by number alone (seo-helper: `Brief: what is mcp`).
+4. Save the brief in the repo, as it came (seo-helper: `.orca/seo-helper/briefs/<slug>.md`).
+5. Measure the length yourself. The brief lists the top 3 competitor URLs and no word counts: fetch those pages and count their words before writing, and keep the post's length in that range unless the repo's rules say otherwise.
+6. Write with the repo's own rules (its `CLAUDE.md` or `AGENTS.md`, its README, its existing files), never the agent's: the brief says what to cover, not how to write it.
+7. Check the result against the brief: run its "Check before commit" list on your file and fix what fails.
+8. Commit with your own git: a branch and a commit, or a pull request, with the brief beside the work. Orca never needs a GitHub token.
+9. Delete the session: `delete_session({id})`.
 
 ### When `chat` returns `done: false`
 
