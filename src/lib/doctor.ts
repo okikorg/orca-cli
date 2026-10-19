@@ -477,7 +477,7 @@ export async function checkBilling(o: {
   return { name, status: 'pass', message: `credit available (balance ${balance}, ${body.tier ?? 'free'} plan)` }
 }
 
-// 10. Dashboard URL resolution (a published kit's share link uses it). Notes
+// 10. Dashboard URL resolution (billing checkout and the portal return there). Notes
 //     when the value is the baked-in default.
 export function checkDashboard(o: { dashboardUrl?: string; defaulted: boolean }): CheckResult {
   const name = 'dashboard url'
@@ -485,7 +485,7 @@ export function checkDashboard(o: { dashboardUrl?: string; defaulted: boolean })
     return {
       name,
       status: 'warn',
-      message: 'no dashboard URL (kit share links are not printed)',
+      message: 'no dashboard URL (billing checkout will not return to your dashboard)',
       fix: 'set ORCA_DASHBOARD_URL, or run orca auth login',
     }
   }

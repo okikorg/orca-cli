@@ -10,7 +10,6 @@ import type { Agent, AgentSession, AgentSessionItem } from 'openai/resources/bet
 
 import type { Page } from '../lib/api.js'
 import { itemRole, messageText } from '../lib/sessions.js'
-import type { Kit } from '../lib/types.js'
 
 // Result payloads are capped so one tool call cannot flood an agent's
 // context window.
@@ -68,25 +67,6 @@ export function itemSummary(item: AgentSessionItem) {
     return { id: item.id ?? null, type: item.type, role: itemRole(item), turn_id: turnId, text: messageText(item) }
   }
   return shortenStrings(item, ITEM_BODY_CHARS)
-}
-
-// kitSummary drops the readme and counts the selection. get_kit returns the
-// rest.
-export function kitSummary(kit: Kit) {
-  return {
-    id: kit.id,
-    name: kit.name,
-    description: kit.description,
-    author: kit.author,
-    status: kit.status,
-    public_id: kit.public_id,
-    url: kit.url,
-    latest_version: kit.latest_version,
-    agents: kit.selection?.agents?.length ?? 0,
-    skills: kit.selection?.skills?.length ?? 0,
-    templates: kit.selection?.templates?.length ?? 0,
-    updated_at: kit.updated_at,
-  }
 }
 
 // -- Fitting ----------------------------------------------------------------------

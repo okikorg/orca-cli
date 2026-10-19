@@ -187,42 +187,9 @@ export type BillingURL = { url: string }
 
 // -- Kits ---------------------------------------------------------------------
 
-export type KitSelection = { agents: string[]; skills: string[]; templates: string[] }
-
-// A kit of this organization's own (GET /api/kits).
-export type Kit = {
-  id: string
-  object: 'kit'
-  public_id: string | null
-  // The share link, from the server, which knows the dashboard's origin.
-  url: string | null
-  name: string
-  description: string
-  // Who the kit's public page says it is by; empty when unset.
-  author: string
-  readme: string
-  status: string
-  selection: KitSelection
-  latest_version: number | null
-  created_by: string
-  created_at: number
-  updated_at: number
-}
-
-export type KitInput = {
-  name: string
-  description?: string
-  author?: string
-  readme?: string
-  selection: Partial<KitSelection>
-}
-
-export type PublicKitAsset = { key: string; name: string } & Record<string, unknown>
-
-// A credential the copying organization must add: an MCP server, an MCP
-// header, or a template environment variable.
-// A credential a copied kit needs: an MCP server's goes in a vault, a
-// variable is set on the copied template. `asset` is the kit key needing it.
+// A credential the copying organization must add: an MCP server's goes in a
+// vault, a variable is set on the copied template. `asset` is the kit key
+// needing it.
 export type KitCredential = {
   kind: 'mcp_server' | 'environment_variable'
   name: string
@@ -231,20 +198,80 @@ export type KitCredential = {
   server_url?: string | null
 }
 
-// GET /api/public/kits/{public_id}: names and descriptions, never bytes.
-export type PublicKit = {
-  object: 'kit.public'
-  public_id: string
-  // The share link, built by the server.
-  url: string
+// One file of a skill, inline capability or template, as the review shows
+// it: always its path, size and SHA-256; its content in full, or null with
+// hash_only saying why (binary, longer_than_64_kib, review_limit).
+export type KitReviewFile = {
+  path: string
+  size_bytes: number
+  sha256: string
+  content: string | null
+  hash_only: string | null
+}
+
+// An agent's tool as the review shows it. An HTTP MCP server's headers are
+// listed by name only, a stdio one's environment by variable name.
+export type KitReviewTool =
+  | { type: 'web_search'; mode?: string | null; context_size?: string | null; allowed_domains?: string[] | null }
+  | { type: 'function'; name: string; description?: string | null }
+  | {
+      type: 'mcp'
+      server_label: string
+      allowed_tools?: string[] | null
+      required?: boolean | null
+      request_metadata_keys?: string[]
+      transport:
+        | { type: 'http'; server_url: string; header_names: string[] }
+        | { type: 'stdio'; command: string; args?: string[] | null; cwd?: string | null; env_var_names?: string[] | null }
+    }
+  | { type: string }
+
+export type KitReviewAgent = {
+  key: string
   name: string
-  description: string
-  // The author the published version was snapshotted with; may be empty.
-  author: string
-  readme: string
+  model: string | null
+  reasoning_effort: string | null
+  service_tier: string | null
+  team: { enabled: boolean; max_concurrent_subagents: number | null }
+  instructions: string | null
+  tools: KitReviewTool[]
+}
+
+export type KitReviewSkill = { key: string; name: string; description: string | null; files: KitReviewFile[] }
+
+// A template's skill or plugin: a kit skill by its key, or an inline one with
+// its files.
+export type KitReviewCapability =
+  | { type: 'kit_skill'; key: string }
+  | { type: 'inline'; name: string; description: string | null; files: KitReviewFile[] }
+
+export type KitReviewTemplate = {
+  key: string
+  name: string
+  network: { access: string | null; allowed_domains?: string[] | null }
+  packages: { system?: string[] | null; python?: string[] | null; npm?: string[] | null } | null
+  setup_commands: { command: string; cwd?: string | null }[] | null
+  capability_directories: string[] | null
+  files: KitReviewFile[]
+  skills: KitReviewCapability[]
+  plugins: KitReviewCapability[]
+}
+
+// GET /api/public/kits/{public_id}/review: everything the newest version of
+// one of Orca's kits puts in an organization, built by the server. The
+// summaries are the server's, so no client decides what is risky.
+export type KitReview = {
+  object: 'kit.review'
+  public_id: string
   version: number
   published_at: number
-  contents: { agents: PublicKitAsset[]; skills: PublicKitAsset[]; templates: PublicKitAsset[] }
+  publisher: { orca?: boolean }
+  name: string
+  description: string
+  summary: { runs_code: string[]; reaches: string[]; spends: string[] }
+  agents: KitReviewAgent[]
+  skills: KitReviewSkill[]
+  templates: KitReviewTemplate[]
   credentials: KitCredential[]
 }
 

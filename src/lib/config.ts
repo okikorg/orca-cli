@@ -8,7 +8,7 @@ import { CliError, ExitCode } from './errors.js'
 export type ContextConfig = {
   apiUrl?: string
   apiKey?: string
-  // Orca dashboard base URL, for a published kit's share link.
+  // Orca dashboard base URL, where billing checkout and the portal return.
   dashboardUrl?: string
   // Server-side id of the minted key, so `orca auth logout --revoke` can
   // DELETE /api/keys/{keyId}. Absent when the key was passed with --with-token.

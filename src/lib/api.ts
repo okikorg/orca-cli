@@ -19,13 +19,11 @@ import type {
   APIKey,
   APIKeyIssued,
   BillingURL,
-  Kit,
   KitCopyAsset,
   KitCopyResult,
-  KitInput,
+  KitReview,
   ListPage,
   ModelGroups,
-  PublicKit,
   SessionModel,
   UsageEvent,
   UsageSummary,
@@ -233,7 +231,7 @@ export class ApiClient {
   }
 
   // headers omits Authorization when the client has no key, which only the
-  // public kit lookup does.
+  // public kit review does.
   headers(extra?: Record<string, string>): Record<string, string> {
     return {
       'Content-Type': 'application/json',
@@ -359,36 +357,15 @@ export class ApiClient {
 
   // -- Kits ---------------------------------------------------------------------
 
-  async listKits(): Promise<Kit[]> {
-    return (await this.request<ListPage<Kit>>('/api/kits')).data
+  // kitReview reads the review of one of Orca's kits, its newest version,
+  // which needs no credential.
+  kitReview(publicId: string): Promise<KitReview> {
+    return this.request<KitReview>(`/api/public/kits/${enc(publicId)}/review`)
   }
 
-  getKit(id: string): Promise<Kit> {
-    return this.request<Kit>(`/api/kits/${enc(id)}`)
-  }
-
-  createKit(input: KitInput): Promise<Kit> {
-    return this.post<Kit>('/api/kits', input)
-  }
-
-  updateKit(id: string, input: Partial<KitInput>): Promise<Kit> {
-    return this.request<Kit>(`/api/kits/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(input) })
-  }
-
-  publishKit(id: string): Promise<Kit> {
-    return this.post<Kit>(`/api/kits/${enc(id)}/publish`)
-  }
-
-  withdrawKit(id: string): Promise<Kit> {
-    return this.post<Kit>(`/api/kits/${enc(id)}/withdraw`)
-  }
-
-  // publicKit reads a published kit's public page, which needs no credential.
-  publicKit(publicId: string): Promise<PublicKit> {
-    return this.request<PublicKit>(`/api/public/kits/${enc(publicId)}`)
-  }
-
-  copyKit(publicId: string, assets: KitCopyAsset[]): Promise<KitCopyResult> {
-    return this.post<KitCopyResult>(`/api/kits/${enc(publicId)}/copy`, { assets })
+  // copyKit copies the version the review showed. The server answers 409
+  // kit_changed, and copies nothing, if the kit has a newer one.
+  copyKit(publicId: string, version: number, assets: KitCopyAsset[]): Promise<KitCopyResult> {
+    return this.post<KitCopyResult>(`/api/kits/${enc(publicId)}/copy`, { version, assets })
   }
 }

@@ -61,13 +61,38 @@ describe('vaults', () => {
   })
 
   it('lists credentials without any value', async () => {
-    stubFetch({ 'GET /v1/vaults/vault_1/credentials?limit=10': jsonResponse(list([CREDENTIAL])) })
+    stubFetch({
+      ...vaultRoute('vault_1', 'partner-api'),
+      'GET /v1/vaults/vault_1/credentials?limit=10': jsonResponse(list([CREDENTIAL])),
+    })
     await run(['vaults', 'credentials', 'list', 'vault_1'])
     expect(stdout()).toBe('cred_1\taccess\tstatic_bearer\thttps://mcp.example.com\t2026-07-05 10:00\n')
   })
 
+  it('lists credentials by the vault\'s name, as credentials add takes it', async () => {
+    const calls = stubFetch({
+      ...vaultByName('dataforseo', [vault('vault_other', 'other'), vault()]),
+      [`GET /v1/vaults/${VAULT_ID}/credentials?limit=10`]: jsonResponse(list([BASIC])),
+    })
+    await run(['vaults', 'credentials', 'list', 'dataforseo'])
+    expect(calls.map((c) => c.path).at(-1)).toBe(`/v1/vaults/${VAULT_ID}/credentials?limit=10`)
+    expect(stdout()).toBe('cred_2\tdataforseo\tstatic_basic\thttps://mcp.dataforseo.com/mcp\t2026-07-05 10:00\n')
+  })
+
+  it('says no vault has the name, and lists nothing', async () => {
+    const calls = stubFetch(vaultByName('dataforseo', [vault('vault_other', 'other')]))
+    await expect(run(['vaults', 'credentials', 'list', 'dataforseo'])).rejects.toMatchObject({
+      exitCode: ExitCode.NotFound,
+      message: 'no vault named "dataforseo"',
+    })
+    expect(calls.filter((c) => c.path.includes('/credentials'))).toHaveLength(0)
+  })
+
   it('lists a login and password credential with its type', async () => {
-    stubFetch({ 'GET /v1/vaults/vault_1/credentials?limit=10': jsonResponse(list([CREDENTIAL, BASIC])) })
+    stubFetch({
+      ...vaultRoute('vault_1', 'partner-api'),
+      'GET /v1/vaults/vault_1/credentials?limit=10': jsonResponse(list([CREDENTIAL, BASIC])),
+    })
     await run(['vaults', 'credentials', 'list', 'vault_1'])
     expect(stdout().split('\n')[1]).toBe('cred_2\tdataforseo\tstatic_basic\thttps://mcp.dataforseo.com/mcp\t2026-07-05 10:00')
   })

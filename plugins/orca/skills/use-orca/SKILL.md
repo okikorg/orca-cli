@@ -1,6 +1,6 @@
 ---
 name: use-orca
-description: Run AI agents in the cloud with Orca (orcapods.ai). Use this skill whenever the user mentions Orca or orcapods, wants to deploy or run an agent in the cloud, create a cloud agent, chat with one, share or copy a kit, check usage or credit, or manage Orca skills, vaults, or files, even if they do not say "Orca" explicitly but are clearly working against the Orca platform.
+description: Run AI agents in the cloud with Orca (orcapods.ai). Use this skill whenever the user mentions Orca or orcapods, wants to deploy or run an agent in the cloud, create a cloud agent, chat with one, read or copy a kit, check usage or credit, or manage Orca skills, vaults, or files, even if they do not say "Orca" explicitly but are clearly working against the Orca platform.
 ---
 
 # Use Orca
@@ -73,13 +73,14 @@ orca sessions delete <session-id> --yes                 # stops the sandbox; its
 
 `--file <path>[:<dest>]` uploads the file and stages it at `/workspace/<its name>` (or `dest`); it implies `--sandbox` and works with `--session` on a session that has one. Only files saved under `/workspace/outputs` come back as artifacts, when the turn completes.
 
-Share and reuse setups as kits:
+Copy one of Orca's kits. Kits are published by Orca; no organization makes or publishes its own:
 
 ```bash
-orca kits make --name "Support desk" --author "Okik Labs" --agent support --json
-orca kits publish <kit-id> --json            # prints the public id and share link
-orca kits copy <link-or-public-id> --dry-run --json
+orca kits show <link-or-public-id>           # prints what the kit holds: what it runs, reaches and spends, every agent, skill and template in full
+orca kits copy <link-or-public-id> --yes     # only after the person has read that and said yes
 ```
+
+Show the person what `orca kits show` prints, and run `orca kits copy <link> --yes` only after their yes. The copy is pinned to the version it reviews: if the kit changed in between, it copies nothing and prints the new review, so show that and ask again.
 
 Account status (every figure is the server's, in micro-USD; never recompute costs):
 
@@ -101,9 +102,9 @@ For extended work, register Orca's MCP server once:
 claude mcp add orca -- orca mcp serve
 ```
 
-It exposes one tool per CLI action: whoami and keys, agents and `list_models`, sessions, `chat` (sends a message and waits for the reply, returning the session id; it and `create_session` take `files` to stage into the sandbox), `list_artifacts` and `download_artifact`, skills, vaults, files, usage and billing, and kits.
+It exposes one tool per CLI action: whoami and keys, agents and `list_models`, sessions, `chat` (sends a message and waits for the reply, returning the session id; it and `create_session` take `files` to stage into the sandbox), `list_artifacts` and `download_artifact`, skills, vaults, files, usage and billing, and kits (`show_kit` returns a kit's review; call `copy_kit` with the `version` it returned only after the person says yes).
 
-To ask a named agent something, call `chat` with `agent` set to that name and nothing before it: no `list_agents`, no `get_agent`. A new session's `sandbox`, `template` and `vaults` go on that same first `chat` (or on `create_session`). List tools return summaries (an agent's id, name, model and tool types, never its instructions); `get_agent`, `get_session` and `get_kit` return one item in full. Every result is valid JSON: a page too large for one result comes back shorter with `hasMore: true` and `lastId` to pass as `after`, and a long string cut to fit ends in `[shortened from N characters]`.
+To ask a named agent something, call `chat` with `agent` set to that name and nothing before it: no `list_agents`, no `get_agent`. A new session's `sandbox`, `template` and `vaults` go on that same first `chat` (or on `create_session`). List tools return summaries (an agent's id, name, model and tool types, never its instructions); `get_agent` and `get_session` return one item in full. Every result is valid JSON: a page too large for one result comes back shorter with `hasMore: true` and `lastId` to pass as `after`, and a long string cut to fit ends in `[shortened from N characters]`.
 
 ### Kits that need a vault
 
@@ -119,7 +120,7 @@ Some kits research and hand back a brief, and you do the writing in the repo. se
 
 1. Send the repo's context in the message, after the user's words: today's date (the agent has no clock), the posts that exist and the topics picked before (title, URL, target keyword), and the essentials of the kit's site brief (seo-helper keeps it at `.orca/seo-helper/site-brief.md`). At most 8 KB; for a bigger repo, send the newest first. Never repo files, drafts or secrets.
 2. Check any JSON block the reply carries against what you sent, before the user sees it: every number against the thresholds you sent, every topic against the repo, which you can read in full. Drop what fails and say which and why ("Dropped #3: difficulty 67 is over your 35"). If the block is missing or does not parse, ask once: "Send the JSON block again, nothing else"; then show the reply and say the check could not run.
-3. Ask for a brief by the keyword exactly as it appears in the JSON block, never by number alone (seo-helper: `Brief: what is mcp`).
+3. Ask for a brief by the keyword exactly as it appears in the JSON block, never by number alone (seo-helper: `Brief: what is mcp`). Ask for more topics the same way, `More like <keyword>` (seo-helper: `More like what is an mcp server`); a number alone ("more like #2") gets a question back and no research.
 4. Save the brief in the repo, as it came (seo-helper: `.orca/seo-helper/briefs/<slug>.md`).
 5. Measure the length yourself. The brief lists the top 3 competitor URLs and no word counts: fetch those pages and count their words before writing, and keep the post's length in that range unless the repo's rules say otherwise.
 6. Write with the repo's own rules (its `CLAUDE.md` or `AGENTS.md`, its README, its existing files), never the agent's: the brief says what to cover, not how to write it.
