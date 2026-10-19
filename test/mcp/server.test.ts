@@ -666,6 +666,7 @@ describe('orca mcp serve: add_credential', () => {
 
   it('sends a bearer token through /v1, the default type', async () => {
     const calls = stubFetch({
+      ...vaultRoute(),
       [`POST /v1/vaults/${VAULT_ID}/credentials`]: jsonResponse({ ...CREDENTIAL, auth: { type: 'static_bearer', mcp_server_url: SERVER } }),
     })
     const client = await connect()
@@ -676,7 +677,7 @@ describe('orca mcp serve: add_credential', () => {
       })) as ToolText
       expect(res.isError).toBeFalsy()
     }
-    expect(calls.map((c) => JSON.parse(c.body ?? '{}'))).toEqual([
+    expect(calls.filter((c) => c.method === 'POST').map((c) => JSON.parse(c.body ?? '{}'))).toEqual([
       { name: 'dataforseo', auth: { type: 'static_bearer', mcp_server_url: SERVER, token: 'tok-1' } },
       { name: 'dataforseo', auth: { type: 'static_bearer', mcp_server_url: SERVER, token: 'tok-1' } },
     ])
@@ -684,19 +685,22 @@ describe('orca mcp serve: add_credential', () => {
 
   it('sends a login and password through /api for static_basic, and returns neither', async () => {
     const created = { ...CREDENTIAL, auth: { type: 'static_basic', mcp_server_url: SERVER } }
-    const calls = stubFetch({ [`POST /api/vaults/${VAULT_ID}/credentials`]: jsonResponse(created) })
+    const calls = stubFetch({ ...vaultRoute(), [`POST /api/vaults/${VAULT_ID}/credentials`]: jsonResponse(created) })
     const client = await connect()
     const res = (await client.callTool({
       name: 'add_credential',
       arguments: { vault: VAULT_ID, name: 'dataforseo', server: SERVER, type: 'static_basic', login: 'seo@acme.dev', password: 'pw-secret' },
     })) as ToolText
     expect(res.isError).toBeFalsy()
-    expect(calls.map((c) => [c.method, c.path])).toEqual([['POST', `/api/vaults/${VAULT_ID}/credentials`]])
-    expect(JSON.parse(calls[0].body ?? '{}')).toEqual({
+    expect(calls.map((c) => [c.method, c.path])).toEqual([
+      ['GET', `/v1/vaults/${VAULT_ID}`],
+      ['POST', `/api/vaults/${VAULT_ID}/credentials`],
+    ])
+    expect(JSON.parse(calls[1].body ?? '{}')).toEqual({
       name: 'dataforseo',
       auth: { type: 'static_basic', mcp_server_url: SERVER, login: 'seo@acme.dev', password: 'pw-secret' },
     })
-    expect(calls[0].headers.Authorization).toBe('Bearer orca_sk_x')
+    expect(calls[1].headers.Authorization).toBe('Bearer orca_sk_x')
     expect(JSON.parse(firstText(res))).toEqual(created)
     expect(firstText(res)).not.toContain('pw-secret')
   })
@@ -723,6 +727,112 @@ describe('orca mcp serve: add_credential', () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === 'add_credential')
     expect(tool?.description).toContain('Prefer the terminal')
     expect(tool?.description).toContain('--basic --login <login>')
+  })
+})
+
+describe('orca mcp serve: vault tools take a vault id or name', () => {
+  const SERVER = 'https://mcp.dataforseo.com/mcp'
+  const CREDENTIAL = {
+    id: 'cred_1',
+    object: 'vault.credential',
+    vault_id: VAULT_ID,
+    name: 'dataforseo',
+    auth: { type: 'static_bearer', mcp_server_url: SERVER },
+    created_at: 1,
+    updated_at: 1,
+  }
+  const byId = vaultRoute()
+  const byName = vaultByName('dataforseo', [vault('vault_other', 'other'), vault()])
+
+  // Each tool's call, the request it makes once the vault is found, and the
+  // route that answers it.
+  const tools: { name: string; args: (vault: string) => Record<string, unknown>; call: string; route: Record<string, RouteHandler> }[] = [
+    {
+      name: 'list_credentials',
+      args: (v) => ({ vault: v }),
+      call: `GET /v1/vaults/${VAULT_ID}/credentials?limit=20`,
+      route: { [`GET /v1/vaults/${VAULT_ID}/credentials?limit=20`]: jsonResponse(list([CREDENTIAL])) },
+    },
+    {
+      name: 'add_credential',
+      args: (v) => ({ vault: v, name: 'dataforseo', server: SERVER, token: 'tok-1' }),
+      call: `POST /v1/vaults/${VAULT_ID}/credentials`,
+      route: { [`POST /v1/vaults/${VAULT_ID}/credentials`]: jsonResponse(CREDENTIAL) },
+    },
+    {
+      name: 'add_credential (static_basic)',
+      args: (v) => ({ vault: v, name: 'dataforseo', server: SERVER, type: 'static_basic', login: 'seo@acme.dev', password: 'pw' }),
+      call: `POST /api/vaults/${VAULT_ID}/credentials`,
+      route: { [`POST /api/vaults/${VAULT_ID}/credentials`]: jsonResponse({ ...CREDENTIAL, auth: { type: 'static_basic', mcp_server_url: SERVER } }) },
+    },
+    {
+      name: 'delete_credential',
+      args: (v) => ({ vault: v, id: 'cred_1' }),
+      call: `DELETE /v1/vaults/${VAULT_ID}/credentials/cred_1`,
+      route: { [`DELETE /v1/vaults/${VAULT_ID}/credentials/cred_1`]: jsonResponse({ id: 'cred_1', type: 'vault.credential_deleted' }) },
+    },
+    {
+      name: 'delete_vault',
+      args: (v) => ({ id: v }),
+      call: `DELETE /v1/vaults/${VAULT_ID}`,
+      route: { [`DELETE /v1/vaults/${VAULT_ID}`]: jsonResponse({ id: VAULT_ID, type: 'vault_deleted' }) },
+    },
+  ]
+  const toolName = (name: string) => name.split(' ')[0]
+
+  for (const t of tools) {
+    for (const [how, ref, lookup] of [
+      ['an id', VAULT_ID, byId],
+      ['a name', 'dataforseo', byName],
+    ] as const) {
+      it(`${t.name} takes the vault by ${how}`, async () => {
+        const calls = stubFetch({ ...lookup, ...t.route })
+        const client = await connect()
+        const res = (await client.callTool({ name: toolName(t.name), arguments: t.args(ref) })) as ToolText
+        expect(res.isError).toBeFalsy()
+        expect(calls.map((c) => `${c.method} ${c.path}`).at(-1)).toBe(t.call)
+      })
+    }
+
+    it(`${t.name} says no vault has the name, and changes nothing`, async () => {
+      const calls = stubFetch(vaultByName('dataforseo', [vault('vault_other', 'other')]))
+      const client = await connect()
+      const res = (await client.callTool({ name: toolName(t.name), arguments: t.args('dataforseo') })) as ToolText
+      expect(res.isError).toBe(true)
+      expect(firstText(res)).toContain('no vault named "dataforseo"')
+      expect(firstText(res)).toContain('List vaults with: orca vaults list')
+      expect(calls.filter((c) => c.path.includes('/credentials') || c.method !== 'GET')).toHaveLength(0)
+    })
+  }
+
+  it('refuses a vault name two share, listing both ids', async () => {
+    const calls = stubFetch(vaultByName('dataforseo', [vault('vault_1', 'dataforseo'), vault('vault_2', 'dataforseo')]))
+    const client = await connect()
+    for (const t of tools) {
+      const res = (await client.callTool({ name: toolName(t.name), arguments: t.args('dataforseo') })) as ToolText
+      expect(res.isError).toBe(true)
+      expect(firstText(res)).toContain('2 vaults are named "dataforseo"')
+      expect(firstText(res)).toContain('vault_1, vault_2')
+    }
+    expect(calls.filter((c) => c.path.includes('/credentials') || c.method !== 'GET')).toHaveLength(0)
+  })
+
+  it('describes each vault parameter as a vault id or name', async () => {
+    const client = await connect()
+    const described = Object.fromEntries(
+      (await client.listTools()).tools
+        .filter((t) => ['list_credentials', 'add_credential', 'delete_credential', 'delete_vault'].includes(t.name))
+        .map((t) => {
+          const props = (t.inputSchema.properties ?? {}) as Record<string, { description?: string }>
+          return [t.name, (props.vault ?? props.id)?.description]
+        }),
+    )
+    expect(described).toEqual({
+      list_credentials: 'vault id or name',
+      add_credential: 'vault id or name',
+      delete_credential: 'vault id or name',
+      delete_vault: 'vault id or name',
+    })
   })
 })
 

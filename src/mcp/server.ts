@@ -32,6 +32,7 @@ import { resolveContext, type GlobalFlags } from '../lib/config.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { findArtifact, oneDestination, saveArtifact, saveNewestTurn } from '../lib/artifacts.js'
 import { modelRows, withPayer } from '../lib/models.js'
+import { findVault } from '../lib/names.js'
 import { createSession, messageText, sessionCreateParams, sessionView } from '../lib/sessions.js'
 import { collectSkillFiles } from '../lib/skills.js'
 import { prepareFiles, stageIntoSession, type FileSpec } from '../lib/staging.js'
@@ -149,6 +150,8 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     ...(args.after ? { after: args.after as string } : {}),
   })
   const agentId = async (client: ApiClient, ref: unknown) => resolveAgentId(await client.v1(), ref as string)
+  // A vault is an id or the name of exactly one, as --vault takes it.
+  const vaultId = async (client: ApiClient, ref: unknown) => (await findVault(await client.v1(), ref as string)).id
   // Files on this machine to stage into a session's sandbox, as --file does.
   const files = z
     .array(
@@ -462,23 +465,26 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
     (await client.v1()).beta.agents.vaults.create({ name: args.name as string }),
   )
 
-  tool('delete_vault', 'Delete a vault and its credentials (admin).', { id: z.string() }, async (client, args) =>
-    (await client.v1()).beta.agents.vaults.delete(args.id as string),
+  tool(
+    'delete_vault',
+    'Delete a vault and its credentials (admin).',
+    { id: z.string().describe('vault id or name') },
+    async (client, args) => (await client.v1()).beta.agents.vaults.delete(await vaultId(client, args.id)),
   )
 
   tool(
     'list_credentials',
     'List the credentials in a vault. Values are never returned.',
-    { vault: z.string(), limit, after },
+    { vault: z.string().describe('vault id or name'), limit, after },
     async (client, args) =>
-      toPage(await (await client.v1()).beta.agents.vaults.credentials.list(args.vault as string, page(args))),
+      toPage(await (await client.v1()).beta.agents.vaults.credentials.list(await vaultId(client, args.vault), page(args))),
   )
 
   tool(
     'add_credential',
     'Add a credential for an MCP server to a vault (admin): type static_bearer (the default) sends token as a bearer token; static_basic sends login and password as HTTP Basic (such as DataForSEO\'s API login). It is sealed and never returned. Prefer the terminal: a secret passed here sits in your context. Ask the user to run orca vaults credentials add <vault> --name <name> --server <url> (with --basic --login <login> for a login and password) themselves, which reads the secret from a hidden prompt, and never ask them to paste a password into the chat.',
     {
-      vault: z.string().describe('vault id'),
+      vault: z.string().describe('vault id or name'),
       name: z.string(),
       server: z.string().describe('the MCP server URL (https)'),
       type: z.enum(['static_bearer', 'static_basic']).optional().describe('static_bearer (default): token; static_basic: login and password'),
@@ -487,27 +493,33 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
       password: z.string().optional().describe('the password, for static_basic'),
     },
     async (client, args) => {
-      const vault = args.vault as string
       const name = args.name as string
       const server = args.server as string
+      // The fields are checked before the vault is looked up, so a bad call
+      // makes no request.
       if (args.type === 'static_basic') {
         if (args.token !== undefined) throw new CliError('token is for static_bearer; static_basic takes login and password', ExitCode.Usage)
         if (!args.login || !args.password) throw new CliError('static_basic needs login and password', ExitCode.Usage)
+        const vault = await vaultId(client, args.vault)
         return client.createBasicCredential(vault, { name, server, login: args.login as string, password: args.password as string })
       }
       if (args.login !== undefined || args.password !== undefined) {
         throw new CliError('login and password are for type static_basic', ExitCode.Usage)
       }
       if (!args.token) throw new CliError('static_bearer needs token', ExitCode.Usage)
-      return (await client.v1()).beta.agents.vaults.credentials.create(vault, {
+      return (await client.v1()).beta.agents.vaults.credentials.create(await vaultId(client, args.vault), {
         name,
         auth: { type: 'static_bearer', mcp_server_url: server, token: args.token as string },
       })
     },
   )
 
-  tool('delete_credential', 'Delete a credential (admin).', { vault: z.string(), id: z.string() }, async (client, args) =>
-    (await client.v1()).beta.agents.vaults.credentials.delete(args.id as string, { vault_id: args.vault as string }),
+  tool(
+    'delete_credential',
+    'Delete a credential (admin).',
+    { vault: z.string().describe('vault id or name'), id: z.string().describe('credential id') },
+    async (client, args) =>
+      (await client.v1()).beta.agents.vaults.credentials.delete(args.id as string, { vault_id: await vaultId(client, args.vault) }),
   )
 
   // -- Files ----------------------------------------------------------------------
