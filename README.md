@@ -117,7 +117,8 @@ machine ("CLI on laptop", or "Claude Code on laptop" when a coding agent drives
 it): the dashboard's approval page shows that name, and the minted key carries
 it. The dashboard origin comes from the server's verification link and is
 stored with the context; `billing buy` and `billing manage` send it so the
-checkout returns there. Kit share links come from the server.
+checkout returns there. `orca kits show` and `orca kits copy` take an Orca kit's
+link (`https://app.orcapods.ai/kits/kit-...`) or its public id.
 
 `orca auth logout --revoke` revokes the key on the server before forgetting it.
 If the server refuses (a member's CLI key may not be theirs to revoke) or
@@ -147,7 +148,7 @@ server reachability (`GET /health`, with latency), the API key's presence and
 validity and role (`GET /api/whoami`), a credit preflight (`GET
 /api/billing/wallet`: an empty wallet warns, since turns on Orca credit are
 refused while models on your own provider keys keep working), and the dashboard URL
-used for kit share links. Each check reports `pass`, `warn`, `fail`, or `skip`.
+that billing checkout returns to. Each check reports `pass`, `warn`, `fail`, or `skip`.
 The exit code is `0` when nothing failed (warnings are allowed) and `1` when any
 check failed; `--strict` also fails on warnings.
 
@@ -157,7 +158,7 @@ Environment overrides (all optional, win over the config file):
 | -------------------- | ------------------------------------------------------ |
 | `ORCA_API_KEY`       | Orca API key                                           |
 | `ORCA_API_URL`       | server base URL (defaults to the Orca production API)  |
-| `ORCA_DASHBOARD_URL` | dashboard base URL, for kit share links                |
+| `ORCA_DASHBOARD_URL` | dashboard base URL, where billing checkout returns     |
 | `ORCA_CONTEXT`       | context name                                           |
 | `ORCA_CONFIG_DIR`    | config directory (default XDG)                         |
 | `ORCA_ASCII`         | set to `1` to force ASCII glyphs (no Unicode tier)     |
