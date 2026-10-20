@@ -5,8 +5,9 @@ import type { AgentSessionEvent } from 'openai/resources/beta/agents/agents'
 
 import { resolveAgentId } from '../lib/agents.js'
 import { mapApiError, toPage } from '../lib/api.js'
-import { creditOut, otherSide, pickerItems, preselect, refusedAtAdmission } from '../lib/models.js'
+import { creditOut, freeModels, offersFreeModel, otherSide, pickerItems, preselect, refusedAtAdmission } from '../lib/models.js'
 import { CliError, ExitCode } from '../lib/errors.js'
+import { planWords } from '../lib/plan.js'
 import { stripControlSequences } from '../lib/markdown.js'
 import { interactive } from '../lib/output.js'
 import { readStdin } from '../lib/stdin.js'
@@ -78,18 +79,24 @@ function noteStaged(files: readonly StagedFile[]): void {
 const CONTINUE_MESSAGE = 'Continue'
 
 // switcher loads the other side of who pays for a session and switches it.
-// The REPL and the single-shot prompt share it.
-function switcher(api: ApiContext): Switcher {
+// The REPL and the single-shot prompt share it. With freeModel (a Free plan
+// refusal that offers it, free-plan D3.16 F16), the free model the server
+// marks comes first and is preselected. Exported for tests.
+export function switcher(api: ApiContext): Switcher {
   return {
-    load: async (sessionId) =>
+    load: async (sessionId, freeModel = false) =>
       withApi(api, async (c) => {
         const current = await c.sessionModel(sessionId)
         const list = await c.models()
         const side = otherSide(list, current.payer)
+        const free = freeModel ? freeModels(list) : []
+        const freeItems = pickerItems(list, (group) => group.payer === 'orca_credit').filter((item) => free.includes(item.value))
+        const sideItems = pickerItems(list, (group) => side.includes(group)).filter((item) => !free.includes(item.value))
         return {
-          items: pickerItems(list, (group) => side.includes(group)),
-          initial: preselect(side, current.model),
+          items: [...freeItems, ...sideItems],
+          initial: free[0] ?? preselect(side, current.model),
           provider: current.model.split('/')[0] ?? null,
+          ...(free.length ? { freeModel: true } : {}),
         }
       }),
     apply: async (sessionId, model) => {
@@ -101,15 +108,17 @@ function switcher(api: ApiContext): Switcher {
 // offerSwitch says which credit ran out and asks, in one prompt, whether to
 // top up or switch this session, with the design's warning; on switch, the
 // model is picked from the other side (preselected only for the same
-// OpenRouter model) and posted. True means the next turn can go on.
+// OpenRouter model, or the free model when the refusal offers it) and
+// posted. True means the next turn can go on.
 async function offerSwitch(
   api: ApiContext,
   sessionId: string,
   out: 'orca_credit' | 'provider_quota',
   reason: string,
+  freeModel = false,
 ): Promise<boolean> {
   const sessions = switcher(api)
-  const offer = await sessions.load(sessionId)
+  const offer = await sessions.load(sessionId, freeModel)
   process.stderr.write(`${stripControlSequences(reason)}\n`)
   const { render } = await import('ink')
   const { SwitchPrompt } = await import('../ui/SwitchPrompt.js')
@@ -165,10 +174,11 @@ async function runSingleShot(
     // anything else is rethrown as it came.
     const switchedAfterRefusal = async (err: unknown): Promise<null> => {
       const code = err instanceof APIError ? (err.code ?? undefined) : undefined
-      if (refusedAtAdmission(code) && !json && interactive()) {
+      const param = err instanceof APIError ? (err.param ?? undefined) : undefined
+      if (refusedAtAdmission(code) && creditOut(code, param) && !json && interactive()) {
         nameSession()
         const reason = err instanceof Error ? err.message : String(err)
-        if (await offerSwitch(api, sessionId, 'orca_credit', reason)) return null
+        if (await offerSwitch(api, sessionId, 'orca_credit', reason, offersFreeModel(code, param))) return null
       }
       throw err
     }
@@ -184,6 +194,10 @@ async function runSingleShot(
                 // even to a pipe (downstream terminals re-render them).
                 process.stdout.write(stripControlSequences(event.text))
                 wroteText = true
+              } else if (event.type === 'notice') {
+                // The server's notice (free-plan D3.16), on stderr so stdout
+                // stays the reply; noticeText already made it one clean line.
+                process.stderr.write(`${hintText(event.text)}\n`)
               } else {
                 noteTool(event)
               }
@@ -213,7 +227,9 @@ async function runSingleShot(
         await runSingleShot(api, undefined, CONTINUE_MESSAGE, { ...opts, session: sessionId }, json)
         return
       }
-      throw new CliError(result.message || result.errorCode || 'the turn failed', ExitCode.Failure)
+      // A Free plan stop (free-plan D3.16) adds its ways forward as words.
+      const ways = planWords(result.errorCode, result.errorParam)
+      throw new CliError(result.message || result.errorCode || 'the turn failed', ExitCode.Failure, ways.length ? ways : undefined)
     }
     if (result.terminated === 'dropped') {
       throw new CliError('the event stream closed before the turn ended', ExitCode.Failure, [
@@ -250,9 +266,11 @@ async function runRepl(
       return { ...result, sessionId: id }
     } catch (err) {
       const mapped = mapApiError(err, { contextName: api.resolved.name, apiUrl: api.client.apiUrl })
-      // The code stays, so a refusal for Orca credit offers the switch.
+      // The code and param stay, so a refusal for Orca credit offers the
+      // switch and a Free plan refusal its ways forward.
       const errorCode = err instanceof APIError ? (err.code ?? undefined) : undefined
-      return { terminated: 'error' as const, message: mapped.message, errorCode, sessionId: id }
+      const errorParam = err instanceof APIError ? (err.param ?? undefined) : undefined
+      return { terminated: 'error' as const, message: mapped.message, errorCode, errorParam, sessionId: id }
     }
   }
 

@@ -261,6 +261,112 @@ describe('Chat REPL', () => {
   }, 20000)
 })
 
+describe('Chat on the Free plan (free-plan D3.16)', () => {
+  const NETWORK = 'network  off. Network is off on Free sandboxes until your organization has credit.'
+
+  it('shows the server\'s notices in the transcript as they arrive', async () => {
+    const send: SendTurn = async (_message, handlers) => {
+      handlers.onEvent({ type: 'notice', text: NETWORK })
+      handlers.onEvent({ type: 'notice', text: "This turn reached the free model's 25 calls. Send a message to continue." })
+      return { terminated: 'done', message: 'Wrote the script.', sessionId: 'sess_1' }
+    }
+    const { stdin, frames } = render(<Chat agentLabel="support" send={send} onExit={() => {}} />)
+    await waitFor(() => frames.join('').includes('Chat'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('go')
+    await waitFor(() => frames.join('\n').includes('go'))
+    stdin.write('\r')
+    await waitFor(() => frames.join('\n').includes('Wrote the script.'))
+    const all = frames.join('\n').replace(/\s+/g, ' ')
+    expect(all).toContain(NETWORK.replace(/\s+/g, ' '))
+    expect(all).toContain("This turn reached the free model's 25 calls. Send a message to continue.")
+  }, 20000)
+
+  it('after a stop for machine time, prints its ways forward and offers no switch of model', async () => {
+    let loaded = false
+    const send: SendTurn = async () => ({
+      terminated: 'error',
+      message: "Free's 1 included hour this month is used up and this organization has no credit.",
+      errorCode: 'usage_limit_exceeded',
+      errorParam: 'included_hours',
+      sessionId: 'sess_1',
+    })
+    const switcher: Switcher = {
+      load: async () => {
+        loaded = true
+        return { items: [], provider: 'orca' }
+      },
+      apply: async () => {},
+    }
+    const { stdin, frames, lastFrame } = render(<Chat agentLabel="support" send={send} switcher={switcher} onExit={() => {}} />)
+    await waitFor(() => frames.join('').includes('Chat'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('go')
+    await waitFor(() => frames.join('\n').includes('go'))
+    stdin.write('\r')
+    await waitFor(() => frames.join('\n').includes('Add credit: orca billing buy'))
+    expect(frames.join('\n')).toContain('included hour this month is used up')
+    expect(loaded).toBe(false)
+    expect(lastFrame() ?? '').not.toContain('Top up, or switch')
+  }, 20000)
+
+  it('after a model refused on Free, prints the ways forward and offers the free model first', async () => {
+    const sent: string[] = []
+    const send: SendTurn = async (message) => {
+      sent.push(message)
+      if (sent.length === 1) {
+        return {
+          terminated: 'error',
+          message: 'This model needs Pro or Max.',
+          errorCode: 'model_not_in_plan',
+          errorParam: 'agent.model',
+          sessionId: 'sess_1',
+        }
+      }
+      return { terminated: 'done', message: 'Answered on the free model', sessionId: 'sess_1' }
+    }
+    const loads: Array<boolean | undefined> = []
+    const applied: string[] = []
+    const switcher: Switcher = {
+      load: async (_sessionId, freeModel) => {
+        loads.push(freeModel)
+        return {
+          items: [
+            { label: 'orca/openrouter/cohere/north-mini-code:free', value: 'orca/openrouter/cohere/north-mini-code:free' },
+            { label: 'anthropic/claude-sonnet-4-5', value: 'anthropic/claude-sonnet-4-5' },
+          ],
+          initial: 'orca/openrouter/cohere/north-mini-code:free',
+          provider: 'orca',
+          freeModel: true,
+        }
+      },
+      apply: async (_sessionId, model) => {
+        applied.push(model)
+      },
+    }
+    const { stdin, frames, lastFrame } = render(<Chat agentLabel="support" send={send} switcher={switcher} onExit={() => {}} />)
+    await waitFor(() => frames.join('').includes('Chat'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('go')
+    await waitFor(() => frames.join('\n').includes('go'))
+    stdin.write('\r')
+    await waitFor(() => (lastFrame() ?? '').includes('Top up, or switch this session?'))
+    expect(frames.join('\n')).toContain('Upgrade: orca billing buy pro, or orca billing buy max')
+    expect(frames.join('\n')).toContain('Switch this session to the free model (orca chat offers it at a terminal)')
+    expect(lastFrame() ?? '').toContain('Switch this session to the free model or your own key')
+    expect(loads).toEqual([true])
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\r')
+    await waitFor(() => (lastFrame() ?? '').includes('Select a model'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\r')
+    await waitFor(() => frames.join('\n').includes('Answered on the free model'))
+    expect(applied).toEqual(['orca/openrouter/cohere/north-mini-code:free'])
+    // Refused at admission, so the same message goes again.
+    expect(sent).toEqual(['go', 'go'])
+  }, 20000)
+})
+
 describe('Chat web search lines', () => {
   const QUERY = 'rust async runtimes 2026'
   const NO_SEARCH = 'openai/gpt-x answered without searching the web. Use a model with built-in web search: docs.orcapods.ai/providers#web-search'

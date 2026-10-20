@@ -7,8 +7,9 @@ import { theme } from './theme.js'
 
 // What the other side of who pays offers a session: its models, the one to
 // preselect (the same OpenRouter model, if listed), and the provider whose
-// account ran out, for the wording.
-export type SwitchOffer = { items: PickerItem[]; initial?: string; provider: string | null }
+// account ran out, for the wording. freeModel is set when the free model
+// leads the list (free-plan D3.16).
+export type SwitchOffer = { items: PickerItem[]; initial?: string; provider: string | null; freeModel?: boolean }
 
 // How the prompt ended: a model to switch to, a top-up instead, or no model
 // on the other side to switch to.
@@ -18,6 +19,13 @@ type SwitchPromptProps = {
   out: 'orca_credit' | 'provider_quota'
   offer: SwitchOffer
   onDone: (choice: SwitchChoice) => void
+}
+
+// switchLabel names what the switch offers: the free model first when it
+// leads the list, else the other side of who pays.
+function switchLabel(out: SwitchPromptProps['out'], offer: SwitchOffer): string {
+  if (out !== 'orca_credit') return 'Switch this session to Orca credit'
+  return offer.freeModel ? 'Switch this session to the free model or your own key' : 'Switch this session to your own key'
 }
 
 // The switch of who pays after a credit ran out (orca-design model-billing
@@ -47,7 +55,7 @@ export function SwitchPrompt({ out, offer, onDone }: SwitchPromptProps) {
       <Text bold>Top up, or switch this session?</Text>
       <Picker
         items={[
-          { label: out === 'orca_credit' ? 'Switch this session to your own key' : 'Switch this session to Orca credit', value: 'switch' },
+          { label: switchLabel(out, offer), value: 'switch' },
           { label: topUp, value: 'top-up' },
         ]}
         placeholder="choose"

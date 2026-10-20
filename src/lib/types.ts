@@ -151,21 +151,63 @@ export type Wallet = {
   // OpenRouter's credit fee on tokens and searches on Orca credit, in basis
   // points. The CLI shows it and does no arithmetic with it.
   openrouter_fee_bps: number
+  // The Free plan (orca-design free-plan D3.16). Each is absent from a server
+  // older than it.
+  // Granted credit left now, and the rest of the balance, which never
+  // expires: granted credit is spent first.
+  granted_credit_micro_usd?: number
+  paid_credit_micro_usd?: number
+  // Live grants with something left, soonest expiry first.
+  granted_credit?: GrantedCredit[]
+  // Granted credit that expired unspent.
+  expired_micro_usd?: number
+  // The organization's free-model calls today; null on Pro and Max.
+  free_model?: WalletFreeModel | null
+  // The email domain's age withheld the included hours and the free model.
+  included_hours_withheld?: boolean
+  // Free sandboxes have no network until the organization has credit; the
+  // message is the server's, said the same way everywhere.
+  network?: { off: boolean; message?: string }
+  // On Free, where to ask for credit, in the server's words.
+  credit_request?: { message: string; url: string } | null
 }
+
+// One grant with credit left: an operator grant (`grant`, with its reason
+// code) or honoured signup credit (`signup`). expires_at is the first moment
+// it no longer counts, 00:00 UTC the day after its last day.
+export type GrantedCredit = {
+  kind: 'grant' | 'signup'
+  grant_reason: string | null
+  granted_micro_usd: number
+  left_micro_usd: number
+  granted_at: number
+  expires_at: number
+}
+
+// The free model's calls today against the organization's share a day;
+// available is false when it cannot run now.
+export type WalletFreeModel = { calls_today: number; calls_per_day: number; available: boolean }
 
 // -- Models -------------------------------------------------------------------
 
 // Who pays for a model's calls (orca-design model-billing D3.13).
 export type Payer = 'orca_credit' | 'own_key'
 
+// What the organization's plan allows of an Orca credit model (orca-design
+// free-plan D3.16, F16): `free` is the free model (on Free only),
+// `within_ceiling` runs on credit, `pro_and_max` needs Pro or Max.
+export type ModelPlan = 'free' | 'within_ceiling' | 'pro_and_max'
+
 // One model a member can pick. Prices are OpenRouter's, Orca credit only, in
 // micro-USD per million tokens; null where OpenRouter has no fixed price.
+// plan is on Orca credit models only, absent from an older server.
 export type PickModel = {
   id: string
   name?: string
   context_length?: number
   input_micro_usd_per_million?: number | null
   output_micro_usd_per_million?: number | null
+  plan?: ModelPlan
 }
 
 export type ModelGroup = {

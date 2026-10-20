@@ -135,6 +135,39 @@ describe('mapApiError', () => {
     expect(mapApiError(quota, CTX).message).toBe('429: Your plan runs 1 sessions at once')
   })
 
+  it('prints a Free plan refusal as the server wrote it, with its ways forward, never as the key\'s role', () => {
+    // free-plan D3.16: a 403 model_not_in_plan is the plan's answer.
+    const message =
+      'This model needs Pro or Max. On Free, use the free model (cohere/north-mini-code:free), your own key, or a model up to $3/M input and $15/M output on credit you add. Upgrade: https://app.orcapods.ai/settings/plans'
+    const notInPlan = OpenAIAPIError.generate(
+      403,
+      { error: { message, type: 'invalid_request_error', param: 'agent.model', code: 'model_not_in_plan' } },
+      undefined,
+      new Headers(),
+    )
+    expect(mapApiError(notInPlan, CTX)).toMatchObject({
+      exitCode: ExitCode.Failure,
+      message,
+      detail: [
+        'Upgrade: orca billing buy pro, or orca billing buy max',
+        'Switch this session to the free model (orca chat offers it at a terminal)',
+      ],
+    })
+    // The same on the /api client, by code and param.
+    const daily = new ApiError('429', 429, {
+      error: { message: 'Your organization has used today\'s 100 free-model calls.', param: 'free_model_daily', code: 'insufficient_quota' },
+    })
+    expect(mapApiError(daily, CTX)).toMatchObject({
+      exitCode: ExitCode.Failure,
+      message: 'Your organization has used today\'s 100 free-model calls.',
+      detail: ['Add a provider key: in the dashboard, Settings, Providers', 'Upgrade: orca billing buy pro, or orca billing buy max'],
+    })
+    // A 503 for the free model withdrawn is not a retry-later.
+    const gone = new ApiError('503', 503, { error: { message: 'Orca\'s free model is not available right now.', code: 'free_model_unavailable' } })
+    expect(mapApiError(gone, CTX).message).toBe('Orca\'s free model is not available right now.')
+    expect(mapApiError(gone, CTX).detail).toHaveLength(2)
+  })
+
   it('maps an unreachable host to a connectivity error', () => {
     expect(mapApiError(new TypeError('fetch failed'), CTX).message).toContain('cannot reach http://test:8080')
     expect(mapApiError(new APIConnectionError({ message: 'Connection error.' }), CTX).message).toContain('cannot reach')

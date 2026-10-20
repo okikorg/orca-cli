@@ -42,10 +42,12 @@ export type ChatToolStatus = 'running' | 'ok' | 'error' | 'stopped'
 
 // A tool event carries a web search's query and, when it failed, the
 // server's reason (model-billing, Web search, The item), both one line of
-// remote text with control bytes stripped. Other tools carry neither.
+// remote text with control bytes stripped. Other tools carry neither. A
+// notice is one of the server's session notices, as the line to show.
 export type ChatEvent =
   | { type: 'delta'; text: string }
   | { type: 'tool'; id: string; name?: string; status: ChatToolStatus; query?: string; reason?: string }
+  | { type: 'notice'; text: string }
 
 // How a turn ended:
 //   done    - the turn completed (message is the reply text)
@@ -58,7 +60,8 @@ export type ChatTurnResult = {
   message: string
   errorCode?: string
   // The error's param: with usage_limit_exceeded, `orca_credit` or
-  // `provider_quota` says whose credit ran out.
+  // `provider_quota` says whose credit ran out, and Free's stops name
+  // theirs (`included_hours`, `free_model_capacity`, free-plan D3.16).
   errorParam?: string
 }
 
@@ -96,6 +99,20 @@ function toolName(item: AgentOutputItem | AgentSessionItem): string | null {
 function oneLine(text: string, max: number): string {
   const line = stripControlSequences(text).replace(/\s+/g, ' ').trim()
   return line.length > max ? `${line.slice(0, max - 3).trimEnd()}...` : line
+}
+
+// The server's session notices (orca-design free-plan D3.16), each
+// {type, message, at}: machine time nearly used, a turn ended at the free
+// model's calls or at Free's 30 minutes, a sandbox started without network.
+// None ends the turn.
+const NOTICES = new Set(['orca.compute.warning', 'orca.free_model.turn_limit', 'orca.turn.time_limit', 'orca.network.off'])
+
+// noticeText is the line a notice shows: its message as one line, the
+// network's after `network  off.` as every surface says it.
+export function noticeText(event: { type: string; message?: unknown }): string | null {
+  if (!NOTICES.has(event.type) || typeof event.message !== 'string' || !event.message.trim()) return null
+  const message = oneLine(event.message, 500)
+  return event.type === 'orca.network.off' ? `network  off. ${message}` : message
 }
 
 // webSearchQuery is what a web search searched for. The server sets the
@@ -176,6 +193,12 @@ export async function streamTurn(
   try {
     for await (const event of stream) {
       opts.onRaw?.(event)
+      // The SDK's union does not list Orca's notices; they arrive as sent.
+      const notice = noticeText(event as { type: string; message?: unknown })
+      if (notice !== null) {
+        opts.onEvent?.({ type: 'notice', text: notice })
+        continue
+      }
       switch (event.type) {
         case 'agent.session.turn.created':
           if (followed === null && event.turn.subagent_id === null) followed = event.turn_id

@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest'
 
-import { counterpart, creditOut, otherSide, payerOf, pickerItems, preselect, refusedAtAdmission } from '../../src/lib/models.js'
+import {
+  counterpart,
+  creditOut,
+  freeFirst,
+  freeModels,
+  modelRows,
+  offersFreeModel,
+  otherSide,
+  payerOf,
+  pickerItems,
+  preselect,
+  refusedAtAdmission,
+} from '../../src/lib/models.js'
 import { percentBps, tokenPrice } from '../../src/lib/money.js'
 import type { ModelGroups } from '../../src/lib/types.js'
 import { glyphs } from '../../src/ui/theme.js'
@@ -87,5 +99,70 @@ describe('the switch', () => {
     expect(creditOut('insufficient_quota', undefined)).toBe('orca_credit')
     expect(refusedAtAdmission('insufficient_quota')).toBe(true)
     expect(refusedAtAdmission('usage_limit_exceeded')).toBe(false)
+  })
+  it('on Free, offers the switch for a model refused at admission, never for machine time', () => {
+    // free-plan D3.16: a model above the ceiling, or a paid model at $0.
+    expect(creditOut('model_not_in_plan', 'agent.model')).toBe('orca_credit')
+    expect(refusedAtAdmission('model_not_in_plan')).toBe(true)
+    expect(creditOut('insufficient_quota', 'free_plan')).toBe('orca_credit')
+    // No switch of model pays for Free's included hour.
+    expect(creditOut('insufficient_quota', 'included_hours')).toBeNull()
+    expect(creditOut('usage_limit_exceeded', 'included_hours')).toBeNull()
+    // The free model leads the switch only where the refusal offers it.
+    expect(offersFreeModel('model_not_in_plan', 'agent.model')).toBe(true)
+    expect(offersFreeModel('insufficient_quota', 'free_plan')).toBe(true)
+    expect(offersFreeModel('insufficient_quota', 'free_model_daily')).toBe(false)
+    expect(offersFreeModel('insufficient_quota', undefined)).toBe(false)
+  })
+})
+
+// The same list for a Free organization: the server marks the free model
+// and the models above Free's ceiling (free-plan D3.16, F16).
+const FREE = 'orca/openrouter/cohere/north-mini-code:free'
+const FREE_LIST: ModelGroups = {
+  ...LIST,
+  groups: [
+    {
+      ...LIST.groups[0],
+      models: [
+        { ...LIST.groups[0].models[0], plan: 'within_ceiling' },
+        { id: 'orca/openrouter/anthropic/claude-fable-5', input_micro_usd_per_million: 10_000_000, output_micro_usd_per_million: 50_000_000, plan: 'pro_and_max' },
+        { id: FREE, input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' },
+      ],
+    },
+    ...LIST.groups.slice(1),
+  ],
+}
+
+describe('the free model', () => {
+  it('is the one the server marks, only on Free', () => {
+    expect(freeModels(FREE_LIST)).toEqual([FREE])
+    expect(freeModels(LIST)).toEqual([])
+  })
+  it('comes first in a picker, the rest in the server\'s order', () => {
+    const items = freeFirst(pickerItems(FREE_LIST), freeModels(FREE_LIST))
+    expect(items.map((item) => item.value)).toEqual([
+      FREE,
+      'orca/openrouter/openai/gpt-5.6-luna',
+      'orca/openrouter/anthropic/claude-fable-5',
+      'openrouter/openai/gpt-5.6-luna',
+      'anthropic/claude-sonnet-4-5',
+    ])
+    // No free model, no change.
+    expect(freeFirst(pickerItems(LIST), [])).toEqual(pickerItems(LIST))
+  })
+  it('and Pro and Max are marked in the picker\'s detail', () => {
+    const sep = glyphs.separator
+    const items = pickerItems(FREE_LIST)
+    expect(items.find((item) => item.value === FREE)?.detail).toBe(
+      `Orca credit, OpenRouter's price plus their 5.5% fee ${sep} $0.00 in, $0.00 out per million tokens ${sep} free model`,
+    )
+    expect(items.find((item) => item.value.includes('fable'))?.detail).toMatch(/Pro and Max$/)
+    expect(items.find((item) => item.value.endsWith('luna'))?.detail).not.toMatch(/Pro and Max|free model/)
+  })
+  it('keeps its plan in the flat rows the MCP server lists', () => {
+    const rows = modelRows(FREE_LIST, 'north')
+    expect(rows).toEqual([{ id: FREE, payer: 'orca', input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' }])
+    expect(modelRows(LIST, 'claude')[0]).not.toHaveProperty('plan')
   })
 })

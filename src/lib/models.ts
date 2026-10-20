@@ -6,6 +6,7 @@
 import { glyphs } from '../ui/theme.js'
 import { CliError, ExitCode } from './errors.js'
 import { tokenPrice, usdMicro } from './money.js'
+import { planActions, planWord } from './plan.js'
 import type { ModelGroup, ModelGroups, Payer, PickModel } from './types.js'
 
 const ORCA_PREFIX = 'orca/openrouter/'
@@ -71,13 +72,15 @@ export function withPayer(list: ModelGroups, payer?: string): ModelGroups {
   return { ...list, groups }
 }
 
-// ModelRow is one model as a flat row: its name, who pays in one word, and
-// OpenRouter's price where the server gives one.
+// ModelRow is one model as a flat row: its name, who pays in one word,
+// OpenRouter's price where the server gives one, and what the plan allows
+// of an Orca credit model (free-plan D3.16).
 export type ModelRow = {
   id: string
   payer: string
   input_micro_usd_per_million?: number | null
   output_micro_usd_per_million?: number | null
+  plan?: PickModel['plan']
 }
 
 // modelRows flattens the groups into rows, in the server's order, keeping
@@ -92,6 +95,7 @@ export function modelRows(list: ModelGroups, query?: string): ModelRow[] {
         payer: payerWord(group),
         ...(m.input_micro_usd_per_million !== undefined ? { input_micro_usd_per_million: m.input_micro_usd_per_million } : {}),
         ...(m.output_micro_usd_per_million !== undefined ? { output_micro_usd_per_million: m.output_micro_usd_per_million } : {}),
+        ...(m.plan !== undefined ? { plan: m.plan } : {}),
       })),
   )
 }
@@ -99,16 +103,31 @@ export function modelRows(list: ModelGroups, query?: string): ModelRow[] {
 export type ModelItem = { label: string; value: string; detail: string }
 
 // pickerItems lists the groups' models for the terminal picker, in the
-// server's order. The group (who pays) and the price go in each row's
-// detail, since the picker has no headings.
+// server's order. The group (who pays), the price and the plan's mark go in
+// each row's detail, since the picker has no headings.
 export function pickerItems(list: ModelGroups, include: (group: ModelGroup) => boolean = () => true): ModelItem[] {
   return list.groups.filter(include).flatMap((group) => {
     const heading = groupHeading(group, list.openrouter_fee_bps)
     return group.models.map((model) => {
-      const price = priceLine(model)
-      return { label: model.id, value: model.id, detail: price ? `${heading} ${glyphs.separator} ${price}` : heading }
+      const detail = [heading, priceLine(model), planWord(model.plan)].filter(Boolean).join(` ${glyphs.separator} `)
+      return { label: model.id, value: model.id, detail }
     })
   })
+}
+
+// freeModels is the Orca credit models the server marks as the free model,
+// which it does only on Free (free-plan D3.16, F16): the list itself is the
+// server's, from its plan facts, never typed here.
+export function freeModels(list: ModelGroups): string[] {
+  return list.groups
+    .filter((group) => group.payer === 'orca_credit')
+    .flatMap((group) => group.models.filter((model) => model.plan === 'free').map((model) => model.id))
+}
+
+// freeFirst puts the free models' rows first, in the server's order
+// otherwise, so a picker on Free offers the free model first.
+export function freeFirst(items: readonly ModelItem[], free: readonly string[]): ModelItem[] {
+  return [...items.filter((item) => free.includes(item.value)), ...items.filter((item) => !free.includes(item.value))]
 }
 
 // otherSide is the groups a switch from `payer` can pick from.
@@ -126,9 +145,12 @@ export function preselect(groups: readonly ModelGroup[], model: string): string 
 // creditOut names the credit that ran out, from the server's code and
 // param, never its message: a turn it ended (`usage_limit_exceeded` with
 // `orca_credit` or `provider_quota`), or a message it refused at admission
-// for Orca credit (`insufficient_quota`).
+// for Orca credit (`insufficient_quota`, or on Free `model_not_in_plan`).
+// Free's included hour used up (`included_hours`) is machine time, which no
+// switch of model pays for.
 export function creditOut(code: string | undefined, param: string | undefined): 'orca_credit' | 'provider_quota' | null {
-  if (code === 'insufficient_quota') return 'orca_credit'
+  if (code === 'model_not_in_plan') return 'orca_credit'
+  if (code === 'insufficient_quota') return param === 'included_hours' ? null : 'orca_credit'
   if (code !== 'usage_limit_exceeded') return null
   if (param === 'orca_credit' || param === 'provider_quota') return param
   return null
@@ -137,5 +159,12 @@ export function creditOut(code: string | undefined, param: string | undefined): 
 // refusedAtAdmission is a message the server refused before any turn began:
 // after a switch it is sent again, where a turn the server ended continues.
 export function refusedAtAdmission(code: string | undefined): boolean {
-  return code === 'insufficient_quota'
+  return code === 'insufficient_quota' || code === 'model_not_in_plan'
+}
+
+// offersFreeModel is a refusal whose ways forward include switching this
+// session to the free model (free-plan D3.16, F16): the switch then lists
+// the free model first.
+export function offersFreeModel(code: string | undefined, param: string | undefined): boolean {
+  return planActions(code, param).includes('free_model')
 }

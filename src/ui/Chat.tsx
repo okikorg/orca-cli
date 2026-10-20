@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { ChatEvent, ChatToolStatus, ChatTurnResult } from '../lib/sessions.js'
 import { renderMarkdown, stripControlSequences } from '../lib/markdown.js'
-import { creditOut, refusedAtAdmission } from '../lib/models.js'
+import { creditOut, offersFreeModel, refusedAtAdmission } from '../lib/models.js'
+import { planWords } from '../lib/plan.js'
 import { SwitchPrompt, type SwitchChoice, type SwitchOffer } from './SwitchPrompt.js'
 import { colorEnabled, glyphs, theme } from './theme.js'
 
@@ -21,9 +22,10 @@ export type SendTurn = (
 
 // Switcher is the switch of who pays for the session (orca-design
 // model-billing D3.13), injected like send: `load` reads the other side's
-// models (with the one to preselect, if any), `apply` posts the choice.
+// models (with the one to preselect, if any), and with freeModel the free
+// model first (free-plan D3.16); `apply` posts the choice.
 export type Switcher = {
-  load: (sessionId: string) => Promise<SwitchOffer>
+  load: (sessionId: string, freeModel?: boolean) => Promise<SwitchOffer>
   apply: (sessionId: string, model: string) => Promise<void>
 }
 
@@ -288,6 +290,10 @@ export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: C
             // (not the delta) also catches sequences split across deltas.
             accum += event.text
             setLiveText(stripControlSequences(accum))
+          } else if (event.type === 'notice') {
+            // The server's notice (free-plan D3.16) goes in the transcript
+            // as it arrives; the turn goes on.
+            pushItem({ kind: 'note', text: event.text })
           } else if (event.type === 'tool') {
             const previous = tools.get(event.id)
             tools.set(event.id, {
@@ -336,6 +342,9 @@ export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: C
     } else {
       // terminated === 'error'
       pushItem({ kind: 'error', message: result.message || result.errorCode || 'upstream error' })
+      // A Free plan refusal or stop: its ways forward, as words.
+      const ways = planWords(result.errorCode, result.errorParam)
+      if (ways.length) pushItem({ kind: 'note', text: ways.join('\n') })
       // A credit ran out: ask whether to top up or switch who pays. Nothing
       // switches on its own.
       const out = creditOut(result.errorCode, result.errorParam)
@@ -343,7 +352,7 @@ export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: C
       const sessionId = sessionRef.current
       if (out && switcher && sessionId) {
         switcher
-          .load(sessionId)
+          .load(sessionId, offersFreeModel(result.errorCode, result.errorParam))
           .then((offer) => setPause({ out, offer, resend }))
           .catch((err: unknown) => pushItem({ kind: 'error', message: err instanceof Error ? err.message : String(err) }))
       }
