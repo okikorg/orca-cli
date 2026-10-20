@@ -15,12 +15,17 @@ import {
   addSessionCreateOptions,
   createSession,
   filesFromFlags,
+  goingToSleep,
   itemRole,
   itemText,
+  requestSleep,
+  sandboxStateWords,
   sessionUsageRows,
   payerLabel,
   sessionEnvironment,
   sessionView,
+  sleepFailure,
+  waitForSleep,
   type SessionCreateFlags,
 } from '../lib/sessions.js'
 import { stagedNote } from '../lib/staging.js'
@@ -56,6 +61,9 @@ function sessionStatusColor(
       return undefined
   }
 }
+
+// How long `sessions sleep` waits for the sandbox to be asleep.
+const SLEEP_WAIT_MS = 10 * 60 * 1000
 
 export function registerSessions(program: Command): void {
   const sessions = program.command('sessions').description('manage agent sessions (conversations)')
@@ -140,6 +148,7 @@ export function registerSessions(program: Command): void {
           ['payer', session.payer ?? '-'],
           ['status', session.status],
           ['environment', session.environment.type],
+          ...(session.sandbox ? [['sandbox', session.sandbox]] : []),
           ['created', formatTime(session.created_at)],
           ['lastActive', formatTime(session.last_active_at)],
           ...rows.map((row) => [row.key, row.plain]),
@@ -162,6 +171,7 @@ export function registerSessions(program: Command): void {
           />
           <Field width={LABEL_WIDTH} label="pays" value={payerLabel(session.payer)} />
           <Field width={LABEL_WIDTH} label="environment" value={session.environment.type} />
+          {session.sandbox ? <Field width={LABEL_WIDTH} label="sandbox" value={sandboxStateWords(session.sandbox)} /> : null}
           <Field width={LABEL_WIDTH} label="created" value={formatTime(session.created_at)} />
           <Field width={LABEL_WIDTH} label="last active" value={formatTime(session.last_active_at)} />
           {rows.map((row) => (
@@ -327,6 +337,45 @@ export function registerSessions(program: Command): void {
       }
       for (const file of saved) {
         console.error(`${accentVerb('Saved')} ${file.id} to ${path.relative(process.cwd(), file.path) || file.path}.`)
+      }
+    })
+
+  // Sleep (sandbox-sleep D6.7): the server saves /workspace and stops the
+  // sandbox after it answers, so the command reads the sandbox every second
+  // until the sleep ends. Past SLEEP_WAIT_MS it stops waiting; the sleep goes
+  // on without it.
+  sessions
+    .command('sleep <id>')
+    .description('put a session\'s sandbox to sleep now; its next message wakes it')
+    .option('--no-wait', 'return once the sandbox starts going to sleep')
+    // The global --json; listed here so the help says what it prints.
+    .option('--json', 'print the session.sandbox object')
+    .action(async (id: string, opts: { wait: boolean }, cmd: Command) => {
+      const flags = globalFlags(cmd)
+      const json = outputMode(flags) === 'json'
+      const api = await apiContext(cmd)
+      let view = await withApi(api, (c) => requestSleep(c, id))
+      const started = goingToSleep(view)
+      if (started && opts.wait) {
+        if (!json) console.error(hintText(`Putting the sandbox of session ${id} to sleep...`))
+        view = await withApi(api, (c) => waitForSleep(c, id, view, Date.now() + SLEEP_WAIT_MS))
+      }
+      if (json) printJson(view)
+      const failure = sleepFailure(view)
+      if (failure) throw new CliError(failure, ExitCode.Failure)
+      if (json) return
+      if (goingToSleep(view)) {
+        console.log(`The sandbox of session ${id} is going to sleep. Check with: orca sessions get ${id}`)
+      } else if (view.state === 'none') {
+        console.log(`Session ${id} has no sandbox to put to sleep.`)
+      } else if (view.state === 'asleep' && !started) {
+        console.log(`The sandbox of session ${id} is already asleep.`)
+      } else if (view.state === 'asleep' || view.last_sleep?.outcome === 'asleep') {
+        console.log(
+          `${accentVerb('Asleep.')} Session ${id} keeps its conversation and the files in /workspace; machine time has stopped. Its next message wakes it.`,
+        )
+      } else {
+        console.log(`The sandbox of session ${id} is ${sandboxStateWords(view.state)}.`)
       }
     })
 

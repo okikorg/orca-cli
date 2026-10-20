@@ -2,7 +2,7 @@ import OpenAI from 'openai'
 import type { AgentSessionItem } from 'openai/resources/beta/agents/agents'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { itemText, streamTurn, type ChatEvent } from '../../src/lib/sessions.js'
+import { itemText, sandboxStateWords, streamTurn, type ChatEvent } from '../../src/lib/sessions.js'
 import { stubFetch } from '../helpers/fetch-mock.js'
 import { SESSION_ID, session, turnRoutes } from '../helpers/session-events.js'
 
@@ -109,5 +109,18 @@ describe('itemText web search lines', () => {
     expect(text(webSearch('ws_5', 'completed', { action: { type: 'search', query: null, queries: ['one', 'two'] } }))).toBe(
       'tool web_search "one, two"',
     )
+  })
+})
+
+describe('sandboxStateWords', () => {
+  it('says each state in words and shows a state it does not know as sent', () => {
+    expect(['none', 'awake', 'going_to_sleep', 'asleep', 'waking', 'hibernating'].map(sandboxStateWords)).toEqual([
+      'none',
+      'awake',
+      'going to sleep',
+      'asleep',
+      'waking up',
+      'hibernating',
+    ])
   })
 })
