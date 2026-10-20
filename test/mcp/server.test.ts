@@ -487,6 +487,37 @@ describe('orca mcp serve: models, artifacts and staged files', () => {
     expect(firstText(unknown)).toContain('Payers: orca, anthropic')
   })
 
+  it('list_models carries each Orca credit model\'s plan mark, and its description names it (free-plan D3.16)', async () => {
+    const free = { id: 'orca/openrouter/cohere/north-mini-code:free', input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' }
+    const marked = { ...MODELS, groups: [{ ...MODELS.groups[0], models: [free] }, MODELS.groups[1]] }
+    stubFetch({ 'GET /api/models': jsonResponse(marked) })
+    const client = await connect()
+    const rows = JSON.parse(firstText(await client.callTool({ name: 'list_models', arguments: { payer: 'orca' } })))
+    expect(rows.items).toEqual([{ ...free, payer: 'orca' }])
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'list_models')
+    for (const word of ['plan', 'free', 'within_ceiling', 'pro_and_max']) expect(tool?.description).toContain(word)
+  })
+
+  it('get_wallet\'s description names granted and paid credit and the Free plan fields (free-plan D3.16)', async () => {
+    const client = await connect()
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'get_wallet')
+    for (const field of [
+      'granted_credit_micro_usd',
+      'paid_credit_micro_usd',
+      'granted_credit',
+      'left_micro_usd',
+      'expires_at',
+      'expired_micro_usd',
+      'free_model',
+      'calls_today',
+      'network',
+      'credit_request',
+      'included_hours_withheld',
+    ]) {
+      expect(tool?.description).toContain(field)
+    }
+  })
+
   it('list_artifacts returns a page of the session\'s artifacts', async () => {
     stubFetch({
       [`GET ${ARTIFACTS}?limit=20`]: jsonResponse(list([artifact('art_2', '/workspace/outputs/primes.txt', 'turn_2')])),

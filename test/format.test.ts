@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatCount, formatDate, formatTime } from '../src/lib/format.js'
+import { formatCount, formatDate, formatDayMonth, formatDayShort, formatHours, formatTime } from '../src/lib/format.js'
 import { belowZeroNote, usdCents, usdMicro } from '../src/lib/money.js'
 
 describe('formatTime', () => {
@@ -17,6 +17,23 @@ describe('formatTime', () => {
 describe('formatDate', () => {
   it('renders the UTC calendar day', () => {
     expect(formatDate(1_783_245_600)).toBe('2026-07-05')
+  })
+})
+
+describe('the wallet\'s dates and hours (free-plan D3.16)', () => {
+  it('render a reset day as day and month, and a grant\'s day with the year, in UTC', () => {
+    // 2026-11-01 00:00 UTC, when Free's October period resets.
+    expect(formatDayMonth(1_793_491_200)).toBe('1 November')
+    // 2026-12-04 23:59:59 UTC.
+    expect(formatDayShort(1_796_428_799)).toBe('4 Dec 2026')
+  })
+  it('render hours to a tenth, rounded down, with thousands', () => {
+    expect(formatHours(3_600)).toBe('1 h')
+    expect(formatHours(1_440)).toBe('0.4 h')
+    expect(formatHours(3_599)).toBe('0.9 h')
+    expect(formatHours(0)).toBe('0 h')
+    expect(formatHours(216_000)).toBe('60 h')
+    expect(formatHours(3_600_000)).toBe('1,000 h')
   })
 })
 

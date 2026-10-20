@@ -6,6 +6,7 @@ import { formatDate } from '../lib/format.js'
 import { belowZeroNote, usdMicro } from '../lib/money.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import type { BillingURL } from '../lib/types.js'
+import { creditRequest, grantLastDay, networkOff } from '../lib/wallet.js'
 import { hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
@@ -47,7 +48,7 @@ export function registerBilling(program: Command): void {
 
   billing
     .command('wallet')
-    .description('show the balance, plan, period, and the credit packs on sale')
+    .description('show the balance, granted and paid credit, plan, period, machine time, and the credit packs on sale')
     .action(async (_opts: Record<string, never>, cmd: Command) => {
       const flags = globalFlags(cmd)
       const api = await apiContext(cmd)
@@ -71,11 +72,34 @@ export function registerBilling(program: Command): void {
           ['included_compute_seconds', wallet.included_compute_seconds],
           ['packs', wallet.packs.map((p) => `pack:${p.cents}`).join(',') || '-'],
           ['openrouter_fee_bps', wallet.openrouter_fee_bps],
+          // Granted and paid credit, and the Free plan (free-plan D3.16),
+          // where the server sends them: one row per grant, with what is
+          // left, what was granted and its last day.
+          ...(wallet.granted_credit_micro_usd !== undefined ? [['granted_credit', usdMicro(wallet.granted_credit_micro_usd)]] : []),
+          ...(wallet.paid_credit_micro_usd !== undefined ? [['paid_credit', usdMicro(wallet.paid_credit_micro_usd)]] : []),
+          ...(wallet.granted_credit ?? []).map((g) => [
+            'grant',
+            usdMicro(g.left_micro_usd),
+            usdMicro(g.granted_micro_usd),
+            formatDate(grantLastDay(g)),
+          ]),
+          ...(wallet.expired_micro_usd !== undefined ? [['expired', usdMicro(wallet.expired_micro_usd)]] : []),
+          ...(wallet.free_model
+            ? [
+                ['free_model_calls_today', wallet.free_model.calls_today],
+                ['free_model_calls_per_day', wallet.free_model.calls_per_day],
+              ]
+            : []),
+          ...(wallet.network ? [['network_off', String(wallet.network.off)]] : []),
         ])
-        // The rows stay key and value for cut and grep; the note goes to
+        // The rows stay key and value for cut and grep; the notes go to
         // stderr, as the CLI's other hints do.
         const note = belowZeroNote(wallet.balance_micro_usd, wallet.min_balance_micro_usd)
         if (note) console.error(hintText(note))
+        const network = networkOff(wallet)
+        if (network) console.error(hintText(`network  ${network}`))
+        const moreCredit = creditRequest(wallet)
+        if (moreCredit) console.error(hintText(`more credit  ${moreCredit}`))
         return
       }
       const { WalletView } = await import('../ui/WalletView.js')
