@@ -2,12 +2,12 @@ import { mkdir, mkdtemp, readdir, readFile, truncate, writeFile } from 'node:fs/
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { registerSessions } from '../../src/commands/sessions.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import { commandHarness, list } from '../helpers/cli.js'
-import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
+import { jsonResponse, stubFetch, type RouteHandler } from '../helpers/fetch-mock.js'
 import {
   AGENT_ID,
   SESSION_ID,
@@ -15,6 +15,7 @@ import {
   artifact,
   bytesRoute,
   hostedSession,
+  sandboxView,
   session,
   sessionModelRoute,
   templateRoute,
@@ -159,6 +160,189 @@ describe('sessions', () => {
     await expect(run(['sessions', 'delete', SESSION_ID])).rejects.toMatchObject({ exitCode: ExitCode.Usage })
     await run(['sessions', 'delete', SESSION_ID, '--yes'])
     expect(calls).toHaveLength(1)
+  })
+})
+
+const SANDBOX = `/api/sessions/${SESSION_ID}/sandbox`
+const SLEEP = `POST ${SANDBOX}/sleep`
+
+// getRoutes is what `sessions get` reads, with the sandbox route given.
+function getRoutes(sandbox: Record<string, RouteHandler>) {
+  return {
+    [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(hostedSession()),
+    [`GET /api/usage?start=0&session=${SESSION_ID}&group_by=model`]: jsonResponse({
+      object: 'usage.summary', start: 0, end: 1, session_id: SESSION_ID, cost_micro_usd: 0, meters: [], daily: [], groups: [],
+    }),
+    ...sessionModelRoute(),
+    ...sandbox,
+  }
+}
+
+// views answers each GET with the next view, then keeps answering the last.
+function views(...rows: ReturnType<typeof sandboxView>[]): RouteHandler {
+  let i = 0
+  return (call) => jsonResponse(rows[Math.min(i++, rows.length - 1)])(call)
+}
+
+// runOnFakeClock runs one command on a fake clock, stepping it a second at a
+// time, so the sleep's one-second polls and its 10-minute limit stay fast.
+async function runOnFakeClock(args: string[]): Promise<void> {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] })
+  try {
+    let settled = false
+    const done = run(args).finally(() => {
+      settled = true
+    })
+    done.catch(() => {})
+    while (!settled) await vi.advanceTimersByTimeAsync(1000)
+    await done
+  } finally {
+    vi.useRealTimers()
+  }
+}
+
+describe('sessions get: sandbox', () => {
+  it('shows where the sandbox is', async () => {
+    stubFetch(getRoutes({ [`GET ${SANDBOX}`]: jsonResponse(sandboxView('going_to_sleep', {})) }))
+    await run(['sessions', 'get', SESSION_ID])
+    expect(stdout()).toContain('environment\topenai_hosted\nsandbox\tgoing_to_sleep\n')
+  })
+
+  it('leaves the sandbox out when the server cannot say', async () => {
+    stubFetch(getRoutes({ [`GET ${SANDBOX}`]: jsonResponse({ error: { message: 'no route', code: 'not_found' } }, { status: 404 }) }))
+    await run(['sessions', 'get', SESSION_ID])
+    expect(stdout()).toContain('status\tidle')
+    expect(stdout()).not.toContain('sandbox')
+  })
+
+  it('adds sandbox to the --json object', async () => {
+    stubFetch(getRoutes({ [`GET ${SANDBOX}`]: jsonResponse(sandboxView('asleep', { outcome: 'asleep', reason: 'idle' })) }))
+    await run(['--json', 'sessions', 'get', SESSION_ID])
+    expect(JSON.parse(stdout())).toMatchObject({ id: SESSION_ID, sandbox: 'asleep' })
+  })
+})
+
+describe('sessions sleep', () => {
+  const ASLEEP_LINE = `Asleep. Session ${SESSION_ID} keeps its conversation and the files in /workspace; machine time has stopped. Its next message wakes it.\n`
+  const GOING_LINE = `The sandbox of session ${SESSION_ID} is going to sleep. Check with: orca sessions get ${SESSION_ID}\n`
+
+  it('puts the sandbox to sleep and waits until it is asleep', async () => {
+    const calls = stubFetch({
+      [SLEEP]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+      [`GET ${SANDBOX}`]: views(
+        sandboxView('going_to_sleep', {}),
+        sandboxView('asleep', { outcome: 'asleep', finished_at: 1_783_245_609 }),
+      ),
+    })
+    await runOnFakeClock(['sessions', 'sleep', SESSION_ID])
+    expect(stderr()).toContain(`Putting the sandbox of session ${SESSION_ID} to sleep...`)
+    expect(stdout()).toBe(ASLEEP_LINE)
+    const post = calls.find((c) => c.method === 'POST')
+    expect(post?.path).toBe(`${SANDBOX}/sleep`)
+    expect(post?.body).toBeUndefined()
+    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(2)
+  })
+
+  it('shows a sleep with a reason it does not know as asleep', async () => {
+    stubFetch({
+      [SLEEP]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+      [`GET ${SANDBOX}`]: views(sandboxView('asleep', { reason: 'night_shift', outcome: 'asleep' })),
+    })
+    await runOnFakeClock(['sessions', 'sleep', SESSION_ID])
+    expect(stdout()).toBe(ASLEEP_LINE)
+  })
+
+  it('says when the sandbox is already asleep', async () => {
+    const calls = stubFetch({ [SLEEP]: jsonResponse(sandboxView('asleep', { reason: 'idle', outcome: 'asleep' })) })
+    await run(['sessions', 'sleep', SESSION_ID])
+    expect(stdout()).toBe(`The sandbox of session ${SESSION_ID} is already asleep.\n`)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('says when the session has no sandbox', async () => {
+    stubFetch({ [SLEEP]: jsonResponse(sandboxView('none')) })
+    await run(['sessions', 'sleep', SESSION_ID])
+    expect(stdout()).toBe(`Session ${SESSION_ID} has no sandbox to put to sleep.\n`)
+  })
+
+  it('returns once the sleep starts with --no-wait', async () => {
+    const calls = stubFetch({ [SLEEP]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }) })
+    await run(['sessions', 'sleep', SESSION_ID, '--no-wait'])
+    expect(stdout()).toBe(GOING_LINE)
+    expect(stderr()).toBe('')
+    expect(calls).toHaveLength(1)
+  })
+
+  it('stops waiting after 10 minutes and exits 0', async () => {
+    const calls = stubFetch({
+      [SLEEP]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+      [`GET ${SANDBOX}`]: jsonResponse(sandboxView('going_to_sleep', {})),
+    })
+    await runOnFakeClock(['sessions', 'sleep', SESSION_ID])
+    expect(stdout()).toBe(GOING_LINE)
+    const polls = calls.filter((c) => c.method === 'GET').length
+    expect(polls).toBeGreaterThanOrEqual(599)
+    expect(polls).toBeLessThanOrEqual(601)
+  })
+
+  it.each([
+    ['too_large', 'The sandbox stayed awake: its files are too large to save while it sleeps (over 1 GiB compressed). Delete files in /workspace, then try again.'],
+    ['failed', 'The sandbox stayed awake: its files could not be saved. Try again, or ask on Discord: https://discord.gg/btTYzdzvqq'],
+    ['interrupted', 'The sandbox stayed awake: a message or a file request reached it before it was asleep.'],
+  ])('exits 1 with the server\'s message when the sleep ends %s', async (outcome, message) => {
+    stubFetch({
+      [SLEEP]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+      [`GET ${SANDBOX}`]: views(sandboxView('awake', { outcome, message, finished_at: 1_783_245_609 })),
+    })
+    await expect(runOnFakeClock(['sessions', 'sleep', SESSION_ID])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+      message,
+    })
+    expect(stdout()).toBe('')
+  })
+
+  it.each([
+    'A turn is running; put the sandbox to sleep once it ends.',
+    'The sandbox is waking up; put it to sleep once it is awake.',
+  ])('exits 1 with the server\'s message on a refusal: %s', async (message) => {
+    stubFetch({ [SLEEP]: jsonResponse({ error: { message, type: 'conflict', param: null, code: 'conflict' } }, { status: 409 }) })
+    await expect(run(['sessions', 'sleep', SESSION_ID])).rejects.toMatchObject({ exitCode: ExitCode.Failure, message })
+  })
+
+  it('fails as not found for an unknown session', async () => {
+    stubFetch({ [SLEEP]: jsonResponse({ error: { message: 'session not found', code: 'not_found' } }, { status: 404 }) })
+    await expect(run(['sessions', 'sleep', SESSION_ID])).rejects.toMatchObject({ exitCode: ExitCode.NotFound })
+  })
+
+  it('prints the final session.sandbox object with --json', async () => {
+    const asleep = sandboxView('asleep', { outcome: 'asleep', finished_at: 1_783_245_609 })
+    stubFetch({
+      [SLEEP]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+      [`GET ${SANDBOX}`]: views(asleep),
+    })
+    await runOnFakeClock(['sessions', 'sleep', SESSION_ID, '--json'])
+    expect(JSON.parse(stdout())).toEqual(asleep)
+    expect(stderr()).toBe('')
+  })
+
+  it('prints the object and still exits 1 with --json when the sandbox stayed awake', async () => {
+    const message = 'The sandbox stayed awake: its files could not be saved. Try again, or ask on Discord: https://discord.gg/btTYzdzvqq'
+    const failed = sandboxView('awake', { outcome: 'failed', message })
+    stubFetch({
+      [SLEEP]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+      [`GET ${SANDBOX}`]: views(failed),
+    })
+    await expect(runOnFakeClock(['--json', 'sessions', 'sleep', SESSION_ID])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+      message,
+    })
+    expect(JSON.parse(stdout())).toEqual(failed)
+  })
+
+  it('prints the going-to-sleep object with --json --no-wait', async () => {
+    stubFetch({ [SLEEP]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }) })
+    await run(['sessions', 'sleep', SESSION_ID, '--no-wait', '--json'])
+    expect(JSON.parse(stdout())).toMatchObject({ object: 'session.sandbox', state: 'going_to_sleep' })
   })
 })
 

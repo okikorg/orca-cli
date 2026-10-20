@@ -33,7 +33,14 @@ import { CliError, ExitCode } from '../lib/errors.js'
 import { findArtifact, oneDestination, saveArtifact, saveNewestTurn } from '../lib/artifacts.js'
 import { modelRows, withPayer } from '../lib/models.js'
 import { findVault } from '../lib/names.js'
-import { createSession, messageText, sessionCreateParams, sessionView } from '../lib/sessions.js'
+import {
+  createSession,
+  messageText,
+  requestSleep,
+  sessionCreateParams,
+  sessionView,
+  waitForSleep,
+} from '../lib/sessions.js'
 import { collectSkillFiles } from '../lib/skills.js'
 import { prepareFiles, stageIntoSession, type FileSpec } from '../lib/staging.js'
 import { uploadFile } from '../lib/transfer.js'
@@ -289,7 +296,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'get_session',
-    'Fetch one session: status, environment, error; model (what its next turn runs on), agent_model and payer (orca_credit or own_key); and usage: its all-time usage summary by model with cost in micro-USD.',
+    'Fetch one session: status, environment, error; model (what its next turn runs on), agent_model and payer (orca_credit or own_key); sandbox (none, awake, going_to_sleep, asleep or waking); and usage: its all-time usage summary by model with cost in micro-USD.',
     { id: z.string() },
     async (client, args) => sessionView(client, args.id as string),
   )
@@ -347,6 +354,21 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
       if (args.all) return saveNewestTurn(v1, sessionId, target)
       const artifact = await findArtifact(v1, sessionId, args.artifact as string)
       return saveArtifact(v1, artifact, await oneDestination(artifact, target))
+    },
+  )
+
+  // Waits less than the CLI's 10 minutes: an MCP call is request and
+  // response, and the sleep goes on after the tool returns. The last poll
+  // starts by 55 seconds in, so the answer lands inside the 60-second request
+  // timeout MCP clients default to.
+  tool(
+    'sleep_session',
+    'Put a session\'s sandbox to sleep now. Files in /workspace are saved and machine time stops; the conversation stays, and the next message wakes it. Running programs stop and do not come back. Refused while a turn runs. Waits up to 60 seconds and returns state and last_sleep.',
+    { id: z.string() },
+    async (client, args) => {
+      const id = args.id as string
+      const deadline = Date.now() + 55_000
+      return waitForSleep(client, id, await requestSleep(client, id), deadline)
     },
   )
 

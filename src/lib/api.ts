@@ -25,6 +25,7 @@ import type {
   ListPage,
   ModelGroups,
   SessionModel,
+  SessionSandbox,
   UsageEvent,
   UsageSummary,
   Wallet,
@@ -340,6 +341,19 @@ export class ApiClient {
   // setSessionModel switches who pays for one session, from its next turn.
   setSessionModel(sessionId: string, model: string): Promise<SessionModel> {
     return this.post<SessionModel>(`/api/sessions/${enc(sessionId)}/model`, { model })
+  }
+
+  // -- Sandbox sleep ------------------------------------------------------------
+
+  sessionSandbox(sessionId: string): Promise<SessionSandbox> {
+    return this.request<SessionSandbox>(`/api/sessions/${enc(sessionId)}/sandbox`)
+  }
+
+  // sleepSessionSandbox starts putting a session's sandbox to sleep. The
+  // server answers at once, going_to_sleep while it saves the files; how the
+  // sleep went is read with sessionSandbox.
+  sleepSessionSandbox(sessionId: string): Promise<SessionSandbox> {
+    return this.post<SessionSandbox>(`/api/sessions/${enc(sessionId)}/sandbox/sleep`)
   }
 
   // -- Credentials --------------------------------------------------------------

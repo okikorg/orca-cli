@@ -196,6 +196,7 @@ orca sessions create --agent <agent> [--sandbox] [--template t] [--vault v]... [
 orca sessions items <id> [--limit n]
 orca sessions artifacts <session>       # files its turns saved under /workspace/outputs
 orca sessions artifacts download <session> [artifact] [-o path|-] [--all]
+orca sessions sleep <id> [--no-wait]     # put its sandbox to sleep now; its next message wakes it
 orca sessions delete <id> [--yes]
 
 orca usage [--days n] [--group-by model|provider|credential|session|agent] [--session id] [--meter m]
@@ -420,7 +421,8 @@ claude mcp add orca -- orca mcp serve
 
 `orca mcp serve` speaks MCP over stdio with one tool per CLI action: identity
 and keys, agents and models, sessions and `chat` (which sends a message and
-waits for the reply; it and `create_session` take `files` to stage), a session's
+waits for the reply; it and `create_session` take `files` to stage),
+`sleep_session` (puts a session's sandbox to sleep now), a session's
 artifacts, skills, vaults, files, usage and billing, and kits (`show_kit` and
 `copy_kit`, which copies the version `show_kit` returned). The
 commands that only touch this machine (login, logout, context, doctor, update)

@@ -68,6 +68,7 @@ Work on a file in a sandbox, and get the results back:
 orca chat <agent> --file sales.csv "Chart /workspace/sales.csv into /workspace/outputs/chart.png"
 orca sessions artifacts <session-id> --json             # what the agent saved under /workspace/outputs
 orca sessions artifacts download <session-id> --all -o results
+orca sessions sleep <session-id>                        # done for now: saves /workspace, stops machine time; the next message wakes it
 orca sessions delete <session-id> --yes                 # stops the sandbox; its artifacts go with it
 ```
 
@@ -102,7 +103,7 @@ For extended work, register Orca's MCP server once:
 claude mcp add orca -- orca mcp serve
 ```
 
-It exposes one tool per CLI action: whoami and keys, agents and `list_models`, sessions, `chat` (sends a message and waits for the reply, returning the session id; it and `create_session` take `files` to stage into the sandbox), `list_artifacts` and `download_artifact`, skills, vaults, files, usage and billing, and kits (`show_kit` returns a kit's review; call `copy_kit` with the `version` it returned only after the person says yes).
+It exposes one tool per CLI action: whoami and keys, agents and `list_models`, sessions, `chat` (sends a message and waits for the reply, returning the session id; it and `create_session` take `files` to stage into the sandbox), `sleep_session` (puts a session's sandbox to sleep now; refused while a turn runs), `list_artifacts` and `download_artifact`, skills, vaults, files, usage and billing, and kits (`show_kit` returns a kit's review; call `copy_kit` with the `version` it returned only after the person says yes).
 
 To ask a named agent something, call `chat` with `agent` set to that name and nothing before it: no `list_agents`, no `get_agent`. A new session's `sandbox`, `template` and `vaults` go on that same first `chat` (or on `create_session`). List tools return summaries (an agent's id, name, model and tool types, never its instructions); `get_agent` and `get_session` return one item in full. Every result is valid JSON: a page too large for one result comes back shorter with `hasMore: true` and `lastId` to pass as `after`, and a long string cut to fit ends in `[shortened from N characters]`.
 

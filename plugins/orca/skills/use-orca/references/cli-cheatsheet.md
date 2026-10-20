@@ -48,6 +48,7 @@ orca sessions items <id> [--limit n] --json
 orca sessions artifacts <id> --json             # files the turns saved under /workspace/outputs: id, path, size_bytes, turn_id
 orca sessions artifacts download <id> <artifact-id|path> [-o path|-]   # one, under its own file name by default
 orca sessions artifacts download <id> --all [-o folder]                # every file of the newest turn
+orca sessions sleep <id> [--no-wait] --json     # put its sandbox to sleep now: /workspace is saved, machine time stops, the next message wakes it
 orca sessions delete <id> --yes
 ```
 

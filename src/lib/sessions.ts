@@ -17,7 +17,7 @@ import type {
   EnvironmentParam,
 } from 'openai/resources/beta/agents/agents'
 
-import type { ApiClient } from './api.js'
+import { ApiError, extractErrorBody, type ApiClient } from './api.js'
 import { CliError, ExitCode } from './errors.js'
 import { formatCount } from './format.js'
 import { stripControlSequences } from './markdown.js'
@@ -33,7 +33,7 @@ import {
   type StagedFile,
   type StagedUpload,
 } from './staging.js'
-import type { SessionModel, UsageSummary } from './types.js'
+import type { SandboxState, SessionModel, SessionSandbox, UsageSummary } from './types.js'
 import { groupCost } from './usage.js'
 
 // A tool line's status: running, done, failed, or stopped (cut off by the
@@ -407,11 +407,15 @@ export async function createSession(
 // model (decision 0017); and from /api/sessions/{id}/model, the model its
 // next turn uses, the agent's own, and who pays (model-billing D3.13): a
 // switch is visible here, while the /v1 object keeps the agent's model.
+// `sandbox` is where its sandbox is (sandbox-sleep D6.7), from
+// /api/sessions/{id}/sandbox; absent when that read failed, as on a server
+// without the route.
 export type SessionView = Omit<AgentSession, 'usage'> & {
   usage: UsageSummary
   model: string
   agent_model: string
   payer: SessionModel['payer']
+  sandbox?: SandboxState
 }
 
 // sessionView reads one session, its usage and its model from their one
@@ -421,8 +425,79 @@ export async function sessionView(client: ApiClient, id: string): Promise<Sessio
   const session = await (await client.v1()).beta.agents.sessions.retrieve(id)
   const usage = await client.usage({ start: 0, session: id, group_by: 'model' })
   const model = await client.sessionModel(id)
+  // The sandbox line is extra: a failed read leaves it out, never the session.
+  const sandbox = await client.sessionSandbox(id).then(
+    (view) => view.state,
+    () => undefined,
+  )
   // `usage` replaces the /v1 object's own field.
-  return { ...session, usage, model: model.model, agent_model: model.agent_model, payer: model.payer }
+  return {
+    ...session,
+    usage,
+    model: model.model,
+    agent_model: model.agent_model,
+    payer: model.payer,
+    ...(sandbox ? { sandbox } : {}),
+  }
+}
+
+// -- Sandbox sleep (sandbox-sleep D6.7) -----------------------------------------
+
+const SANDBOX_STATE_WORDS: Record<SandboxState, string> = {
+  none: 'none',
+  awake: 'awake',
+  going_to_sleep: 'going to sleep',
+  asleep: 'asleep',
+  waking: 'waking up',
+}
+
+// sandboxStateWords says a sandbox state in words; a state this CLI does not
+// know yet is shown as the server sent it.
+export function sandboxStateWords(state: string): string {
+  return SANDBOX_STATE_WORDS[state as SandboxState] ?? state
+}
+
+// goingToSleep is true while a sleep has not ended: the server saves the
+// files after it answers the request.
+export function goingToSleep(view: SessionSandbox): boolean {
+  return view.state === 'going_to_sleep' || (view.last_sleep !== null && view.last_sleep.outcome === null)
+}
+
+// requestSleep starts putting a session's sandbox to sleep. A refusal (a
+// turn is running, or the sandbox is waking up) is the server's own message.
+export async function requestSleep(client: ApiClient, id: string): Promise<SessionSandbox> {
+  try {
+    return await client.sleepSessionSandbox(id)
+  } catch (err) {
+    if (err instanceof ApiError && err.code === 'conflict') {
+      throw new CliError(extractErrorBody(err.body) || 'the sandbox cannot be put to sleep now', ExitCode.Failure)
+    }
+    throw err
+  }
+}
+
+// waitForSleep reads the sandbox every second until its sleep has ended or
+// the deadline passes, and returns the last view read. The sleep goes on
+// on the server either way.
+export async function waitForSleep(
+  client: ApiClient,
+  id: string,
+  view: SessionSandbox,
+  deadline: number,
+): Promise<SessionSandbox> {
+  while (goingToSleep(view) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    view = await client.sessionSandbox(id)
+  }
+  return view
+}
+
+// sleepFailure is why a sleep that has ended left the sandbox awake (too
+// large, failed, interrupted), or null when it did not.
+export function sleepFailure(view: SessionSandbox): string | null {
+  const last = view.last_sleep
+  if (!last || last.outcome === null || last.outcome === 'asleep') return null
+  return last.message || 'The sandbox stayed awake.'
 }
 
 // payerLabel says who pays for a session's model, in words.

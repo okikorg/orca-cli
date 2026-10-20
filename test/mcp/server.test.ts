@@ -23,6 +23,7 @@ import {
   artifact,
   bytesRoute,
   hostedSession,
+  sandboxView,
   session,
   sessionModelRoute,
   template,
@@ -83,6 +84,7 @@ describe('orca mcp serve', () => {
         'get_session',
         'create_session',
         'list_session_items',
+        'sleep_session',
         'delete_session',
         'chat',
         // artifacts
@@ -226,6 +228,102 @@ describe('orca mcp serve', () => {
     const client = await connect()
     const payload = JSON.parse(firstText(await client.callTool({ name: 'get_session', arguments: { id: SESSION_ID } })))
     expect(payload).toMatchObject({ id: SESSION_ID, status: 'completed', usage: summary })
+  })
+
+  it('get_session adds where the sandbox is, and leaves it out when the server cannot say', async () => {
+    const summary = { object: 'usage.summary', start: 0, end: 1, session_id: SESSION_ID, cost_micro_usd: 0, meters: [], daily: [], groups: [] }
+    const routes = {
+      [`GET /v1/agents/sessions/${SESSION_ID}`]: jsonResponse(hostedSession()),
+      [`GET /api/usage?start=0&session=${SESSION_ID}&group_by=model`]: jsonResponse(summary),
+      ...sessionModelRoute(),
+    }
+    stubFetch({ ...routes, [`GET /api/sessions/${SESSION_ID}/sandbox`]: jsonResponse(sandboxView('waking')) })
+    const client = await connect()
+    const payload = JSON.parse(firstText(await client.callTool({ name: 'get_session', arguments: { id: SESSION_ID } })))
+    expect(payload).toMatchObject({ id: SESSION_ID, sandbox: 'waking' })
+    stubFetch({ ...routes, [`GET /api/sessions/${SESSION_ID}/sandbox`]: jsonResponse({ error: { message: 'not found' } }, { status: 404 }) })
+    const older = JSON.parse(firstText(await client.callTool({ name: 'get_session', arguments: { id: SESSION_ID } })))
+    expect(older).toMatchObject({ id: SESSION_ID, status: 'idle' })
+    expect(older).not.toHaveProperty('sandbox')
+  })
+
+  describe('sleep_session', () => {
+    const SANDBOX = `/api/sessions/${SESSION_ID}/sandbox`
+
+    // callOnFakeClock calls one tool on a fake clock, stepping it a second at
+    // a time, so the sleep's polls and its 60-second limit stay fast.
+    async function callOnFakeClock(client: Client, args: Record<string, unknown>): Promise<unknown> {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] })
+      try {
+        let settled = false
+        const done = client.callTool({ name: 'sleep_session', arguments: args }).finally(() => {
+          settled = true
+        })
+        while (!settled) await vi.advanceTimersByTimeAsync(1000)
+        return await done
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+
+    it('waits until the sandbox is asleep and returns the view', async () => {
+      const asleep = sandboxView('asleep', { outcome: 'asleep', finished_at: 1_783_245_609 })
+      let polls = 0
+      const calls = stubFetch({
+        [`POST ${SANDBOX}/sleep`]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+        [`GET ${SANDBOX}`]: (call) => jsonResponse(++polls < 3 ? sandboxView('going_to_sleep', {}) : asleep)(call),
+      })
+      const client = await connect()
+      const res = await callOnFakeClock(client, { id: SESSION_ID })
+      expect((res as ToolText).isError).toBeFalsy()
+      expect(JSON.parse(firstText(res))).toEqual(asleep)
+      expect(calls.filter((c) => c.method === 'GET')).toHaveLength(3)
+    })
+
+    it('returns a sleep that left the sandbox awake with its message', async () => {
+      const message = 'The sandbox stayed awake: a message or a file request reached it before it was asleep.'
+      stubFetch({
+        [`POST ${SANDBOX}/sleep`]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+        [`GET ${SANDBOX}`]: jsonResponse(sandboxView('awake', { outcome: 'interrupted', message })),
+      })
+      const client = await connect()
+      const res = await callOnFakeClock(client, { id: SESSION_ID })
+      expect(JSON.parse(firstText(res))).toMatchObject({ state: 'awake', last_sleep: { outcome: 'interrupted', message } })
+    })
+
+    it('stops waiting inside the 60 seconds, still going to sleep', async () => {
+      const calls = stubFetch({
+        [`POST ${SANDBOX}/sleep`]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+        [`GET ${SANDBOX}`]: jsonResponse(sandboxView('going_to_sleep', {})),
+      })
+      const client = await connect()
+      const res = await callOnFakeClock(client, { id: SESSION_ID })
+      expect(JSON.parse(firstText(res))).toMatchObject({ state: 'going_to_sleep' })
+      const polls = calls.filter((c) => c.method === 'GET').length
+      // A poll a second from 1 to 55 seconds in, so the answer beats the
+      // client's 60-second request timeout.
+      expect(polls).toBeGreaterThanOrEqual(54)
+      expect(polls).toBeLessThanOrEqual(56)
+    })
+
+    it('answers at once for no sandbox', async () => {
+      const calls = stubFetch({ [`POST ${SANDBOX}/sleep`]: jsonResponse(sandboxView('none')) })
+      const client = await connect()
+      const res = await client.callTool({ name: 'sleep_session', arguments: { id: SESSION_ID } })
+      expect(JSON.parse(firstText(res))).toMatchObject({ state: 'none', environment_id: null })
+      expect(calls).toHaveLength(1)
+    })
+
+    it('is an error with the server\'s message while a turn runs', async () => {
+      const message = 'A turn is running; put the sandbox to sleep once it ends.'
+      stubFetch({
+        [`POST ${SANDBOX}/sleep`]: jsonResponse({ error: { message, type: 'conflict', param: null, code: 'conflict' } }, { status: 409 }),
+      })
+      const client = await connect()
+      const res = (await client.callTool({ name: 'sleep_session', arguments: { id: SESSION_ID } })) as ToolText
+      expect(res.isError).toBe(true)
+      expect(firstText(res)).toBe(message)
+    })
   })
 
   it('copy_kit sends the version show_kit returned and the chosen assets', async () => {

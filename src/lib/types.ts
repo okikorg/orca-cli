@@ -189,6 +189,32 @@ export type SessionModel = {
   payer: Payer | null
 }
 
+// -- Sandbox sleep ------------------------------------------------------------
+
+// Where a session's hosted sandbox is: none for no sandbox or a self-hosted
+// one.
+export type SandboxState = 'none' | 'awake' | 'going_to_sleep' | 'asleep' | 'waking'
+
+// The newest sleep since the sandbox last woke, whoever started it. reason is
+// an open string (requested, idle, out_of_credit, hours_used_up, unpriced,
+// and more later); outcome is null while it is going to sleep.
+export type SandboxSleep = {
+  reason: string
+  started_at: number
+  finished_at: number | null
+  outcome: 'asleep' | 'too_large' | 'failed' | 'interrupted' | null
+  message: string | null
+}
+
+// GET /api/sessions/{id}/sandbox and POST /api/sessions/{id}/sandbox/sleep.
+export type SessionSandbox = {
+  object: 'session.sandbox'
+  session_id: string
+  environment_id: string | null
+  state: SandboxState
+  last_sleep: SandboxSleep | null
+}
+
 // POST /api/billing/checkout and /api/billing/portal.
 export type BillingURL = { url: string }
 

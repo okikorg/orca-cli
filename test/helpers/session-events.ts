@@ -97,6 +97,25 @@ export function sessionModelRoute(
   }
 }
 
+// sandboxView is SESSION_ID's session.sandbox object. A last_sleep given
+// without the other fields is a requested sleep started at 1_783_245_600.
+export function sandboxView(state: string, lastSleep: Record<string, unknown> | null = null) {
+  return {
+    object: 'session.sandbox',
+    session_id: SESSION_ID,
+    environment_id: state === 'none' ? null : 'env_1',
+    state,
+    last_sleep: lastSleep && {
+      reason: 'requested',
+      started_at: 1_783_245_600,
+      finished_at: null,
+      outcome: null,
+      message: null,
+      ...lastSleep,
+    },
+  }
+}
+
 // hostedSession is SESSION_ID in a managed sandbox, environment env_1.
 export function hostedSession(status = 'idle') {
   return session(status, { environment: { type: 'openai_hosted', id: 'env_1', files: [] } })
