@@ -60,7 +60,7 @@ orca agents list --json                      # only when the user does not know 
 
 `<agent>` is an agent id or the name of exactly one agent (the server says which; a shared name is refused with the ids). Add `--sandbox` (or `--template <template>`) to `chat` for a hosted sandbox, and `--vault <vault>` to let the session use a vault's MCP credentials (`orca vaults credentials add`); a template or vault is an id or a name, like an agent.
 
-Pick a model name for `agents create` from `orca models --json` (`--payer orca` for Orca credit, `--payer anthropic` for one provider's key).
+Pick a model name for `agents create` from `orca models --json` (`--payer orca` for Orca credit, `--payer anthropic` for one provider's key). Each Orca credit model has a `plan` for this organization: `free` (Orca's free model, no charge, on the Free plan), `within_ceiling`, or `pro_and_max` (Free cannot run it on credit).
 
 Work on a file in a sandbox, and get the results back:
 
@@ -86,7 +86,7 @@ Show the person what `orca kits show` prints, and run `orca kits copy <link> --y
 Account status (every figure is the server's, in micro-USD; never recompute costs):
 
 ```bash
-orca billing wallet --json                   # balance, plan, packs on sale
+orca billing wallet --json                   # balance, granted and paid credit, plan, packs on sale
 orca usage --json                            # cost per meter over the last 30 days
 orca usage --group-by agent --json           # group_costs: each agent's cost across every meter
 ```
@@ -143,6 +143,7 @@ The turn outlasted `timeoutSeconds` (at most 600) and is still running in Orca; 
 - Exit 3 or 401: run `orca login` again (or check `ORCA_API_KEY`).
 - "Out of Orca credit" (HTTP 429, or a turn that fails with `usage_limit_exceeded` and `param` `orca_credit`): paid work is paused because the balance is under the plan's minimum; `orca billing wallet --json` shows `paid_work_paused` and `min_balance_micro_usd`. Add credit, then continue the session, or switch this session to a model on your own key: `POST /api/sessions/{id}/model {"model": "..."}` (in a terminal, `orca chat` offers it).
 - `param` `provider_quota`: your own provider account is out of quota. Top up there, or switch the session to Orca credit the same way.
+- On the Free plan: 403 `model_not_in_plan` (the model needs Pro or Max) and 429 `param` `free_plan` (a paid model with no credit): switch the session to the free model (the `plan: "free"` row of `orca models --json`) the same way, use your own key, add credit, or upgrade. `param` `free_model_daily` or `free_model_capacity`: the free model's calls are used up until 00:00 UTC; use your own key or upgrade. `param` `included_hours`: Free's included machine time is used up; add credit. The server's message says each, and `orca billing wallet --json` shows `free_model` and `network`.
 - 400 on `model` when saving: the name must say who pays (`orca/openrouter/<OpenRouter id>` for Orca credit, `<provider>/<id>` with your own key), the provider must list it, and an own key must be saved. `orca models --json` lists every name you can use.
 - "does not support device login": the API URL does not point at an Orca server; check `orca auth status`, or use `orca login --with-token <key>` with a key minted in the dashboard.
 - Anything else: `orca doctor --json` names the failing check and the fix.

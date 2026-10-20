@@ -188,7 +188,7 @@ orca agents create -f agent.yaml           # YAML or JSON; - for stdin
 orca agents update <agent> -f fields.yaml  # only the fields in the file change
 orca agents delete [agent] [--yes]
 
-orca models [--payer orca|<provider>]   # every model you can use, grouped by who pays
+orca models [--payer orca|<provider>]   # every model you can use, grouped by who pays, with Free's plan marks
 
 orca sessions list [--agent agent]
 orca sessions get <id>
@@ -272,7 +272,10 @@ you can use, grouped by who pays: Orca credit, at OpenRouter's price per million
 tokens plus their fee, then each provider you saved a key for. With `--json` or
 outside a terminal the file must name the model; `orca models` lists the same
 names anywhere (`--payer orca` or `--payer anthropic` for one group, `--json`
-for the server's list).
+for the server's list). On the Free plan the server marks each Orca credit
+model: `orca models` shows "free model" for Orca's free model and "Pro and Max"
+for a model Free cannot run on credit, and the picker offers the free model
+first.
 
 `orca chat <agent> [prompt]` runs a turn on a `/v1` session with your API key.
 Without `--session` it creates a session of the agent first (no environment by
@@ -332,6 +335,16 @@ exists there), applies from the next turn for this session only, and continues
 with `Continue`. Outside a terminal or with `--json` it prints the reason and
 the session id and exits 1.
 
+On the Free plan, a refusal (a model that needs Pro or Max, a paid model with
+no credit, the free model's calls used up for today, the included hour of
+machine time used up) prints the server's message and its ways forward as
+words: switch this session to the free model, add a provider key, add credit,
+or upgrade, each with its command. Where the free model is one of them, the
+switch in a terminal lists it first. The server's notices during a turn (5
+minutes of machine time left, a turn ended at the free model's calls or at
+Free's 30 minutes, a sandbox with no network) are printed on stderr, and with
+`--json` arrive as their own events.
+
 ## Usage and billing
 
 Every money figure is the server's: usage rows are priced when they are written,
@@ -347,14 +360,19 @@ paused, as the server treats it. A call whose cost was not reported when it
 ended is charged later, on a `late_charges` row that `orca usage events` shows
 as "Charged later" for the row it charges, so a balance can go below zero;
 `orca billing wallet` then prints it as it is (`-$0.60`) and says paid work
-resumes when credit brings it to the minimum.
+resumes when credit brings it to the minimum. Credit Orca grants is spent
+first and expires; credit you buy never does: the wallet prints one `granted
+credit` line per grant with what is left and its last day, then `paid credit`.
+On Free it adds the included machine time and when it resets, the free model's
+calls today, the network line while Free sandboxes have none, and where to ask
+for more credit.
 
 ```sh
 orca usage                                   # last 30 days: cost, meters, daily chart
 orca usage --days 7 --group-by agent         # also each agent's tokens and cost
 orca usage --session sess_123                # one session
 orca usage events --charged                  # the rows with a cost: what the wallet's charges sum
-orca billing wallet                          # balance, plan, period, packs on sale
+orca billing wallet                          # balance, granted and paid credit, plan, period, packs on sale
 orca billing buy pro                         # checkout for the Pro plan
 orca billing buy pack:2000                   # checkout for the $20 credit pack
 orca billing manage                          # change or cancel the plan
