@@ -342,7 +342,11 @@ by model, web searches and machine time from there, never from the session
 object. Whether paid work is paused is the server's verdict too: `orca billing
 wallet` shows `paid_work_paused` and the plan's minimum balance, and `orca
 doctor` warns on it, so a balance above zero but under the minimum reads as
-paused, as the server treats it.
+paused, as the server treats it. A call whose cost was not reported when it
+ended is charged later, on a `late_charges` row that `orca usage events` shows
+as "Charged later" for the row it charges, so a balance can go below zero;
+`orca billing wallet` then prints it as it is (`-$0.60`) and says paid work
+resumes when credit brings it to the minimum.
 
 ```sh
 orca usage                                   # last 30 days: cost, meters, daily chart

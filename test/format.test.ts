@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { formatCount, formatDate, formatTime } from '../src/lib/format.js'
-import { usdCents, usdMicro } from '../src/lib/money.js'
+import { belowZeroNote, usdCents, usdMicro } from '../src/lib/money.js'
 
 describe('formatTime', () => {
   it('renders unix seconds at minute precision in UTC', () => {
@@ -43,6 +43,7 @@ const MICRO_USD: [number, string][] = [
   [1000000000000, '$1,000,000.00'],
   [-47, '-$0.000047'],
   [-1500000, '-$1.50'],
+  [-600000, '-$0.60'],
 ]
 const CENTS: [number, string][] = [
   [0, '$0.00'],
@@ -57,5 +58,14 @@ describe('money display', () => {
 
   it.each(CENTS)('%d cents is %s', (cents, shown) => {
     expect(usdCents(cents)).toBe(shown)
+  })
+})
+
+describe('belowZeroNote', () => {
+  it('names the minimum when the balance is below zero, and is silent at zero or above', () => {
+    expect(belowZeroNote(-600_000, 500_000)).toBe('Your balance is below zero. Paid work resumes when credit brings it to $0.50.')
+    expect(belowZeroNote(-1, 5_000_000)).toBe('Your balance is below zero. Paid work resumes when credit brings it to $5.00.')
+    expect(belowZeroNote(0, 500_000)).toBeNull()
+    expect(belowZeroNote(250_000, 500_000)).toBeNull()
   })
 })

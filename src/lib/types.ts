@@ -114,10 +114,17 @@ export type UsageEvent = {
   rate_id: string | null
   actor: string | null
   // Where the row's money is when another row carries it: its call's
-  // model_calls row, or its search's web_searches row. Null when the row's
-  // own cost is its charge.
-  charged_on?: 'call' | 'search' | null
+  // model_calls row, its search's web_searches row, or the late_charges row
+  // that charged a call whose cost was not reported when it ended. Null when
+  // the row's own cost is its charge.
+  charged_on?: ChargedOn | null
+  // On a late_charges row, the id of the row it charges: `<attempt>:call` for
+  // a model call, `<attempt>:search` for a web search, named even when the
+  // call left no rows. Null on every other row.
+  charge_for?: string | null
 }
+
+export type ChargedOn = 'call' | 'search' | 'late'
 
 // -- Billing ------------------------------------------------------------------
 

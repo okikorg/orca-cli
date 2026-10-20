@@ -52,6 +52,13 @@ describe('usage summary', () => {
     expect(stdout()).toBe('model_tokens\t4200\ttokens\t$1.20\nweb_searches\t2\tsearches\t$0.05\n')
   })
 
+  it('prints the late_charges meter as any meter', async () => {
+    const late = { meter: 'late_charges', unit: 'charges', quantity: 2, cost_micro_usd: 600_006, buckets: {} }
+    stubFetch({ [`GET /api/usage?start=${START}&end=${END}`]: jsonResponse({ ...SUMMARY, meters: [...SUMMARY.meters, late] }) })
+    await run(['usage'])
+    expect(stdout()).toBe('model_tokens\t4200\ttokens\t$1.20\nweb_searches\t2\tsearches\t$0.05\nlate_charges\t2\tcharges\t$0.60\n')
+  })
+
   it('says so when nothing was used, rather than printing nothing', async () => {
     stubFetch({ [`GET /api/usage?start=${START}&end=${END}`]: jsonResponse({ ...SUMMARY, meters: SUMMARY.meters.map((m) => ({ ...m, quantity: 0, cost_micro_usd: 0 })) }) })
     await run(['usage'])
@@ -131,6 +138,49 @@ describe('usage events', () => {
     })
     await run(['usage', 'events'])
     expect(stdout().split('\n').map((line) => line.split('\t')[4])).toEqual(['on its call', '$0.000035', 'on its search', undefined])
+  })
+
+  it('shows a call charged later: its own rows say so, and its late row names the row it charges', async () => {
+    // A call cancelled mid-reply: its call row at 0 and its token rows point
+    // at the late row, which carries the cost OpenRouter reported later.
+    const call = { provider: 'openrouter', model: 'openai/gpt-5.6-luna', session_id: 'sess_1' }
+    stubFetch({
+      'GET /api/usage/events?limit=10': jsonResponse(
+        list([
+          row({ ...call, id: 'att_1:late', meter: 'late_charges', unit: 'charges', bucket: null, quantity: 1, cost_micro_usd: 6, charge_for: 'att_1:call', recorded_at: NOW + 120 }),
+          row({ ...call, id: 'att_1:call', meter: 'model_calls', bucket: 'cancelled', quantity: 1, cost_micro_usd: 0, charged_on: 'late', charge_for: null }),
+          row({ ...call, id: 'att_1:output', cost_micro_usd: 0, charged_on: 'late', charge_for: null }),
+        ]),
+      ),
+    })
+    await run(['usage', 'events'])
+    expect(stdout()).toBe(
+      '2026-07-05 10:02\tlate_charges\t1\tCharged later for att_1:call, openrouter openai/gpt-5.6-luna\t$0.000006\tsess_1\n' +
+        '2026-07-05 10:00\tmodel_calls\t1\topenrouter openai/gpt-5.6-luna cancelled\tCharged later\tsess_1\n' +
+        '2026-07-05 10:00\tmodel_tokens\t120\topenrouter openai/gpt-5.6-luna output\tCharged later\tsess_1\n',
+    )
+  })
+
+  it('shows a late row whose call left no rows on its own, with its model and session', async () => {
+    stubFetch({
+      'GET /api/usage/events?limit=10&meter=late_charges': jsonResponse(
+        list([
+          row({ id: 'att_9:late', meter: 'late_charges', unit: 'charges', bucket: null, quantity: 1, provider: 'openrouter', model: 'openai/gpt-5.6-luna', session_id: 'sess_9', cost_micro_usd: 600_000, charge_for: 'att_9:search' }),
+        ]),
+      ),
+    })
+    await run(['usage', 'events', '--meter', 'late_charges'])
+    expect(stdout()).toBe('2026-07-05 10:00\tlate_charges\t1\tCharged later for att_9:search, openrouter openai/gpt-5.6-luna\t$0.60\tsess_9\n')
+  })
+
+  it('passes charge_for and charged_on: late through untouched with --json', async () => {
+    const rows = [
+      row({ id: 'att_1:late', meter: 'late_charges', unit: 'charges', bucket: null, quantity: 1, cost_micro_usd: 6, charge_for: 'att_1:call' }),
+      row({ id: 'att_1:call', meter: 'model_calls', bucket: 'cancelled', quantity: 1, cost_micro_usd: 0, charged_on: 'late', charge_for: null }),
+    ]
+    stubFetch({ 'GET /api/usage/events?limit=10': jsonResponse(list(rows)) })
+    await run(['--json', 'usage', 'events'])
+    expect(JSON.parse(stdout())).toEqual(rows)
   })
 
   it('asks only for the charged rows with --charged', async () => {

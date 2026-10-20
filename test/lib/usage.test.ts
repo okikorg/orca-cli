@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { sessionUsageRows } from '../../src/lib/sessions.js'
 import type { UsageSummary } from '../../src/lib/types.js'
-import { eventCost, groupCost, groupRows } from '../../src/lib/usage.js'
+import { eventCost, eventDetail, groupCost, groupRows } from '../../src/lib/usage.js'
 
 // A session that searched, grouped by model, as the server sends it (server
 // fix/usage-cost, test fixtures): two agent calls of 35 micro-USD, the
@@ -67,6 +67,30 @@ describe('eventCost', () => {
     expect(eventCost({ cost_micro_usd: 0, charged_on: 'call' })).toBe('on its call')
     expect(eventCost({ cost_micro_usd: 0, charged_on: 'search' })).toBe('on its search')
     expect(eventCost({ cost_micro_usd: 0 })).toBe('$0.00')
+  })
+
+  it('shows a row charged later through the same label map', () => {
+    expect(eventCost({ cost_micro_usd: 0, charged_on: 'late' })).toBe('Charged later')
+  })
+
+  it('falls back to the row\'s own cost for a charged_on it does not know', () => {
+    expect(eventCost({ cost_micro_usd: 35, charged_on: 'refund' as never })).toBe('$0.000035')
+  })
+})
+
+describe('eventDetail', () => {
+  const call = { meter: 'model_tokens', provider: 'openrouter', model: 'openai/gpt-5.6-luna', bucket: 'output', charge_for: null }
+
+  it('shows a row\'s provider, model and bucket, or a dash when it has none', () => {
+    expect(eventDetail(call)).toBe('openrouter openai/gpt-5.6-luna output')
+    expect(eventDetail({ meter: 'compute_seconds', provider: null, model: null, bucket: null })).toBe('-')
+  })
+
+  it('says a late row is charged later for the row it charges, with its model', () => {
+    const late = { meter: 'late_charges', provider: 'openrouter', model: 'openai/gpt-5.6-luna', bucket: null }
+    expect(eventDetail({ ...late, charge_for: 'att_1:call' })).toBe('Charged later for att_1:call, openrouter openai/gpt-5.6-luna')
+    expect(eventDetail({ ...late, charge_for: 'att_2:search' })).toBe('Charged later for att_2:search, openrouter openai/gpt-5.6-luna')
+    expect(eventDetail({ ...late, provider: null, model: null, charge_for: null })).toBe('Charged later')
   })
 })
 

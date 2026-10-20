@@ -575,7 +575,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'list_usage_events',
-    'Raw usage rows, newest first, each with its cost in micro-USD. charged_on says where a row\'s money is when another row carries it (call or search). charged: true returns only the rows with a cost.',
+    'Raw usage rows, newest first, each with its cost in micro-USD. charged_on says where a row\'s money is when another row carries it (call, search, or late: charged later on a late_charges row). A late_charges row carries the whole cost of a call whose cost was not reported when it ended; its charge_for names the row it charges (<attempt>:call or <attempt>:search). charged: true returns only the rows with a cost.',
     { meter: z.string().optional(), charged: z.boolean().optional(), limit, after },
     async (client, args) =>
       client.usageEvents({ ...page(args), meter: args.meter as string | undefined, charged: args.charged as boolean | undefined }),

@@ -35,3 +35,12 @@ export function percentBps(bps: number): string {
 export function tokenPrice(bps: number): string {
   return `OpenRouter's price plus their ${percentBps(bps)} fee`
 }
+
+// belowZeroNote is the one line a wallet below zero adds, on the dashboard's
+// Wallet and in `orca billing wallet`: a call charged after it ended can take
+// the balance below the minimum and below zero, and paid work waits until
+// credit brings it back to the minimum. Null at zero or above.
+export function belowZeroNote(balanceMicro: number, minBalanceMicro: number): string | null {
+  if (!(balanceMicro < 0)) return null
+  return `Your balance is below zero. Paid work resumes when credit brings it to ${usdMicro(minBalanceMicro)}.`
+}
