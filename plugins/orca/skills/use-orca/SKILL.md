@@ -90,7 +90,7 @@ orca usage --json                            # cost per meter over the last 30 d
 orca usage --group-by agent --json           # group_costs: each agent's cost across every meter
 ```
 
-A call's money is on its `model_calls` row and a search's on its `web_searches` row; token rows are at cost 0. Read a model's, session's or agent's cost from `group_costs`, never from the `model_tokens` groups. In `orca usage events`, `charged_on` says where a row's money is (`call` or `search`); `--charged` lists only the rows with a cost.
+A call's money is on its `model_calls` row and a search's on its `web_searches` row; token rows are at cost 0. Read a model's, session's or agent's cost from `group_costs`, never from the `model_tokens` groups. In `orca usage events`, `charged_on` says where a row's money is (`call`, `search`, or `late`); `--charged` lists only the rows with a cost. A call whose cost was not reported when it ended (cancelled, cut short, its session deleted mid-reply) is charged later from OpenRouter's record of it, on one `late_charges` row whose `charge_for` names the row it charges (`<attempt>:call` or `<attempt>:search`); its own rows show `charged_on: "late"`. A late charge can take the balance below the minimum or below zero; `orca billing wallet` then shows the negative balance, and paid work resumes when credit brings it back to the minimum.
 
 Buying credit or a plan (`orca billing buy pro|max|pack:<cents>`) returns a checkout link: give it to the user to open; never try to pay.
 

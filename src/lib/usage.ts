@@ -4,7 +4,7 @@
 // the server's group_costs entry for that key. Nothing here adds money up.
 
 import { usdMicro } from './money.js'
-import type { UsageEvent, UsageSeriesInterval, UsageSummary } from './types.js'
+import type { ChargedOn, UsageEvent, UsageSeriesInterval, UsageSummary } from './types.js'
 
 // The chart's label, the dashboard's too: buckets are UTC hours or days, and
 // the chart says so once.
@@ -60,10 +60,36 @@ export function groupRows(summary: UsageSummary): GroupRow[] {
     .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens)
 }
 
+// CHARGED_ON_LABELS says where a row's money is when another row carries
+// it, the dashboard's label map: its call's row, its search's row, or a late
+// charge for a call whose cost was not reported when it ended.
+export const CHARGED_ON_LABELS: Record<ChargedOn, string> = {
+  call: 'on its call',
+  search: 'on its search',
+  late: 'Charged later',
+}
+
+// LATE_METER is the meter of a late charge: one row, quantity 1, carrying the
+// whole cost of a call whose cost was not reported when it ended.
+export const LATE_METER = 'late_charges'
+
 // eventCost is a usage row's cost cell: its charge by the money display
 // rule, or where its money is when another row carries it.
 export function eventCost(event: Pick<UsageEvent, 'cost_micro_usd' | 'charged_on'>): string {
-  if (event.charged_on === 'call') return 'on its call'
-  if (event.charged_on === 'search') return 'on its search'
+  const on = event.charged_on
+  if (on && Object.hasOwn(CHARGED_ON_LABELS, on)) return CHARGED_ON_LABELS[on]
   return usdMicro(event.cost_micro_usd)
+}
+
+// eventDetail is a usage row's detail cell: its provider, model and bucket.
+// A late charge says which row it charges, by the id the server names in
+// charge_for, and keeps its model, so one whose call left no rows still
+// reads on its own.
+export function eventDetail(event: Pick<UsageEvent, 'meter' | 'provider' | 'model' | 'bucket' | 'charge_for'>): string {
+  const what = [event.provider, event.model, event.bucket].filter(Boolean).join(' ')
+  if (event.meter === LATE_METER) {
+    const late = event.charge_for ? `Charged later for ${event.charge_for}` : 'Charged later'
+    return what ? `${late}, ${what}` : late
+  }
+  return what || '-'
 }

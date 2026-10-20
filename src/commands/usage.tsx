@@ -6,7 +6,7 @@ import { formatCount, formatTime } from '../lib/format.js'
 import { usdMicro } from '../lib/money.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import type { UsageEvent, UsageMeter } from '../lib/types.js'
-import { eventCost, groupRows, usageChart, type GroupRow } from '../lib/usage.js'
+import { eventCost, eventDetail, groupRows, usageChart, type GroupRow } from '../lib/usage.js'
 import { hintText } from '../ui/theme.js'
 import {
   addPageFlags,
@@ -144,14 +144,13 @@ export function registerUsage(program: Command): void {
       console.error(hintText('No usage recorded yet.'))
       return
     }
-    const what = (e: UsageEvent) => [e.provider, e.model, e.bucket].filter(Boolean).join(' ') || '-'
     if (mode === 'plain') {
       printPlainRows(
         page.items.map((e) => [
           formatTime(e.recorded_at),
           e.meter,
           e.quantity,
-          what(e),
+          eventDetail(e),
           eventCost(e),
           e.session_id ?? '-',
         ]),
@@ -170,7 +169,7 @@ export function registerUsage(program: Command): void {
           { header: 'when', get: (e: UsageEvent) => formatTime(e.recorded_at), color: () => theme.subtle },
           { header: 'meter', get: (e: UsageEvent) => e.meter, bold: true },
           { header: 'quantity', get: (e: UsageEvent) => formatCount(e.quantity) },
-          { header: 'detail', get: what },
+          { header: 'detail', get: eventDetail },
           { header: 'cost', get: eventCost },
           { header: 'session', get: (e: UsageEvent) => e.session_id ?? '-' },
         ]}

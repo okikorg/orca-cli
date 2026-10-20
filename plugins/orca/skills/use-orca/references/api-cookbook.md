@@ -32,7 +32,7 @@ curl -s -H "$K" $B/api/whoami                                  # tenant, actor, 
 curl -s -H "$K" "$B/api/keys?limit=20"                         # API keys (no secrets)
 curl -s -H "$K" "$B/api/models"                                # every model you can pick, by who pays, with prices
 curl -s -H "$K" "$B/api/usage?group_by=model"                  # last 30 days; group_costs: each model's cost
-curl -s -H "$K" "$B/api/usage/events?limit=20&charged=true"   # the charged rows; charged_on says where others' money is
+curl -s -H "$K" "$B/api/usage/events?limit=20&charged=true"   # the charged rows; charged_on says where others' money is, charge_for what a late row charges
 curl -s -H "$K" $B/api/billing/wallet                          # balance and plan
 curl -s $B/api/public/kits                                     # Orca's kits, no auth
 curl -s $B/api/public/kits/kit-xxxxxxxxxxxxxxxxx/review        # what a kit holds and its version, no auth

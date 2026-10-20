@@ -24,7 +24,7 @@ const WALLET = {
   openrouter_fee_bps: 550,
 }
 
-const { run, stdout } = commandHarness(registerBilling)
+const { run, stdout, stderr } = commandHarness(registerBilling)
 
 afterEach(() => {
   setBrowserOpener(null)
@@ -59,6 +59,32 @@ describe('billing wallet', () => {
     stubFetch({ 'GET /api/billing/wallet': jsonResponse(WALLET) })
     await run(['--json', 'billing', 'wallet'])
     expect(JSON.parse(stdout())).toEqual(WALLET)
+  })
+
+  it('prints a balance below zero as it is, and one line naming the minimum', async () => {
+    // A late charge took the balance below zero: the server pauses paid work.
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...WALLET, balance_micro_usd: -600_000, paid_work_paused: true }) })
+    await run(['billing', 'wallet'])
+    expect(stdout()).toContain('balance\t-$0.60')
+    expect(stdout()).toContain('min_balance\t$0.50')
+    // The rows stay key and value; the note is on stderr, once.
+    expect(stdout()).not.toContain('below zero')
+    expect(stderr()).toBe('Your balance is below zero. Paid work resumes when credit brings it to $0.50.\n')
+  })
+
+  it('adds no line at a balance of zero or above, even when paused', async () => {
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...WALLET, balance_micro_usd: 0, paid_work_paused: true }) })
+    await run(['billing', 'wallet'])
+    expect(stdout()).toContain('balance\t$0.00')
+    expect(stderr()).toBe('')
+  })
+
+  it('passes a negative balance through untouched with --json, with no line added', async () => {
+    const wallet = { ...WALLET, balance_micro_usd: -600_000, paid_work_paused: true }
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse(wallet) })
+    await run(['--json', 'billing', 'wallet'])
+    expect(JSON.parse(stdout())).toEqual(wallet)
+    expect(stderr()).toBe('')
   })
 })
 

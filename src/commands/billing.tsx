@@ -3,9 +3,9 @@ import type { Command } from 'commander'
 import { openBrowser } from '../lib/browser.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatDate } from '../lib/format.js'
-import { tokenPrice, usdCents, usdMicro } from '../lib/money.js'
+import { belowZeroNote, usdMicro } from '../lib/money.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
-import type { BillingURL, Wallet } from '../lib/types.js'
+import type { BillingURL } from '../lib/types.js'
 import { hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
@@ -20,35 +20,6 @@ export function parseOffer(raw: string): string {
   throw new CliError(`unknown offer "${raw}"`, ExitCode.Usage, [
     'Pass pro, max, or a credit pack as pack:<cents> (see: orca billing wallet).',
   ])
-}
-
-async function renderWallet(w: Wallet): Promise<void> {
-  const { Panel, Field } = await import('../ui/Panel.js')
-  const { theme } = await import('../ui/theme.js')
-  await renderStatic(
-    <Panel title="WALLET" subtitle={`${w.tier} plan`}>
-      <Field
-        label="balance"
-        value={usdMicro(w.balance_micro_usd)}
-        valueColor={w.paid_work_paused ? theme.destructive : theme.accent}
-      />
-      <Field
-        label="paid work"
-        value={w.paid_work_paused ? `paused under the ${usdMicro(w.min_balance_micro_usd)} minimum, until a top-up` : 'running'}
-      />
-      <Field label="credited" value={usdMicro(w.credited_micro_usd)} />
-      <Field label="charged" value={usdMicro(w.charged_micro_usd)} />
-      <Field label="period" value={`${formatDate(w.period_start)} to ${formatDate(w.period_end)}`} />
-      <Field label="compute" value={`${w.used_compute_seconds}s used of ${w.included_compute_seconds}s included`} />
-      <Field label="tokens" value={`on Orca credit, ${tokenPrice(w.openrouter_fee_bps)}`} />
-      {w.packs.length > 0 ? (
-        <Field
-          label="packs"
-          value={w.packs.map((p) => `pack:${p.cents} (${usdCents(p.cents)}, credits ${usdMicro(p.credited_micro_usd)})`).join(', ')}
-        />
-      ) : null}
-    </Panel>,
-  )
 }
 
 // handOff prints a Polar URL and, at a terminal, opens it. Scripts get the
@@ -101,9 +72,14 @@ export function registerBilling(program: Command): void {
           ['packs', wallet.packs.map((p) => `pack:${p.cents}`).join(',') || '-'],
           ['openrouter_fee_bps', wallet.openrouter_fee_bps],
         ])
+        // The rows stay key and value for cut and grep; the note goes to
+        // stderr, as the CLI's other hints do.
+        const note = belowZeroNote(wallet.balance_micro_usd, wallet.min_balance_micro_usd)
+        if (note) console.error(hintText(note))
         return
       }
-      await renderWallet(wallet)
+      const { WalletView } = await import('../ui/WalletView.js')
+      await renderStatic(<WalletView wallet={wallet} />)
     })
 
   billing
