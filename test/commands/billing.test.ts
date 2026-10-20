@@ -39,7 +39,7 @@ const FREE_WALLET = {
     { kind: 'grant', grant_reason: 'on_request', granted_micro_usd: 20_000_000, left_micro_usd: 12_400_000, granted_at: 1_793_750_400, expires_at: 1_796_428_800 },
   ],
   expired_micro_usd: 0,
-  free_model: { calls_today: 40, calls_per_day: 100, available: true },
+  free_model_today: { calls_today: 40, calls_per_day: 100, available: true },
   included_hours_withheld: false,
   network: { off: true, message: NETWORK },
   credit_request: { message: MORE_CREDIT, url: 'https://discord.gg/btTYzdzvqq' },
@@ -120,9 +120,19 @@ describe('billing wallet on Free (free-plan D3.16)', () => {
     expect(stdout()).toContain('expired\t$0.00\n')
     expect(stdout()).toContain('free_model_calls_today\t40\nfree_model_calls_per_day\t100\n')
     expect(stdout()).toContain('network_off\ttrue\n')
+    expect(stdout()).toContain('included_hours_withheld\tfalse\n')
     // The server's messages go to stderr, the rows stay key and value.
     expect(stdout()).not.toContain('Discord')
     expect(stderr()).toBe(`network  off. ${NETWORK}\nmore credit  ${MORE_CREDIT}\n`)
+  })
+
+  it('says when Free\'s included hour and free model are withheld (amendment A2)', async () => {
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...FREE_WALLET, included_hours_withheld: true, network: { off: false }, credit_request: null }) })
+    await run(['billing', 'wallet'])
+    expect(stdout()).toContain('included_hours_withheld\ttrue\n')
+    expect(stderr()).toBe(
+      "Free's included hour and free model are not available for this organization. Add credit, or bring your own provider key.\n",
+    )
   })
 
   it('passes every new field through with --json', async () => {
@@ -133,7 +143,7 @@ describe('billing wallet on Free (free-plan D3.16)', () => {
   })
 
   it('adds nothing on Pro, where the server sends no Free plan fields', async () => {
-    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...WALLET, free_model: null, network: { off: false }, credit_request: null }) })
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...WALLET, free_model_today: null, network: { off: false }, credit_request: null }) })
     await run(['billing', 'wallet'])
     expect(stdout()).not.toContain('free_model')
     expect(stdout()).toContain('network_off\tfalse\n')

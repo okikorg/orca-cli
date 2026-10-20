@@ -337,9 +337,10 @@ the session id and exits 1.
 
 On the Free plan, a refusal (a model that needs Pro or Max, a paid model with
 no credit, the free model's calls used up for today, the included hour of
-machine time used up) prints the server's message and its ways forward as
+machine time used up, the free model or Free sandboxes busy, the day's turns
+used) prints the server's message and its ways forward as
 words: switch this session to the free model, add a provider key, add credit,
-or upgrade, each with its command. Where the free model is one of them, the
+upgrade, or try again later, each with its command. Where the free model is one of them, the
 switch in a terminal lists it first. The server's notices during a turn (5
 minutes of machine time left, a turn ended at the free model's calls or at
 Free's 30 minutes, a sandbox with no network) are printed on stderr, and with
@@ -365,7 +366,8 @@ first and expires; credit you buy never does: the wallet prints one `granted
 credit` line per grant with what is left and its last day, then `paid credit`.
 On Free it adds the included machine time and when it resets, the free model's
 calls today, the network line while Free sandboxes have none, and where to ask
-for more credit.
+for more credit; when Free's included hour and free model are withheld from the
+organization, it says so instead of the hours.
 
 ```sh
 orca usage                                   # last 30 days: cost, meters, daily chart

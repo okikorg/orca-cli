@@ -161,9 +161,11 @@ export type Wallet = {
   granted_credit?: GrantedCredit[]
   // Granted credit that expired unspent.
   expired_micro_usd?: number
-  // The organization's free-model calls today; null on Pro and Max.
-  free_model?: WalletFreeModel | null
-  // The email domain's age withheld the included hours and the free model.
+  // The organization's free-model calls today; null on Pro and Max. Named
+  // apart from the plan facts' `free_model` (the model list), which the
+  // wallet also carries (free-plan amendment A2).
+  free_model_today?: WalletFreeModel | null
+  // The email domain's age withheld Free's included hour and the free model.
   included_hours_withheld?: boolean
   // Free sandboxes have no network until the organization has credit; the
   // message is the server's, said the same way everywhere.

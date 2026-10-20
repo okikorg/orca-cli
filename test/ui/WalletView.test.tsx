@@ -43,7 +43,7 @@ const FREE_WALLET: Wallet = {
     { kind: 'grant', grant_reason: 'on_request', granted_micro_usd: 20_000_000, left_micro_usd: 12_400_000, granted_at: 1_793_750_400, expires_at: 1_796_428_800 },
   ],
   expired_micro_usd: 0,
-  free_model: { calls_today: 40, calls_per_day: 100, available: true },
+  free_model_today: { calls_today: 40, calls_per_day: 100, available: true },
   included_hours_withheld: false,
   network: { off: true, message: NETWORK },
   credit_request: { message: MORE_CREDIT, url: 'https://discord.gg/btTYzdzvqq' },
@@ -94,6 +94,15 @@ describe('WalletView', () => {
   it('says the included hour is used once it all is', () => {
     const frame = render(<WalletView wallet={{ ...FREE_WALLET, used_compute_seconds: 3_660 }} />).lastFrame() ?? ''
     expect(frame).toContain('machine time    1 h included: used, resets 1 November')
+  })
+
+  it('says machine time is not included, and why, when Free\'s hour is withheld (amendment A2)', () => {
+    const frame = (render(<WalletView wallet={{ ...FREE_WALLET, included_hours_withheld: true }} />).lastFrame() ?? '').replace(/\s+/g, ' ')
+    expect(frame).toContain('machine time not included for this organization')
+    expect(frame).toContain(
+      "Free's included hour and free model are not available for this organization. Add credit, or bring your own provider key.",
+    )
+    expect(render(<WalletView wallet={FREE_WALLET} />).lastFrame()).not.toContain('not available for this organization')
   })
 
   it('prints no network line once the network is on', () => {

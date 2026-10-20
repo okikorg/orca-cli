@@ -3,7 +3,7 @@ import { Box, Text } from 'ink'
 import { formatDate } from '../lib/format.js'
 import { belowZeroNote, tokenPrice, usdCents, usdMicro } from '../lib/money.js'
 import type { Wallet } from '../lib/types.js'
-import { creditRequest, freeModelCalls, grantedLine, machineTime, networkOff, paidCredit } from '../lib/wallet.js'
+import { creditRequest, freeModelCalls, grantedLine, machineTime, networkOff, paidCredit, WITHHELD } from '../lib/wallet.js'
 import { Field, Panel } from './Panel.js'
 import { theme } from './theme.js'
 
@@ -42,6 +42,7 @@ export function WalletView({ wallet: w }: { wallet: Wallet }) {
       <Field width={LABEL_WIDTH} label="charged" value={usdMicro(w.charged_micro_usd)} />
       <Field width={LABEL_WIDTH} label="period" value={`${formatDate(w.period_start)} to ${formatDate(w.period_end)}`} />
       <Field width={LABEL_WIDTH} label="machine time" value={machineTime(w)} />
+      {w.included_hours_withheld ? <Text>{WITHHELD}</Text> : null}
       {freeModel ? <Field width={LABEL_WIDTH} label="free model" value={freeModel} /> : null}
       {network ? <Field width={LABEL_WIDTH} label="network" value={network} /> : null}
       <Field width={LABEL_WIDTH} label="tokens" value={`on Orca credit, ${tokenPrice(w.openrouter_fee_bps)}`} />

@@ -19,22 +19,48 @@ export function planColumn(models: readonly PickModel[]): { header: string; get:
 }
 
 // A way forward from a refusal, as the dashboard names it.
-export type PlanAction = 'free_model' | 'provider_key' | 'add_credit' | 'upgrade'
+export type PlanAction =
+  | 'free_model'
+  | 'provider_key'
+  | 'openrouter_key'
+  | 'add_credit'
+  | 'upgrade'
+  | 'retry_minute'
+  | 'retry_minutes'
+  | 'next_day'
 
 const ACTION_WORDS: Record<PlanAction, string> = {
   free_model: 'Switch this session to the free model (orca chat offers it at a terminal)',
   provider_key: 'Add a provider key: in the dashboard, Settings, Providers',
+  openrouter_key: 'Add your own OpenRouter key: in the dashboard, Settings, Providers',
   add_credit: 'Add credit: orca billing buy pack:<cents> (orca billing wallet lists the packs)',
   upgrade: 'Upgrade: orca billing buy pro, or orca billing buy max',
+  retry_minute: 'Try again in a minute',
+  retry_minutes: 'Try again in a few minutes',
+  next_day: 'More at 00:00 UTC',
 }
 
 // planActions reads a refusal's ways forward from the server's code and
 // param, never its message: at turn admission (`model_not_in_plan`,
-// `free_model_unavailable`, `insufficient_quota`) or a turn the server ended
-// (`usage_limit_exceeded`). Empty for anything else.
+// `free_model_unavailable`, `insufficient_quota`, and the Free plan's
+// `rate_limit_exceeded` params, amendment A2) or a turn the server ended
+// (`usage_limit_exceeded`). Empty for anything else, the other rate limits
+// included.
 export function planActions(code: string | null | undefined, param: string | null | undefined): PlanAction[] {
   if (code === 'model_not_in_plan') return ['upgrade', 'free_model']
   if (code === 'free_model_unavailable') return ['provider_key', 'add_credit']
+  if (code === 'rate_limit_exceeded') {
+    switch (param) {
+      case 'free_model_busy':
+        return ['retry_minute', 'openrouter_key']
+      case 'turns_per_day':
+        return ['next_day', 'upgrade']
+      case 'free_sandboxes_busy':
+        return ['retry_minutes', 'upgrade']
+      default:
+        return []
+    }
+  }
   if (code !== 'insufficient_quota' && code !== 'usage_limit_exceeded') return []
   switch (param) {
     case 'free_plan':

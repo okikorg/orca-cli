@@ -8,9 +8,16 @@ import { stripControlSequences } from './markdown.js'
 import { usdMicro } from './money.js'
 import type { GrantedCredit, Wallet } from './types.js'
 
+// WITHHELD is the line a wallet adds when Free's included hour and free
+// model are withheld from the organization (free-plan F27, amendment A2).
+export const WITHHELD =
+  "Free's included hour and free model are not available for this organization. Add credit, or bring your own provider key."
+
 // machineTime is the period's included machine time and how much is used:
-// "1 h included: 0.4 h used, resets 1 November", or "used" once it all is.
+// "1 h included: 0.4 h used, resets 1 November", or "used" once it all is;
+// "not included for this organization" when it is withheld.
 export function machineTime(w: Wallet): string {
+  if (w.included_hours_withheld) return 'not included for this organization'
   const used = w.used_compute_seconds >= w.included_compute_seconds ? 'used' : `${formatHours(w.used_compute_seconds)} used`
   return `${formatHours(w.included_compute_seconds)} included: ${used}, resets ${formatDayMonth(w.period_end)}`
 }
@@ -18,7 +25,8 @@ export function machineTime(w: Wallet): string {
 // freeModelCalls is the free model's calls today against the share, on Free:
 // "40 of 100 calls today". Null on Pro and Max.
 export function freeModelCalls(w: Wallet): string | null {
-  return w.free_model ? `${w.free_model.calls_today} of ${w.free_model.calls_per_day} calls today` : null
+  const today = w.free_model_today
+  return today ? `${today.calls_today} of ${today.calls_per_day} calls today` : null
 }
 
 // networkOff is the network line while Free sandboxes have none: "off."

@@ -33,6 +33,23 @@ describe('a refusal\'s ways forward', () => {
     expect(planActions('free_model_unavailable', undefined)).toEqual(['provider_key', 'add_credit'])
   })
 
+  it('cover the Free plan\'s rate limits by their param (amendment A2), and no other rate limit', () => {
+    expect(planWords('rate_limit_exceeded', 'free_model_busy')).toEqual([
+      'Try again in a minute',
+      'Add your own OpenRouter key: in the dashboard, Settings, Providers',
+    ])
+    expect(planWords('rate_limit_exceeded', 'turns_per_day')).toEqual([
+      'More at 00:00 UTC',
+      'Upgrade: orca billing buy pro, or orca billing buy max',
+    ])
+    expect(planWords('rate_limit_exceeded', 'free_sandboxes_busy')).toEqual([
+      'Try again in a few minutes',
+      'Upgrade: orca billing buy pro, or orca billing buy max',
+    ])
+    // Sessions at once, sandboxes at once, requests a minute: unchanged.
+    expect(planActions('rate_limit_exceeded', undefined)).toEqual([])
+  })
+
   it('are none for every other refusal', () => {
     expect(planActions('insufficient_quota', undefined)).toEqual([])
     expect(planActions('usage_limit_exceeded', 'orca_credit')).toEqual([])

@@ -162,6 +162,18 @@ describe('mapApiError', () => {
       message: 'Your organization has used today\'s 100 free-model calls.',
       detail: ['Add a provider key: in the dashboard, Settings, Providers', 'Upgrade: orca billing buy pro, or orca billing buy max'],
     })
+    // The Free plan's rate limits carry a param (amendment A2).
+    const busy = OpenAIAPIError.generate(
+      429,
+      { error: { message: 'The free model is busy. Try again in a minute, or add your own OpenRouter key.', param: 'free_model_busy', code: 'rate_limit_exceeded' } },
+      undefined,
+      new Headers(),
+    )
+    expect(mapApiError(busy, CTX)).toMatchObject({
+      exitCode: ExitCode.Failure,
+      message: 'The free model is busy. Try again in a minute, or add your own OpenRouter key.',
+      detail: ['Try again in a minute', 'Add your own OpenRouter key: in the dashboard, Settings, Providers'],
+    })
     // A 503 for the free model withdrawn is not a retry-later.
     const gone = new ApiError('503', 503, { error: { message: 'Orca\'s free model is not available right now.', code: 'free_model_unavailable' } })
     expect(mapApiError(gone, CTX).message).toBe('Orca\'s free model is not available right now.')

@@ -6,7 +6,7 @@ import { formatDate } from '../lib/format.js'
 import { belowZeroNote, usdMicro } from '../lib/money.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import type { BillingURL } from '../lib/types.js'
-import { creditRequest, grantLastDay, networkOff } from '../lib/wallet.js'
+import { creditRequest, grantLastDay, networkOff, WITHHELD } from '../lib/wallet.js'
 import { hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
@@ -84,18 +84,20 @@ export function registerBilling(program: Command): void {
             formatDate(grantLastDay(g)),
           ]),
           ...(wallet.expired_micro_usd !== undefined ? [['expired', usdMicro(wallet.expired_micro_usd)]] : []),
-          ...(wallet.free_model
+          ...(wallet.free_model_today
             ? [
-                ['free_model_calls_today', wallet.free_model.calls_today],
-                ['free_model_calls_per_day', wallet.free_model.calls_per_day],
+                ['free_model_calls_today', wallet.free_model_today.calls_today],
+                ['free_model_calls_per_day', wallet.free_model_today.calls_per_day],
               ]
             : []),
+          ...(wallet.included_hours_withheld !== undefined ? [['included_hours_withheld', String(wallet.included_hours_withheld)]] : []),
           ...(wallet.network ? [['network_off', String(wallet.network.off)]] : []),
         ])
         // The rows stay key and value for cut and grep; the notes go to
         // stderr, as the CLI's other hints do.
         const note = belowZeroNote(wallet.balance_micro_usd, wallet.min_balance_micro_usd)
         if (note) console.error(hintText(note))
+        if (wallet.included_hours_withheld) console.error(hintText(WITHHELD))
         const network = networkOff(wallet)
         if (network) console.error(hintText(`network  ${network}`))
         const moreCredit = creditRequest(wallet)

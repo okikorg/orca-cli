@@ -508,7 +508,7 @@ describe('orca mcp serve: models, artifacts and staged files', () => {
       'left_micro_usd',
       'expires_at',
       'expired_micro_usd',
-      'free_model',
+      'free_model_today',
       'calls_today',
       'network',
       'credit_request',
