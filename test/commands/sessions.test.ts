@@ -220,6 +220,42 @@ describe('sessions get: sandbox', () => {
     await run(['--json', 'sessions', 'get', SESSION_ID])
     expect(JSON.parse(stdout())).toMatchObject({ id: SESSION_ID, sandbox: 'asleep' })
   })
+
+  const DISCARDED = 'The workspace was larger than the 100 MiB Free keeps, so it was not saved.'
+  const NEAR =
+    'This workspace is 83 MiB of the 100 MiB Free keeps. Over 100 MiB it is not saved when the sandbox sleeps, and the next message starts an empty sandbox. Delete files in /workspace to stay under it.'
+
+  it.each([
+    ['a discarded workspace (free-plan F37)', sandboxView('none', { reason: 'hours_used_up', outcome: 'discarded', message: DISCARDED }), DISCARDED],
+    ['a workspace near the size Free keeps (A6 (26))', sandboxView('asleep', { reason: 'idle', outcome: 'asleep', message: NEAR }), NEAR],
+    [
+      'a suspension (A6 (4))',
+      sandboxView('asleep', { reason: 'suspended', outcome: 'asleep' }),
+      'Work for this organization is suspended. Ask on Discord: https://discord.gg/btTYzdzvqq',
+    ],
+    [
+      'the network turned on (A6 (28))',
+      sandboxView('asleep', { reason: 'network_on', outcome: 'asleep' }),
+      'The sandbox slept so that its next start has the network, now that your organization has credit.',
+    ],
+  ])('says why the sandbox last slept after %s', async (_name, view, note) => {
+    stubFetch(getRoutes({ [`GET ${SANDBOX}`]: jsonResponse(view) }))
+    await run(['sessions', 'get', SESSION_ID])
+    expect(stdout()).toContain(`\nlastSleep\t${note}\n`)
+  })
+
+  it('says nothing more for a sleep with nothing to say', async () => {
+    stubFetch(getRoutes({ [`GET ${SANDBOX}`]: jsonResponse(sandboxView('asleep', { outcome: 'asleep', reason: 'idle' })) }))
+    await run(['sessions', 'get', SESSION_ID])
+    expect(stdout()).not.toContain('lastSleep')
+  })
+
+  it('adds last_sleep, as the server sent it, to the --json object', async () => {
+    const view = sandboxView('none', { reason: 'hours_used_up', outcome: 'discarded', message: DISCARDED })
+    stubFetch(getRoutes({ [`GET ${SANDBOX}`]: jsonResponse(view) }))
+    await run(['--json', 'sessions', 'get', SESSION_ID])
+    expect(JSON.parse(stdout())).toMatchObject({ sandbox: 'none', last_sleep: view.last_sleep })
+  })
 })
 
 describe('sessions sleep', () => {

@@ -140,6 +140,9 @@ export function registerSessions(program: Command): void {
         return
       }
       const rows = sessionUsageRows(session.usage)
+      // Why the sandbox last slept, or what that sleep found (free-plan F37,
+      // A6 (4), (26), (28)): a notice shown live in chat stays readable here.
+      const sleep = sleepNote({ last_sleep: session.last_sleep ?? null })
       if (mode === 'plain') {
         printPlainRows([
           ['id', session.id],
@@ -150,6 +153,7 @@ export function registerSessions(program: Command): void {
           ['status', session.status],
           ['environment', session.environment.type],
           ...(session.sandbox ? [['sandbox', session.sandbox]] : []),
+          ...(sleep ? [['lastSleep', sleep]] : []),
           ['created', formatTime(session.created_at)],
           ['lastActive', formatTime(session.last_active_at)],
           ...rows.map((row) => [row.key, row.plain]),
@@ -173,6 +177,7 @@ export function registerSessions(program: Command): void {
           <Field width={LABEL_WIDTH} label="pays" value={payerLabel(session.payer)} />
           <Field width={LABEL_WIDTH} label="environment" value={session.environment.type} />
           {session.sandbox ? <Field width={LABEL_WIDTH} label="sandbox" value={sandboxStateWords(session.sandbox)} /> : null}
+          {sleep ? <Field width={LABEL_WIDTH} label="last sleep" value={sleep} /> : null}
           <Field width={LABEL_WIDTH} label="created" value={formatTime(session.created_at)} />
           <Field width={LABEL_WIDTH} label="last active" value={formatTime(session.last_active_at)} />
           {rows.map((row) => (

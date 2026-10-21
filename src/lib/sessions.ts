@@ -33,7 +33,7 @@ import {
   type StagedFile,
   type StagedUpload,
 } from './staging.js'
-import type { SandboxState, SessionModel, SessionSandbox, UsageSummary } from './types.js'
+import type { SandboxSleep, SandboxState, SessionModel, SessionSandbox, UsageSummary } from './types.js'
 import { groupCost } from './usage.js'
 
 // A tool line's status: running, done, failed, or stopped (cut off by the
@@ -454,6 +454,10 @@ export type SessionView = Omit<AgentSession, 'usage'> & {
   agent_model: string
   payer: SessionModel['payer']
   sandbox?: SandboxState
+  // The sandbox's newest sleep since it last woke, with the server's message
+  // (a discarded or near-limit workspace, free-plan A6 (1), (26)), as
+  // GET /api/sessions/{id}/sandbox gives it; present with `sandbox`.
+  last_sleep?: SandboxSleep | null
 }
 
 // sessionView reads one session, its usage and its model from their one
@@ -463,9 +467,10 @@ export async function sessionView(client: ApiClient, id: string): Promise<Sessio
   const session = await (await client.v1()).beta.agents.sessions.retrieve(id)
   const usage = await client.usage({ start: 0, session: id, group_by: 'model' })
   const model = await client.sessionModel(id)
-  // The sandbox line is extra: a failed read leaves it out, never the session.
+  // The sandbox lines are extra: a failed read leaves them out, never the
+  // session.
   const sandbox = await client.sessionSandbox(id).then(
-    (view) => view.state,
+    (view) => view,
     () => undefined,
   )
   // `usage` replaces the /v1 object's own field.
@@ -475,7 +480,7 @@ export async function sessionView(client: ApiClient, id: string): Promise<Sessio
     model: model.model,
     agent_model: model.agent_model,
     payer: model.payer,
-    ...(sandbox ? { sandbox } : {}),
+    ...(sandbox ? { sandbox: sandbox.state, last_sleep: sandbox.last_sleep } : {}),
   }
 }
 
@@ -537,10 +542,10 @@ const SLEEP_REASON_WORDS: Readonly<Record<string, string>> = {
   network_on: 'The sandbox slept so that its next start has the network, now that your organization has credit.',
 }
 
-// sleepNote is what to say about a sleep that ended asleep: the server's
-// message (a Free workspace near its size, A6 (26)), else its reason's
-// words, else null.
-export function sleepNote(view: SessionSandbox): string | null {
+// sleepNote is what to say about a sandbox's last sleep: the server's
+// message (a discarded workspace, or a Free workspace near its size, A6 (1),
+// (26)), else its reason's words, else null.
+export function sleepNote(view: Pick<SessionSandbox, 'last_sleep'>): string | null {
   const last = view.last_sleep
   if (!last) return null
   const note = last.message || SLEEP_REASON_WORDS[last.reason]
