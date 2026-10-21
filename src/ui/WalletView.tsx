@@ -3,7 +3,7 @@ import { Box, Text } from 'ink'
 import { formatDate } from '../lib/format.js'
 import { belowZeroNote, tokenPrice, usdCents, usdMicro } from '../lib/money.js'
 import type { Wallet } from '../lib/types.js'
-import { creditRequest, freeModelCalls, grantedLine, machineTime, networkOff, paidCredit, WITHHELD } from '../lib/wallet.js'
+import { creditRequest, freeModelCalls, grantedLine, machineTime, networkLine, paidCredit, WITHHELD } from '../lib/wallet.js'
 import { Field, Panel } from './Panel.js'
 import { theme } from './theme.js'
 
@@ -19,7 +19,7 @@ export function WalletView({ wallet: w }: { wallet: Wallet }) {
   const note = belowZeroNote(w.balance_micro_usd, w.min_balance_micro_usd)
   const paid = paidCredit(w)
   const freeModel = freeModelCalls(w)
-  const network = networkOff(w)
+  const network = networkLine(w)
   const moreCredit = creditRequest(w)
   return (
     <Panel title="WALLET" subtitle={`${w.tier} plan`}>

@@ -142,11 +142,20 @@ describe('billing wallet on Free (free-plan D3.16)', () => {
     expect(stderr()).toBe('')
   })
 
+  it('prints the network\'s message and count while running sandboxes started without it (amendment A6 (28))', async () => {
+    const ON = 'Your organization has credit, so the network is on. A running sandbox that started without it gets it after its next sleep.'
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...FREE_WALLET, network: { off: false, sandboxes_without_network: 2, message: ON } }) })
+    await run(['billing', 'wallet'])
+    expect(stdout()).toContain('network_off\tfalse\nsandboxes_without_network\t2\n')
+    expect(stderr()).toContain(`network  on. ${ON}\n`)
+  })
+
   it('adds nothing on Pro, where the server sends no Free plan fields', async () => {
     stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...WALLET, free_model_today: null, network: { off: false }, credit_request: null }) })
     await run(['billing', 'wallet'])
     expect(stdout()).not.toContain('free_model')
     expect(stdout()).toContain('network_off\tfalse\n')
+    expect(stdout()).not.toContain('sandboxes_without_network')
     expect(stderr()).toBe('')
   })
 })

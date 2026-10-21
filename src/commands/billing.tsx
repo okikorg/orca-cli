@@ -6,7 +6,7 @@ import { formatDate } from '../lib/format.js'
 import { belowZeroNote, usdMicro } from '../lib/money.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import type { BillingURL } from '../lib/types.js'
-import { creditRequest, grantLastDay, networkOff, WITHHELD } from '../lib/wallet.js'
+import { creditRequest, grantLastDay, networkLine, WITHHELD } from '../lib/wallet.js'
 import { hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
 
@@ -92,13 +92,16 @@ export function registerBilling(program: Command): void {
             : []),
           ...(wallet.included_hours_withheld !== undefined ? [['included_hours_withheld', String(wallet.included_hours_withheld)]] : []),
           ...(wallet.network ? [['network_off', String(wallet.network.off)]] : []),
+          ...(wallet.network?.sandboxes_without_network !== undefined
+            ? [['sandboxes_without_network', wallet.network.sandboxes_without_network]]
+            : []),
         ])
         // The rows stay key and value for cut and grep; the notes go to
         // stderr, as the CLI's other hints do.
         const note = belowZeroNote(wallet.balance_micro_usd, wallet.min_balance_micro_usd)
         if (note) console.error(hintText(note))
         if (wallet.included_hours_withheld) console.error(hintText(WITHHELD))
-        const network = networkOff(wallet)
+        const network = networkLine(wallet)
         if (network) console.error(hintText(`network  ${network}`))
         const moreCredit = creditRequest(wallet)
         if (moreCredit) console.error(hintText(`more credit  ${moreCredit}`))

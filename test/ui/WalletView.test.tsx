@@ -117,4 +117,17 @@ describe('WalletView', () => {
     const frame = render(<WalletView wallet={{ ...FREE_WALLET, network: { off: false } }} />).lastFrame() ?? ''
     expect(frame).not.toContain('network')
   })
+
+  it('prints the server\'s message while running sandboxes started without the network (amendment A6 (28))', () => {
+    const ON = 'Your organization has credit, so the network is on. A running sandbox that started without it gets it after its next sleep.'
+    const network = { off: false, sandboxes_without_network: 2, message: ON }
+    for (const wallet of [{ ...FREE_WALLET, network }, { ...WALLET, network }]) {
+      const frame = (render(<WalletView wallet={wallet} />).lastFrame() ?? '').replace(/\s+/g, ' ')
+      expect(frame).toContain(`network on. ${ON}`)
+    }
+  })
+
+  it('prints no free model line on Free with a null free_model_today (amendment A6 (13))', () => {
+    expect(render(<WalletView wallet={{ ...FREE_WALLET, free_model_today: null }} />).lastFrame()).not.toContain('free model')
+  })
 })
