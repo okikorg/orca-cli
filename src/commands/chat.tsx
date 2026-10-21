@@ -5,9 +5,19 @@ import type { AgentSessionEvent } from 'openai/resources/beta/agents/agents'
 
 import { resolveAgentId } from '../lib/agents.js'
 import { extractErrorBody, mapApiError, toPage } from '../lib/api.js'
-import { creditOut, freeModels, offersFreeModel, otherSide, pickerItems, preselect, refusedAtAdmission } from '../lib/models.js'
+import {
+  creditOut,
+  freeModels,
+  offersFreeModel,
+  otherSide,
+  pickerItems,
+  preselect,
+  refusedAtAdmission,
+  switchCause,
+  type SwitchCause,
+} from '../lib/models.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { freeModelNotInPlan, planWords } from '../lib/plan.js'
+import { planWords } from '../lib/plan.js'
 import { stripControlSequences } from '../lib/markdown.js'
 import { interactive } from '../lib/output.js'
 import { readStdin } from '../lib/stdin.js'
@@ -90,6 +100,18 @@ async function refusedModel(api: ApiContext, sessionId: string, code: string | u
   )
 }
 
+// freeModelListed is, for a `free_model_unavailable` refusal, whether the
+// server lists a free model that can run now (amendment A3 (3)): the switch
+// then goes to it. False while the free models are off (A5), or when the
+// list cannot be read; undefined for any other refusal.
+async function freeModelListed(api: ApiContext, code: string | undefined): Promise<boolean | undefined> {
+  if (code !== 'free_model_unavailable') return undefined
+  return withApi(api, (c) => c.models()).then(
+    (list) => freeModels(list).length > 0,
+    () => false,
+  )
+}
+
 // switcher loads the other side of who pays for a session and switches it.
 // The REPL and the single-shot prompt share it. With freeModel (a Free plan
 // refusal that offers it, free-plan D3.16 F16), the free model the server
@@ -117,15 +139,16 @@ export function switcher(api: ApiContext): Switcher {
   }
 }
 
-// offerSwitch says which credit ran out and asks, in one prompt, whether to
-// top up or switch this session, with the design's warning; on switch, the
+// offerSwitch says which credit ran out, or why the plan refused, and asks,
+// in one prompt, whether to switch this session or take the other way (a
+// top-up, an upgrade), with the design's warning; on switch, the
 // model is picked from the other side (preselected only for the same
 // OpenRouter model, or the free model when the refusal offers it) and
 // posted. True means the next turn can go on.
 async function offerSwitch(
   api: ApiContext,
   sessionId: string,
-  out: 'orca_credit' | 'provider_quota',
+  out: SwitchCause,
   reason: string,
   freeModel = false,
 ): Promise<boolean> {
@@ -181,21 +204,25 @@ async function runSingleShot(
   process.once('SIGINT', onSigint)
   try {
     let wroteText = false
-    // A message refused at admission for Orca credit: at a terminal, offer
-    // the switch. Null means it was switched and the message goes again;
-    // anything else is rethrown as it came.
+    // A message refused at admission for Orca credit or by the plan: at a
+    // terminal, offer the switch. Null means it was switched and the message
+    // goes again; anything else is rethrown.
     const switchedAfterRefusal = async (err: unknown): Promise<null> => {
       const code = err instanceof APIError ? (err.code ?? undefined) : undefined
       const param = err instanceof APIError ? (err.param ?? undefined) : undefined
       const model = await refusedModel(api, sessionId, code)
-      if (refusedAtAdmission(code) && creditOut(code, param) && !json && interactive()) {
+      const freeModel = await freeModelListed(api, code)
+      const cause = switchCause(code, param, model, freeModel)
+      if (refusedAtAdmission(code) && cause && !json && interactive()) {
         nameSession()
         const reason = err instanceof Error ? err.message : String(err)
-        if (await offerSwitch(api, sessionId, 'orca_credit', reason, offersFreeModel(code, param, model))) return null
+        if (await offerSwitch(api, sessionId, cause, reason, offersFreeModel(code, param, model, freeModel))) return null
       }
-      // A free model on a tier with no share: the server's message, then its ways.
-      if (err instanceof APIError && freeModelNotInPlan(code, model)) {
-        throw new CliError(extractErrorBody({ error: err.error }), ExitCode.Failure, planWords(code, param, model))
+      // A plan refusal read with the session's model or the free-model list:
+      // the server's message, then the ways those tell apart.
+      const ways = planWords(code, param, model, freeModel)
+      if (err instanceof APIError && (model !== undefined || freeModel !== undefined) && ways.length) {
+        throw new CliError(extractErrorBody({ error: err.error }), ExitCode.Failure, ways)
       }
       throw err
     }
@@ -288,7 +315,8 @@ async function runRepl(
       const errorCode = err instanceof APIError ? (err.code ?? undefined) : undefined
       const errorParam = err instanceof APIError ? (err.param ?? undefined) : undefined
       const errorModel = id ? await refusedModel(api, id, errorCode) : undefined
-      return { terminated: 'error' as const, message: mapped.message, errorCode, errorParam, errorModel, sessionId: id }
+      const errorFreeModel = await freeModelListed(api, errorCode)
+      return { terminated: 'error' as const, message: mapped.message, errorCode, errorParam, errorModel, errorFreeModel, sessionId: id }
     }
   }
 

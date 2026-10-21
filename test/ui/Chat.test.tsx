@@ -282,7 +282,7 @@ describe('Chat on the Free plan (free-plan D3.16)', () => {
     expect(all).toContain("This turn reached the free model's 25 calls. Send a message to continue.")
   }, 20000)
 
-  it('after a stop for machine time, prints its ways forward and offers no switch of model', async () => {
+  it('after a stop for machine time, prints the server\'s message, offers no credit of its own and no switch of model', async () => {
     let loaded = false
     const send: SendTurn = async () => ({
       terminated: 'error',
@@ -304,13 +304,15 @@ describe('Chat on the Free plan (free-plan D3.16)', () => {
     stdin.write('go')
     await waitFor(() => frames.join('\n').includes('go'))
     stdin.write('\r')
-    await waitFor(() => frames.join('\n').includes('Add credit: orca billing buy'))
-    expect(frames.join('\n')).toContain('included hour this month is used up')
+    await waitFor(() => frames.join('\n').includes('included hour this month is used up'))
+    // Credit buys machine time only while Free has a rate (amendment A6 (15)):
+    // the server's message says so when it does.
+    expect(frames.join('\n')).not.toContain('Add credit: orca billing buy')
     expect(loaded).toBe(false)
     expect(lastFrame() ?? '').not.toContain('Top up, or switch')
   }, 20000)
 
-  it('after a model refused on Free, prints the ways forward and offers the free model first', async () => {
+  it('after a model refused on Free, prints the ways forward and asks to upgrade or switch, the free model first, never to top up', async () => {
     const sent: string[] = []
     const send: SendTurn = async (message) => {
       sent.push(message)
@@ -350,7 +352,9 @@ describe('Chat on the Free plan (free-plan D3.16)', () => {
     stdin.write('go')
     await waitFor(() => frames.join('\n').includes('go'))
     stdin.write('\r')
-    await waitFor(() => (lastFrame() ?? '').includes('Top up, or switch this session?'))
+    await waitFor(() => (lastFrame() ?? '').includes('Upgrade, or switch this session?'))
+    expect(lastFrame() ?? '').toContain('Upgrade first (orca billing buy pro, or orca billing buy max)')
+    expect(frames.join('\n')).not.toContain('Top up')
     expect(frames.join('\n')).toContain('Upgrade: orca billing buy pro, or orca billing buy max')
     expect(frames.join('\n')).toContain('Switch this session to the free model (orca chat offers it at a terminal)')
     expect(lastFrame() ?? '').toContain('Switch this session to the free model or your own key')
@@ -364,6 +368,113 @@ describe('Chat on the Free plan (free-plan D3.16)', () => {
     expect(applied).toEqual(['orca/openrouter/cohere/north-mini-code:free'])
     // Refused at admission, so the same message goes again.
     expect(sent).toEqual(['go', 'go'])
+  }, 20000)
+})
+
+describe('Chat after a plan refusal (free-plan D3.16)', () => {
+  const FREE_NEXT = 'orca/openrouter/minimax/minimax-m3.1-flash:free'
+  const freeOffer = {
+    items: [{ label: FREE_NEXT, value: FREE_NEXT }],
+    initial: FREE_NEXT,
+    provider: 'orca',
+    freeModel: true,
+  }
+
+  async function submitGo(stdin: EventEmitter & { write: (data: string) => void }, frames: string[]) {
+    await waitFor(() => frames.join('').includes('Chat'))
+    await ready(stdin)
+    stdin.write('go')
+    await waitFor(() => frames.join('\n').includes('go'))
+    stdin.write('\r')
+  }
+
+  it('declining the switch for a model that needs Pro or Max says to upgrade, not to top up', async () => {
+    const send: SendTurn = async () => ({
+      terminated: 'error',
+      message: 'This model needs Pro or Max.',
+      errorCode: 'model_not_in_plan',
+      errorParam: 'agent.model',
+      sessionId: 'sess_1',
+    })
+    const switcher: Switcher = { load: async () => freeOffer, apply: async () => {} }
+    const { stdin, frames, lastFrame } = render(<Chat agentLabel="support" send={send} switcher={switcher} onExit={() => {}} />)
+    await submitGo(stdin as unknown as EventEmitter & { write: (data: string) => void }, frames)
+    await waitFor(() => (lastFrame() ?? '').includes('Upgrade, or switch this session?'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\x1B[B')
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\r')
+    await waitFor(() => frames.join('\n').includes('Upgrade, then send a message to continue this session.'))
+    expect(frames.join('\n')).not.toContain('Top up, then')
+  }, 20000)
+
+  it('switches a withdrawn free model to the next one the server lists and sends the message again (amendment A3 (3))', async () => {
+    const sent: string[] = []
+    const send: SendTurn = async (message) => {
+      sent.push(message)
+      if (sent.length === 1) {
+        return {
+          terminated: 'error',
+          message: "Orca's free model North Mini Code is not available right now.",
+          errorCode: 'free_model_unavailable',
+          errorParam: 'agent.model',
+          errorFreeModel: true,
+          sessionId: 'sess_1',
+        }
+      }
+      return { terminated: 'done', message: 'Answered on the next free model', sessionId: 'sess_1' }
+    }
+    const loads: Array<boolean | undefined> = []
+    const applied: string[] = []
+    const switcher: Switcher = {
+      load: async (_sessionId, freeModel) => {
+        loads.push(freeModel)
+        return freeOffer
+      },
+      apply: async (_sessionId, model) => {
+        applied.push(model)
+      },
+    }
+    const { stdin, frames, lastFrame } = render(<Chat agentLabel="support" send={send} switcher={switcher} onExit={() => {}} />)
+    await submitGo(stdin as unknown as EventEmitter & { write: (data: string) => void }, frames)
+    await waitFor(() => (lastFrame() ?? '').includes('Switch this session?'))
+    expect(lastFrame() ?? '').toContain('Not now')
+    expect(frames.join('\n')).toContain('Switch this session to the free model (orca chat offers it at a terminal)')
+    expect(frames.join('\n')).not.toContain('Top up')
+    expect(loads).toEqual([true])
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\r')
+    await waitFor(() => (lastFrame() ?? '').includes('Select a model'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\r')
+    await waitFor(() => frames.join('\n').includes('Answered on the next free model'))
+    expect(applied).toEqual([FREE_NEXT])
+    expect(sent).toEqual(['go', 'go'])
+  }, 20000)
+
+  it('offers no switch while the free models are off (amendment A5): the server\'s message and its ways only', async () => {
+    let loaded = false
+    const send: SendTurn = async () => ({
+      terminated: 'error',
+      message: "Orca's free model is off right now.",
+      errorCode: 'free_model_unavailable',
+      errorParam: 'agent.model',
+      errorFreeModel: false,
+      sessionId: 'sess_1',
+    })
+    const switcher: Switcher = {
+      load: async () => {
+        loaded = true
+        return freeOffer
+      },
+      apply: async () => {},
+    }
+    const { stdin, frames, lastFrame } = render(<Chat agentLabel="support" send={send} switcher={switcher} onExit={() => {}} />)
+    await submitGo(stdin as unknown as EventEmitter & { write: (data: string) => void }, frames)
+    await waitFor(() => frames.join('\n').includes('Add your own OpenRouter key'))
+    expect(frames.join('\n')).not.toContain('Switch this session to the free model')
+    expect(loaded).toBe(false)
+    expect(lastFrame() ?? '').not.toContain('Switch this session?')
   }, 20000)
 })
 

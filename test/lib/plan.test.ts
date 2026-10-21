@@ -29,9 +29,12 @@ describe('a refusal\'s ways forward', () => {
     expect(planActions('insufficient_quota', 'free_model_capacity')).toEqual(['openrouter_key', 'add_credit'])
     expect(planActions('insufficient_quota', 'free_model_daily')).toEqual(['openrouter_key', 'add_credit'])
     expect(planActions('usage_limit_exceeded', 'free_model_capacity')).toEqual(['openrouter_key', 'add_credit'])
-    expect(planActions('insufficient_quota', 'included_hours')).toEqual(['add_credit'])
-    expect(planActions('usage_limit_exceeded', 'included_hours')).toEqual(['add_credit'])
-    expect(planActions('free_model_unavailable', undefined)).toEqual(['provider_key', 'add_credit'])
+    expect(planActions('free_model_unavailable', undefined)).toEqual(['openrouter_key', 'add_credit'])
+  })
+
+  it('offer no credit for Free\'s included machine time, which credit buys only while Free has a rate (amendment A6 (15))', () => {
+    expect(planActions('insufficient_quota', 'included_hours')).toEqual([])
+    expect(planActions('usage_limit_exceeded', 'included_hours')).toEqual([])
   })
 
   it('cover the Free plan\'s rate limits by their param (amendment A2), and no other rate limit', () => {
@@ -63,8 +66,15 @@ describe('a refusal\'s ways forward', () => {
     expect(planActions('model_not_in_plan', 'agent.model', 'orca/openrouter/anthropic/claude-fable-5')).toEqual(['upgrade', 'free_model'])
   })
 
-  it('give the free model off (A5) the same ways as withdrawn, on any plan', () => {
-    expect(planActions('free_model_unavailable', 'agent.model')).toEqual(['provider_key', 'add_credit'])
+  it('switch a withdrawn free model to the next one only while the server lists one (amendments A3 (3), A5)', () => {
+    // Another free model listed: the switch to it comes first.
+    expect(planActions('free_model_unavailable', 'agent.model', undefined, true)).toEqual(['free_model', 'openrouter_key', 'add_credit'])
+    // None listed: the free models are off, and the server's message says so.
+    expect(planActions('free_model_unavailable', 'agent.model', undefined, false)).toEqual(['openrouter_key', 'add_credit'])
+    expect(planActions('free_model_unavailable', 'agent.model')).toEqual(['openrouter_key', 'add_credit'])
+    expect(planWords('free_model_unavailable', 'agent.model', undefined, true)[0]).toBe(
+      'Switch this session to the free model (orca chat offers it at a terminal)',
+    )
   })
 
   it('are none for every other refusal', () => {

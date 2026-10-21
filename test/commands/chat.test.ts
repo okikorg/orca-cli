@@ -336,7 +336,23 @@ describe('orca chat on the Free plan (free-plan D3.16)', () => {
     })
   })
 
-  it('prints the free model switched off (amendment A5) as the server wrote it, on any plan', async () => {
+  // GET /api/models with the free models the server lists now.
+  const modelsListing = (free: string[]) =>
+    jsonResponse({
+      object: 'list',
+      openrouter_fee_bps: 550,
+      groups: [
+        {
+          payer: 'orca_credit',
+          provider: 'openrouter',
+          label: 'Orca credit',
+          available: true,
+          models: free.map((id) => ({ id, input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' })),
+        },
+      ],
+    })
+
+  it('prints the free model switched off (amendment A5) as the server wrote it, on any plan, with no switch to offer', async () => {
     const message = "Orca's free model is off right now. Switch this session to another model, add your own OpenRouter key, or add credit."
     stubFetch({
       ...agentRoute(),
@@ -346,12 +362,37 @@ describe('orca chat on the Free plan (free-plan D3.16)', () => {
         { error: { message, type: 'invalid_request_error', param: 'agent.model', code: 'free_model_unavailable' } },
         { status: 503 },
       ),
+      'GET /api/models': modelsListing([]),
     })
     await expect(run(['chat', AGENT_ID, 'hi'])).rejects.toMatchObject({
       exitCode: ExitCode.Failure,
       message,
       detail: [
-        'Add a provider key: in the dashboard, Settings, Providers',
+        'Add your own OpenRouter key: in the dashboard, Settings, Providers',
+        'Add credit: orca billing buy pack:<cents> (orca billing wallet lists the packs)',
+      ],
+    })
+  })
+
+  it('offers the switch to the next free model for one withdrawn while the server lists another (amendment A3 (3))', async () => {
+    const message =
+      "Orca's free model North Mini Code is not available right now. Switch this session to MiniMax M3.1 Flash, add your own OpenRouter key, or add credit to use another model."
+    stubFetch({
+      ...agentRoute(),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
+      [`POST /v1/agents/sessions/${SESSION_ID}/events`]: jsonResponse(
+        { error: { message, type: 'invalid_request_error', param: 'agent.model', code: 'free_model_unavailable' } },
+        { status: 503 },
+      ),
+      'GET /api/models': modelsListing(['orca/openrouter/minimax/minimax-m3.1-flash:free']),
+    })
+    await expect(run(['chat', AGENT_ID, 'hi'])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+      message,
+      detail: [
+        'Switch this session to the free model (orca chat offers it at a terminal)',
+        'Add your own OpenRouter key: in the dashboard, Settings, Providers',
         'Add credit: orca billing buy pack:<cents> (orca billing wallet lists the packs)',
       ],
     })
@@ -373,7 +414,7 @@ describe('orca chat on the Free plan (free-plan D3.16)', () => {
     expect((err as { detail: string[] }).detail).toHaveLength(4)
   })
 
-  it('ends a turn stopped at the included hour with the server\'s message and the way forward', async () => {
+  it('ends a turn stopped at the included machine time with the server\'s message alone, which says whether credit continues it', async () => {
     const events = turnEvents('failed').map((e) =>
       e.type === 'agent.session.turn.failed'
         ? {
@@ -389,7 +430,7 @@ describe('orca chat on the Free plan (free-plan D3.16)', () => {
     await expect(run(['chat', AGENT_ID, 'hi'])).rejects.toMatchObject({
       exitCode: ExitCode.Failure,
       message: expect.stringContaining('The workspace is saved.'),
-      detail: ['Add credit: orca billing buy pack:<cents> (orca billing wallet lists the packs)'],
+      detail: undefined,
     })
   })
 

@@ -6,7 +6,7 @@
 import { glyphs } from '../ui/theme.js'
 import { CliError, ExitCode } from './errors.js'
 import { tokenPrice, usdMicro } from './money.js'
-import { planActions, planWord } from './plan.js'
+import { freeModelNotInPlan, planActions, planWord } from './plan.js'
 import type { ModelGroup, ModelGroups, Payer, PickModel } from './types.js'
 
 const ORCA_PREFIX = 'orca/openrouter/'
@@ -146,28 +146,47 @@ export function preselect(groups: readonly ModelGroup[], model: string): string 
 // creditOut names the credit that ran out, from the server's code and
 // param, never its message: a turn it ended (`usage_limit_exceeded` with
 // `orca_credit` or `provider_quota`), or a message it refused at admission
-// for Orca credit (`insufficient_quota`, or `model_not_in_plan`: on Free a
-// model above the ceiling, on any tier with no share a free model, A5).
-// Free's included hour used up (`included_hours`) is machine time, which no
-// switch of model pays for.
+// for Orca credit (`insufficient_quota`). Free's included machine time used
+// up (`included_hours`) is machine time, which no switch of model pays for.
 export function creditOut(code: string | undefined, param: string | undefined): 'orca_credit' | 'provider_quota' | null {
-  if (code === 'model_not_in_plan') return 'orca_credit'
   if (code === 'insufficient_quota') return param === 'included_hours' ? null : 'orca_credit'
   if (code !== 'usage_limit_exceeded') return null
   if (param === 'orca_credit' || param === 'provider_quota') return param
   return null
 }
 
+// SwitchCause is why a session is offered a switch of model: a credit ran
+// out, or the plan refused the model at admission (free-plan D3.16): a model
+// that needs Pro or Max (F14), or a free model withdrawn while another is
+// listed (amendment A3 (3)). Neither plan refusal is a credit refusal, so
+// neither offers a top-up.
+export type SwitchCause = 'orca_credit' | 'provider_quota' | 'model_not_in_plan' | 'free_model_unavailable'
+
+// switchCause is the switch a refusal offers, or null for none. `model` and
+// `freeModel` are as planActions reads them: a free model on a tier with no
+// share (A5), or the free models off (no free model listed), offers no
+// switch; the server's message and its ways say what to do.
+export function switchCause(
+  code: string | undefined,
+  param: string | undefined,
+  model?: string,
+  freeModel = false,
+): SwitchCause | null {
+  if (code === 'model_not_in_plan') return freeModelNotInPlan(code, model) ? null : 'model_not_in_plan'
+  if (code === 'free_model_unavailable') return freeModel ? 'free_model_unavailable' : null
+  return creditOut(code, param)
+}
+
 // refusedAtAdmission is a message the server refused before any turn began:
 // after a switch it is sent again, where a turn the server ended continues.
 export function refusedAtAdmission(code: string | undefined): boolean {
-  return code === 'insufficient_quota' || code === 'model_not_in_plan'
+  return code === 'insufficient_quota' || code === 'model_not_in_plan' || code === 'free_model_unavailable'
 }
 
 // offersFreeModel is a refusal whose ways forward include switching this
 // session to the free model (free-plan D3.16, F16): the switch then lists
-// the free model first. `model` is the session's model, as planActions
-// reads it.
-export function offersFreeModel(code: string | undefined, param: string | undefined, model?: string): boolean {
-  return planActions(code, param, model).includes('free_model')
+// the free model first. `model` and `freeModel` are as planActions reads
+// them.
+export function offersFreeModel(code: string | undefined, param: string | undefined, model?: string, freeModel = false): boolean {
+  return planActions(code, param, model, freeModel).includes('free_model')
 }

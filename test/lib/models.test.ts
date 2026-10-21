@@ -12,6 +12,7 @@ import {
   pickerItems,
   preselect,
   refusedAtAdmission,
+  switchCause,
 } from '../../src/lib/models.js'
 import { percentBps, tokenPrice } from '../../src/lib/money.js'
 import type { ModelGroups } from '../../src/lib/types.js'
@@ -102,7 +103,7 @@ describe('the switch', () => {
   })
   it('on Free, offers the switch for a model refused at admission, never for machine time', () => {
     // free-plan D3.16: a model above the ceiling, or a paid model at $0.
-    expect(creditOut('model_not_in_plan', 'agent.model')).toBe('orca_credit')
+    expect(switchCause('model_not_in_plan', 'agent.model')).toBe('model_not_in_plan')
     expect(refusedAtAdmission('model_not_in_plan')).toBe(true)
     expect(creditOut('insufficient_quota', 'free_plan')).toBe('orca_credit')
     // No switch of model pays for Free's included hour.
@@ -113,6 +114,25 @@ describe('the switch', () => {
     expect(offersFreeModel('insufficient_quota', 'free_plan')).toBe(true)
     expect(offersFreeModel('insufficient_quota', 'free_model_daily')).toBe(false)
     expect(offersFreeModel('insufficient_quota', undefined)).toBe(false)
+  })
+  it('never calls a plan refusal a credit that ran out, so it offers no top-up', () => {
+    // A model that needs Pro or Max: credit never admits it (amendment A5).
+    expect(creditOut('model_not_in_plan', 'agent.model')).toBeNull()
+    expect(switchCause('model_not_in_plan', 'agent.model', 'orca/openrouter/anthropic/claude-fable-5')).toBe('model_not_in_plan')
+    // A free model on a tier with no share: no switch, the server's message and its ways.
+    expect(switchCause('model_not_in_plan', 'agent.model', 'orca/openrouter/cohere/north-mini-code:free')).toBeNull()
+    // Credit refusals keep their own cause.
+    expect(switchCause('insufficient_quota', 'free_plan')).toBe('orca_credit')
+    expect(switchCause('usage_limit_exceeded', 'provider_quota')).toBe('provider_quota')
+    expect(switchCause('insufficient_quota', 'included_hours')).toBeNull()
+  })
+  it('offers a withdrawn free model the switch to the next one only while the server lists one (amendment A3 (3))', () => {
+    expect(refusedAtAdmission('free_model_unavailable')).toBe(true)
+    expect(switchCause('free_model_unavailable', 'agent.model', undefined, true)).toBe('free_model_unavailable')
+    expect(offersFreeModel('free_model_unavailable', 'agent.model', undefined, true)).toBe(true)
+    // The free models off (A5): nothing to switch to.
+    expect(switchCause('free_model_unavailable', 'agent.model', undefined, false)).toBeNull()
+    expect(offersFreeModel('free_model_unavailable', 'agent.model')).toBe(false)
   })
 })
 

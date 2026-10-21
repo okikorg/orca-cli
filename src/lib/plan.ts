@@ -59,13 +59,21 @@ export function freeModelNotInPlan(code: string | null | undefined, model: strin
 // (`usage_limit_exceeded`). Empty for anything else, the other rate limits
 // included. `model` is the session's model where the caller knows it, which
 // tells a free model on a tier with no share from Free's ceiling (A5).
+// `freeModel` is whether the server lists a free model that can run now,
+// where the caller read it.
 export function planActions(
   code: string | null | undefined,
   param: string | null | undefined,
   model?: string,
+  freeModel = false,
 ): PlanAction[] {
   if (code === 'model_not_in_plan') return freeModelNotInPlan(code, model) ? ['openrouter_key'] : ['upgrade', 'free_model']
-  if (code === 'free_model_unavailable') return ['provider_key', 'add_credit']
+  // A free model withdrawn or repriced: the switch goes to the next one the
+  // server lists (amendment A3 (3)). With none listed, the free models are
+  // off (A5) and the server's message says so: no switch to offer.
+  if (code === 'free_model_unavailable') {
+    return freeModel ? ['free_model', 'openrouter_key', 'add_credit'] : ['openrouter_key', 'add_credit']
+  }
   if (code === 'rate_limit_exceeded') {
     switch (param) {
       case 'free_model_busy':
@@ -88,14 +96,21 @@ export function planActions(
     case 'free_model_capacity':
     case 'free_model_daily':
       return ['openrouter_key', 'add_credit']
+    // Free's included machine time: credit buys more only while Free's terms
+    // give it a rate (amendment A6 (14), (15)), which the refusal does not
+    // carry; the server's message offers credit exactly when it does.
     case 'included_hours':
-      return ['add_credit']
     default:
       return []
   }
 }
 
 // planWords is the ways forward as lines, printed under the server's message.
-export function planWords(code: string | null | undefined, param: string | null | undefined, model?: string): string[] {
-  return planActions(code, param, model).map((action) => ACTION_WORDS[action])
+export function planWords(
+  code: string | null | undefined,
+  param: string | null | undefined,
+  model?: string,
+  freeModel = false,
+): string[] {
+  return planActions(code, param, model, freeModel).map((action) => ACTION_WORDS[action])
 }

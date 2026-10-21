@@ -66,6 +66,10 @@ export type ChatTurnResult = {
   // The session's model, read for a `model_not_in_plan` refusal: one of
   // Orca's free models there is a tier with no share (amendment A5).
   errorModel?: string
+  // Whether the server lists a free model that can run, read for a
+  // `free_model_unavailable` refusal: the switch goes to it (amendment A3
+  // (3)); none listed means the free models are off (A5).
+  errorFreeModel?: boolean
 }
 
 export type StreamTurnOptions = {
