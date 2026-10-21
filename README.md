@@ -348,8 +348,10 @@ right now (Orca turned it off for every plan), and the free model not part of
 your plan (no share on it), each with the server's message and its ways
 forward. The server's notices during a turn (5
 minutes of machine time left, a turn ended at the free model's calls or at
-Free's 30 minutes, a sandbox with no network) are printed on stderr, and with
-`--json` arrive as their own events.
+Free's 30 minutes, a sandbox with no network, a new sandbox after a workspace
+too large to keep, a workspace near the size Free keeps) are printed on
+stderr, and with `--json` arrive as their own events. A suspended
+organization's refusal is the server's message as it is.
 
 ## Usage and billing
 
@@ -371,7 +373,8 @@ first and expires; credit you buy never does: the wallet prints one `granted
 credit` line per grant with what is left and its last day, then `paid credit`.
 On every plan with a free-model share it adds the free model's calls today
 (none while the free model is off). On Free it adds the included machine time
-and when it resets, the network line while Free sandboxes have none, and where
+and when it resets, the network line while Free sandboxes have none (and, once
+the organization has credit, while running sandboxes still lack it), and where
 to ask for more credit; when Free's included hour and free model are withheld from the
 organization, it says so instead of the hours.
 
