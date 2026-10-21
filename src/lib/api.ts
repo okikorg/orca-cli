@@ -160,6 +160,9 @@ export function mapApiError(err: unknown, opts: { contextName: string; apiUrl: s
   // answer, not the key's role.
   const ways = planWords(code, param)
   if (reason && ways.length) return new CliError(reason, ExitCode.Failure, ways)
+  // A suspension (free-plan F26) refuses starts and uploads with a 403 and
+  // the server's message, which says where to ask; it is no key's role.
+  if (reason && code === 'organization_suspended') return new CliError(reason, ExitCode.Failure)
   if (reason && param) reason = `${reason} (${param})`
   if (status !== undefined) {
     if (status === 401) {

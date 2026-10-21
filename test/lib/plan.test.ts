@@ -25,9 +25,10 @@ describe('a refusal\'s ways forward', () => {
   it('are the dashboard\'s, read from code and param', () => {
     expect(planActions('insufficient_quota', 'free_plan')).toEqual(['free_model', 'provider_key', 'add_credit', 'upgrade'])
     expect(planActions('model_not_in_plan', 'agent.model')).toEqual(['upgrade', 'free_model'])
-    expect(planActions('insufficient_quota', 'free_model_capacity')).toEqual(['provider_key', 'upgrade'])
-    expect(planActions('insufficient_quota', 'free_model_daily')).toEqual(['provider_key', 'upgrade'])
-    expect(planActions('usage_limit_exceeded', 'free_model_capacity')).toEqual(['provider_key', 'upgrade'])
+    // Shared by every tier, so never upgrade (amendment A6 (6)).
+    expect(planActions('insufficient_quota', 'free_model_capacity')).toEqual(['openrouter_key', 'add_credit'])
+    expect(planActions('insufficient_quota', 'free_model_daily')).toEqual(['openrouter_key', 'add_credit'])
+    expect(planActions('usage_limit_exceeded', 'free_model_capacity')).toEqual(['openrouter_key', 'add_credit'])
     expect(planActions('insufficient_quota', 'included_hours')).toEqual(['add_credit'])
     expect(planActions('usage_limit_exceeded', 'included_hours')).toEqual(['add_credit'])
     expect(planActions('free_model_unavailable', undefined)).toEqual(['provider_key', 'add_credit'])

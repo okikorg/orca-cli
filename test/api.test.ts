@@ -153,15 +153,24 @@ describe('mapApiError', () => {
         'Switch this session to the free model (orca chat offers it at a terminal)',
       ],
     })
-    // The same on the /api client, by code and param.
-    const daily = new ApiError('429', 429, {
-      error: { message: 'Your organization has used today\'s 100 free-model calls.', param: 'free_model_daily', code: 'insufficient_quota' },
-    })
-    expect(mapApiError(daily, CTX)).toMatchObject({
-      exitCode: ExitCode.Failure,
-      message: 'Your organization has used today\'s 100 free-model calls.',
-      detail: ['Add a provider key: in the dashboard, Settings, Providers', 'Upgrade: orca billing buy pro, or orca billing buy max'],
-    })
+    // The same on the /api client, by code and param. The daily share's
+    // three messages are each the server's as sent (amendment A6 (32)).
+    const tail = 'They reset at 00:00 UTC. Add your own OpenRouter key, or add credit to use another model.'
+    for (const message of [
+      `Your organization has used today's 100 free-model calls. ${tail}`,
+      `You have used today's 100 free-model calls. ${tail}`,
+      `A free-model turn sets aside 25 calls, and 7 of today's are left. ${tail}`,
+    ]) {
+      const daily = new ApiError('429', 429, { error: { message, param: 'free_model_daily', code: 'insufficient_quota' } })
+      expect(mapApiError(daily, CTX)).toMatchObject({
+        exitCode: ExitCode.Failure,
+        message,
+        detail: [
+          'Add your own OpenRouter key: in the dashboard, Settings, Providers',
+          'Add credit: orca billing buy pack:<cents> (orca billing wallet lists the packs)',
+        ],
+      })
+    }
     // The Free plan's rate limits carry a param (amendment A2).
     const busy = OpenAIAPIError.generate(
       429,
@@ -178,6 +187,13 @@ describe('mapApiError', () => {
     const gone = new ApiError('503', 503, { error: { message: 'Orca\'s free model is not available right now.', code: 'free_model_unavailable' } })
     expect(mapApiError(gone, CTX).message).toBe('Orca\'s free model is not available right now.')
     expect(mapApiError(gone, CTX).detail).toHaveLength(2)
+  })
+
+  it('shows a suspension\'s 403 as the server\'s message, with nothing to do and no key blamed (free-plan F26)', () => {
+    const message = 'Work for this organization is suspended. Ask on Discord: https://discord.gg/btTYzdzvqq'
+    const err = mapApiError(new ApiError('403', 403, { error: { message, type: 'permission_denied', param: null, code: 'organization_suspended' } }), CTX)
+    expect(err).toMatchObject({ exitCode: ExitCode.Failure, message })
+    expect(err.detail ?? []).toEqual([])
   })
 
   it('maps an unreachable host to a connectivity error', () => {

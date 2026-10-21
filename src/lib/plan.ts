@@ -82,9 +82,12 @@ export function planActions(
   switch (param) {
     case 'free_plan':
       return ['free_model', 'provider_key', 'add_credit', 'upgrade']
+    // Every tier shares the capacity and has the same share, so upgrading
+    // gives no more (amendment A6 (6)); the server's message, one of three
+    // for the daily share (A6 (32)), says which ran out.
     case 'free_model_capacity':
     case 'free_model_daily':
-      return ['provider_key', 'upgrade']
+      return ['openrouter_key', 'add_credit']
     case 'included_hours':
       return ['add_credit']
     default:
