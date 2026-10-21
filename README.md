@@ -191,7 +191,7 @@ orca agents delete [agent] [--yes]
 orca models [--payer orca|<provider>]   # every model you can use, grouped by who pays, with Free's plan marks
 
 orca sessions list [--agent agent]
-orca sessions get <id>
+orca sessions get <id>                   # its model, sandbox, why the sandbox last slept, usage
 orca sessions create --agent <agent> [--sandbox] [--template t] [--vault v]... [--file path[:dest]]...
 orca sessions items <id> [--limit n]
 orca sessions artifacts <session>       # files its turns saved under /workspace/outputs
@@ -337,21 +337,28 @@ with `Continue`. Outside a terminal or with `--json` it prints the reason and
 the session id and exits 1.
 
 On the Free plan, a refusal (a model that needs Pro or Max, a paid model with
-no credit, the free model's calls used up for today, the included hour of
-machine time used up, the free model or Free sandboxes busy, the day's turns
+no credit, the free model's calls used up for today, the included machine
+time used up, the free model or Free sandboxes busy, the day's turns
 used) prints the server's message and its ways forward as
 words: switch this session to the free model, add a provider key, add credit,
 upgrade, or try again later, each with its command. Where the free model is one of them, the
-switch in a terminal lists it first. The free model's refusals reach every
-plan: its calls used up for today, the free model busy, the free model off
-right now (Orca turned it off for every plan), and the free model not part of
-your plan (no share on it), each with the server's message and its ways
-forward. The server's notices during a turn (5
-minutes of machine time left, a turn ended at the free model's calls or at
-Free's 30 minutes, a sandbox with no network, a new sandbox after a workspace
+switch in a terminal lists it first. For a model that needs Pro or Max the
+terminal asks whether to upgrade or switch this session, never to top up.
+The free model's refusals reach every
+plan: its calls used up for today, the free model busy, the free model
+withdrawn (the switch then offers the next free model the server lists), the
+free model off right now (Orca turned it off for every plan), and the free
+model not part of your plan (no share on it), each with the server's message
+and its ways forward. The server's notices during a turn (machine time nearly used up,
+a turn ended at the free model's calls or at Free's time limit for a turn,
+a sandbox with no network, a new sandbox after a workspace
 too large to keep, a workspace near the size Free keeps) are printed on
-stderr, and with `--json` arrive as their own events. A suspended
-organization's refusal is the server's message as it is.
+stderr, and with `--json` arrive as their own events. `orca sessions get`
+shows why the sandbox last slept, with the server's message (a workspace
+discarded or near the size Free keeps, a suspension, the network turned on),
+and `last_sleep` with `--json`. A suspended organization's refusal, and a
+refusal at the most sessions (or other objects) the organization can keep,
+is the server's message as it is, exit 1.
 
 ## Usage and billing
 
@@ -375,8 +382,8 @@ On every plan with a free-model share it adds the free model's calls today
 (none while the free model is off). On Free it adds the included machine time
 and when it resets, the network line while Free sandboxes have none (and, once
 the organization has credit, while running sandboxes still lack it), and where
-to ask for more credit; when Free's included hour and free model are withheld from the
-organization, it says so instead of the hours.
+to ask for more credit; when Free's included machine time and free model are
+withheld from the organization, it says so instead of the hours.
 
 ```sh
 orca usage                                   # last 30 days: cost, meters, daily chart

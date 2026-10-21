@@ -196,6 +196,16 @@ describe('mapApiError', () => {
     expect(err.detail ?? []).toEqual([])
   })
 
+  it('shows a kept-objects limit as the server\'s message, exit 1, with no key or role blamed (free-plan F33)', () => {
+    const message = 'Your organization keeps 200 sessions, the most it can on Free. Delete one to start another.'
+    const err = mapApiError(new ApiError('403', 403, { error: { message, type: 'permission_denied', param: null, code: 'object_limit_exceeded' } }), CTX)
+    expect(err).toMatchObject({ exitCode: ExitCode.Failure, message })
+    expect(err.message).not.toContain('not allowed')
+    // Any other 403 is still the key's role.
+    const role = mapApiError(new ApiError('403', 403, { error: { message: 'Admins only', code: 'permission_denied' } }), CTX)
+    expect(role).toMatchObject({ exitCode: ExitCode.Auth, message: 'not allowed: Admins only (context "test")' })
+  })
+
   it('maps an unreachable host to a connectivity error', () => {
     expect(mapApiError(new TypeError('fetch failed'), CTX).message).toContain('cannot reach http://test:8080')
     expect(mapApiError(new APIConnectionError({ message: 'Connection error.' }), CTX).message).toContain('cannot reach')

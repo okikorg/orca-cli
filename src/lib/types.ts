@@ -168,7 +168,8 @@ export type Wallet = {
   free_model_today?: WalletFreeModel | null
   // The plan facts' free models, in order; empty while they are off (A5).
   free_model?: { models: string[] } | null
-  // The email domain's age withheld Free's included hour and the free model.
+  // The email domain's age withheld Free's included machine time and the
+  // free model.
   included_hours_withheld?: boolean
   // Free sandboxes have no network until the organization has credit; the
   // message is the server's, said the same way everywhere. Once it has

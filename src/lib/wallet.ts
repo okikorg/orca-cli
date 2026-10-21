@@ -8,8 +8,10 @@ import { stripControlSequences } from './markdown.js'
 import { usdMicro } from './money.js'
 import type { GrantedCredit, Wallet } from './types.js'
 
-// WITHHELD is the line a wallet adds when Free's included hour and free
-// model are withheld from the organization (free-plan F27, amendment A2).
+// WITHHELD is the line a wallet adds when Free's included machine time and
+// free model are withheld from the organization (free-plan F27, amendment
+// A2 (3)). A copy of the server's WITHHELD_MESSAGE, kept because the wallet
+// sends only the boolean `included_hours_withheld`, never the words.
 export const WITHHELD =
   "Free's included hour and free model are not available for this organization. Add credit, or bring your own provider key."
 

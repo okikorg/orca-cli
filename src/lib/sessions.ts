@@ -110,7 +110,7 @@ function oneLine(text: string, max: number): string {
 
 // The server's session notices (orca-design free-plan D3.16), each
 // {type, message, at}: machine time nearly used, a turn ended at the free
-// model's calls or at Free's 30 minutes, a sandbox started without network,
+// model's calls or at Free's time limit, a sandbox started without network,
 // a new sandbox after a discarded workspace, a saved workspace near the size
 // Free keeps (amendment A6 (1), (2), (26)). None ends the turn.
 const NOTICES = new Set([

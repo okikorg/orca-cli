@@ -161,8 +161,12 @@ export function mapApiError(err: unknown, opts: { contextName: string; apiUrl: s
   const ways = planWords(code, param)
   if (reason && ways.length) return new CliError(reason, ExitCode.Failure, ways)
   // A suspension (free-plan F26) refuses starts and uploads with a 403 and
-  // the server's message, which says where to ask; it is no key's role.
-  if (reason && code === 'organization_suspended') return new CliError(reason, ExitCode.Failure)
+  // the server's message, which says where to ask; a kept-objects limit
+  // (sessions stored, F33, and the other object caps) with one that names
+  // the limit and says to delete one. Neither is the key's role.
+  if (reason && (code === 'organization_suspended' || code === 'object_limit_exceeded')) {
+    return new CliError(reason, ExitCode.Failure)
+  }
   if (reason && param) reason = `${reason} (${param})`
   if (status !== undefined) {
     if (status === 401) {
