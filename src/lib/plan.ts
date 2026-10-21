@@ -5,7 +5,8 @@
 import type { ModelPlan, PickModel } from './types.js'
 
 // planWord is an Orca credit model's mark, as `orca models` and the pickers
-// show it: the free model, a model that needs Pro or Max, or nothing.
+// show it: a free model (on every tier with a share, amendment A4), a model
+// that needs Pro or Max (on Free), or nothing.
 export function planWord(plan: ModelPlan | undefined): string | undefined {
   if (plan === 'free') return 'free model'
   if (plan === 'pro_and_max') return 'Pro and Max'
@@ -13,7 +14,8 @@ export function planWord(plan: ModelPlan | undefined): string | undefined {
 }
 
 // planColumn is a model table's plan column: present only where the server
-// marks a model, so Pro and Max, where every model runs, show none.
+// marks a model. The free models are marked on every tier (amendment A4);
+// with them off or on a tier with no share (A5), Pro and Max show none.
 export function planColumn(models: readonly PickModel[]): { header: string; get: (m: PickModel) => string }[] {
   return models.some((m) => planWord(m.plan)) ? [{ header: 'plan', get: (m) => planWord(m.plan) ?? '' }] : []
 }
@@ -40,14 +42,29 @@ const ACTION_WORDS: Record<PlanAction, string> = {
   next_day: 'More at 00:00 UTC',
 }
 
+// freeModelNotInPlan is a 403 `model_not_in_plan` on one of Orca's free
+// models: its tier's free-model share is none or 0 (amendment A5), not
+// Free's price ceiling. The server sends both with the same code and param,
+// so the session's model tells them apart. Orca credit refuses a `:free`
+// model off the list before this (400, or 503 while the list is empty), so
+// a `:free` model here is a listed one.
+export function freeModelNotInPlan(code: string | null | undefined, model: string | undefined): boolean {
+  return code === 'model_not_in_plan' && model !== undefined && model.startsWith('orca/') && model.endsWith(':free')
+}
+
 // planActions reads a refusal's ways forward from the server's code and
 // param, never its message: at turn admission (`model_not_in_plan`,
 // `free_model_unavailable`, `insufficient_quota`, and the Free plan's
 // `rate_limit_exceeded` params, amendment A2) or a turn the server ended
 // (`usage_limit_exceeded`). Empty for anything else, the other rate limits
-// included.
-export function planActions(code: string | null | undefined, param: string | null | undefined): PlanAction[] {
-  if (code === 'model_not_in_plan') return ['upgrade', 'free_model']
+// included. `model` is the session's model where the caller knows it, which
+// tells a free model on a tier with no share from Free's ceiling (A5).
+export function planActions(
+  code: string | null | undefined,
+  param: string | null | undefined,
+  model?: string,
+): PlanAction[] {
+  if (code === 'model_not_in_plan') return freeModelNotInPlan(code, model) ? ['openrouter_key'] : ['upgrade', 'free_model']
   if (code === 'free_model_unavailable') return ['provider_key', 'add_credit']
   if (code === 'rate_limit_exceeded') {
     switch (param) {
@@ -76,6 +93,6 @@ export function planActions(code: string | null | undefined, param: string | nul
 }
 
 // planWords is the ways forward as lines, printed under the server's message.
-export function planWords(code: string | null | undefined, param: string | null | undefined): string[] {
-  return planActions(code, param).map((action) => ACTION_WORDS[action])
+export function planWords(code: string | null | undefined, param: string | null | undefined, model?: string): string[] {
+  return planActions(code, param, model).map((action) => ACTION_WORDS[action])
 }

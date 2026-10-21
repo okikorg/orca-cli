@@ -57,10 +57,11 @@ async function resolveAgent(ref: string | undefined, verb: string, api: ApiConte
 // pick, by who pays (orca-design model-billing D3.13): Orca credit with
 // OpenRouter's prices and fee, then each provider with a saved key. On Free
 // the free model the server marks comes first and is preselected
-// (free-plan D3.16, F16).
+// (free-plan D3.16, F16); the server marks it on Pro and Max too (amendment
+// A4), where the picker keeps the server's order and preselects nothing.
 async function pickModel(api: ApiContext): Promise<string> {
-  const list = await withApi(api, (c) => c.models())
-  const free = freeModels(list)
+  const [list, wallet] = await withApi(api, (c) => Promise.all([c.models(), c.wallet()]))
+  const free = wallet.tier === 'free' ? freeModels(list) : []
   const items = freeFirst(pickerItems(list), free)
   if (items.length === 0) {
     throw new CliError('no models to pick from: the model lists could not be read', ExitCode.Failure, [

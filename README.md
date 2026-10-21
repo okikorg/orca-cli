@@ -272,10 +272,11 @@ you can use, grouped by who pays: Orca credit, at OpenRouter's price per million
 tokens plus their fee, then each provider you saved a key for. With `--json` or
 outside a terminal the file must name the model; `orca models` lists the same
 names anywhere (`--payer orca` or `--payer anthropic` for one group, `--json`
-for the server's list). On the Free plan the server marks each Orca credit
-model: `orca models` shows "free model" for Orca's free model and "Pro and Max"
-for a model Free cannot run on credit, and the picker offers the free model
-first.
+for the server's list). The server marks each Orca credit model for your
+plan: `orca models` shows "free model" for Orca's free models, on every plan
+(Free, Pro and Max each get the same daily share), and, on Free, "Pro and
+Max" for a model Free cannot run on credit. On Free the picker offers the free
+model first.
 
 `orca chat <agent> [prompt]` runs a turn on a `/v1` session with your API key.
 Without `--session` it creates a session of the agent first (no environment by
@@ -341,7 +342,11 @@ machine time used up, the free model or Free sandboxes busy, the day's turns
 used) prints the server's message and its ways forward as
 words: switch this session to the free model, add a provider key, add credit,
 upgrade, or try again later, each with its command. Where the free model is one of them, the
-switch in a terminal lists it first. The server's notices during a turn (5
+switch in a terminal lists it first. The free model's refusals reach every
+plan: its calls used up for today, the free model busy, the free model off
+right now (Orca turned it off for every plan), and the free model not part of
+your plan (no share on it), each with the server's message and its ways
+forward. The server's notices during a turn (5
 minutes of machine time left, a turn ended at the free model's calls or at
 Free's 30 minutes, a sandbox with no network) are printed on stderr, and with
 `--json` arrive as their own events.
@@ -364,9 +369,10 @@ as "Charged later" for the row it charges, so a balance can go below zero;
 resumes when credit brings it to the minimum. Credit Orca grants is spent
 first and expires; credit you buy never does: the wallet prints one `granted
 credit` line per grant with what is left and its last day, then `paid credit`.
-On Free it adds the included machine time and when it resets, the free model's
-calls today, the network line while Free sandboxes have none, and where to ask
-for more credit; when Free's included hour and free model are withheld from the
+On every plan with a free-model share it adds the free model's calls today
+(none while the free model is off). On Free it adds the included machine time
+and when it resets, the network line while Free sandboxes have none, and where
+to ask for more credit; when Free's included hour and free model are withheld from the
 organization, it says so instead of the hours.
 
 ```sh

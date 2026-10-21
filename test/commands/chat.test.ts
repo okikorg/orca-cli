@@ -311,6 +311,52 @@ describe('orca chat on the Free plan (free-plan D3.16)', () => {
     expect(stderr()).toContain(`session ${SESSION_ID}`)
   })
 
+  it('tells a free model on a plan with no share from Free\'s ceiling by the session\'s model (amendment A5)', async () => {
+    const message = "Orca's free model is not part of this plan. Switch this session to another model, or run it on your own OpenRouter key."
+    stubFetch({
+      ...agentRoute(),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
+      [`POST /v1/agents/sessions/${SESSION_ID}/events`]: jsonResponse(
+        { error: { message, type: 'invalid_request_error', param: 'agent.model', code: 'model_not_in_plan' } },
+        { status: 403 },
+      ),
+      [`GET /api/sessions/${SESSION_ID}/model`]: jsonResponse({
+        object: 'session.model',
+        session_id: SESSION_ID,
+        model: 'orca/openrouter/cohere/north-mini-code:free',
+        agent_model: 'orca/openrouter/cohere/north-mini-code:free',
+        payer: 'orca_credit',
+      }),
+    })
+    await expect(run(['chat', AGENT_ID, 'hi'])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+      message,
+      detail: ['Add your own OpenRouter key: in the dashboard, Settings, Providers'],
+    })
+  })
+
+  it('prints the free model switched off (amendment A5) as the server wrote it, on any plan', async () => {
+    const message = "Orca's free model is off right now. Switch this session to another model, add your own OpenRouter key, or add credit."
+    stubFetch({
+      ...agentRoute(),
+      'POST /v1/agents/sessions': jsonResponse(session()),
+      ...turnRoutes(turnEvents()),
+      [`POST /v1/agents/sessions/${SESSION_ID}/events`]: jsonResponse(
+        { error: { message, type: 'invalid_request_error', param: 'agent.model', code: 'free_model_unavailable' } },
+        { status: 503 },
+      ),
+    })
+    await expect(run(['chat', AGENT_ID, 'hi'])).rejects.toMatchObject({
+      exitCode: ExitCode.Failure,
+      message,
+      detail: [
+        'Add a provider key: in the dashboard, Settings, Providers',
+        'Add credit: orca billing buy pack:<cents> (orca billing wallet lists the packs)',
+      ],
+    })
+  })
+
   it('prints a paid model refused at $0 on Free with its four ways forward', async () => {
     const message = 'On Free, this agent\'s model runs on credit. Switch this session to the free model (cohere/north-mini-code:free), add your own provider key in Settings, Providers, or add credit or upgrade: https://app.orcapods.ai/wallet'
     stubFetch({

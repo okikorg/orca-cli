@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { planActions, planColumn, planWord, planWords } from '../../src/lib/plan.js'
+import { freeModelNotInPlan, planActions, planColumn, planWord, planWords } from '../../src/lib/plan.js'
 import type { PickModel } from '../../src/lib/types.js'
 
 describe('the plan marks (free-plan D3.16)', () => {
@@ -48,6 +48,22 @@ describe('a refusal\'s ways forward', () => {
     ])
     // Sessions at once, sandboxes at once, requests a minute: unchanged.
     expect(planActions('rate_limit_exceeded', undefined)).toEqual([])
+  })
+
+  it('tell a free model on a plan with no share from Free\'s ceiling by the session\'s model (amendment A5)', () => {
+    const free = 'orca/openrouter/cohere/north-mini-code:free'
+    expect(freeModelNotInPlan('model_not_in_plan', free)).toBe(true)
+    expect(freeModelNotInPlan('model_not_in_plan', 'orca/openrouter/anthropic/claude-fable-5')).toBe(false)
+    expect(freeModelNotInPlan('model_not_in_plan', undefined)).toBe(false)
+    // Own OpenRouter keys run `:free` models as before.
+    expect(freeModelNotInPlan('model_not_in_plan', 'openrouter/cohere/north-mini-code:free')).toBe(false)
+    expect(freeModelNotInPlan('free_model_unavailable', free)).toBe(false)
+    expect(planWords('model_not_in_plan', 'agent.model', free)).toEqual(['Add your own OpenRouter key: in the dashboard, Settings, Providers'])
+    expect(planActions('model_not_in_plan', 'agent.model', 'orca/openrouter/anthropic/claude-fable-5')).toEqual(['upgrade', 'free_model'])
+  })
+
+  it('give the free model off (A5) the same ways as withdrawn, on any plan', () => {
+    expect(planActions('free_model_unavailable', 'agent.model')).toEqual(['provider_key', 'add_credit'])
   })
 
   it('are none for every other refusal', () => {

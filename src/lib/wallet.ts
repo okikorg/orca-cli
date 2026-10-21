@@ -22,11 +22,13 @@ export function machineTime(w: Wallet): string {
   return `${formatHours(w.included_compute_seconds)} included: ${used}, resets ${formatDayMonth(w.period_end)}`
 }
 
-// freeModelCalls is the free model's calls today against the share, on Free:
-// "40 of 100 calls today". Null on Pro and Max.
+// freeModelCalls is the free model's calls today against the share, on
+// every tier with one (free-plan amendment A4): "40 of 100 calls today".
+// Null on a tier with no share, and while the free models are off (A5).
 export function freeModelCalls(w: Wallet): string | null {
   const today = w.free_model_today
-  return today ? `${today.calls_today} of ${today.calls_per_day} calls today` : null
+  if (!today || w.free_model?.models.length === 0) return null
+  return `${today.calls_today} of ${today.calls_per_day} calls today`
 }
 
 // networkOff is the network line while Free sandboxes have none: "off."

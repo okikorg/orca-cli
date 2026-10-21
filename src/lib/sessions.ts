@@ -63,6 +63,9 @@ export type ChatTurnResult = {
   // `provider_quota` says whose credit ran out, and Free's stops name
   // theirs (`included_hours`, `free_model_capacity`, free-plan D3.16).
   errorParam?: string
+  // The session's model, read for a `model_not_in_plan` refusal: one of
+  // Orca's free models there is a tier with no share (amendment A5).
+  errorModel?: string
 }
 
 export type StreamTurnOptions = {

@@ -105,6 +105,14 @@ describe('WalletView', () => {
     expect(render(<WalletView wallet={FREE_WALLET} />).lastFrame()).not.toContain('not available for this organization')
   })
 
+  it('prints the free model\'s calls today on Pro and Max too (amendment A4), none on a plan with no share or while it is off (A5)', () => {
+    const today = { free_model_today: { calls_today: 3, calls_per_day: 100, available: true } }
+    expect((render(<WalletView wallet={{ ...WALLET, ...today }} />).lastFrame() ?? '').replace(/\s+/g, ' ')).toContain('free model 3 of 100 calls today')
+    expect(render(<WalletView wallet={{ ...WALLET, free_model_today: null }} />).lastFrame()).not.toContain('free model')
+    const off = { ...WALLET, ...today, free_model: { models: [] } }
+    expect(render(<WalletView wallet={off} />).lastFrame()).not.toContain('free model')
+  })
+
   it('prints no network line once the network is on', () => {
     const frame = render(<WalletView wallet={{ ...FREE_WALLET, network: { off: false } }} />).lastFrame() ?? ''
     expect(frame).not.toContain('network')

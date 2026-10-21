@@ -161,10 +161,13 @@ export type Wallet = {
   granted_credit?: GrantedCredit[]
   // Granted credit that expired unspent.
   expired_micro_usd?: number
-  // The organization's free-model calls today; null on Pro and Max. Named
-  // apart from the plan facts' `free_model` (the model list), which the
-  // wallet also carries (free-plan amendment A2).
+  // The organization's free-model calls today, on every tier with a share
+  // (free-plan amendment A4); null on a tier whose share is none or 0 (A5).
+  // Named apart from the plan facts' `free_model` (the model list), which
+  // the wallet also carries (amendment A2).
   free_model_today?: WalletFreeModel | null
+  // The plan facts' free models, in order; empty while they are off (A5).
+  free_model?: { models: string[] } | null
   // The email domain's age withheld Free's included hour and the free model.
   included_hours_withheld?: boolean
   // Free sandboxes have no network until the organization has credit; the
@@ -196,8 +199,9 @@ export type WalletFreeModel = { calls_today: number; calls_per_day: number; avai
 export type Payer = 'orca_credit' | 'own_key'
 
 // What the organization's plan allows of an Orca credit model (orca-design
-// free-plan D3.16, F16): `free` is the free model (on Free only),
-// `within_ceiling` runs on credit, `pro_and_max` needs Pro or Max.
+// free-plan D3.16, F16): `free` is a free model (on every tier with a
+// share, amendment A4), `within_ceiling` runs on credit, `pro_and_max`
+// needs Pro or Max.
 export type ModelPlan = 'free' | 'within_ceiling' | 'pro_and_max'
 
 // One model a member can pick. Prices are OpenRouter's, Orca credit only, in

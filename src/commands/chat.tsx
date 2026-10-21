@@ -4,10 +4,10 @@ import { APIError } from 'openai/error'
 import type { AgentSessionEvent } from 'openai/resources/beta/agents/agents'
 
 import { resolveAgentId } from '../lib/agents.js'
-import { mapApiError, toPage } from '../lib/api.js'
+import { extractErrorBody, mapApiError, toPage } from '../lib/api.js'
 import { creditOut, freeModels, offersFreeModel, otherSide, pickerItems, preselect, refusedAtAdmission } from '../lib/models.js'
 import { CliError, ExitCode } from '../lib/errors.js'
-import { planWords } from '../lib/plan.js'
+import { freeModelNotInPlan, planWords } from '../lib/plan.js'
 import { stripControlSequences } from '../lib/markdown.js'
 import { interactive } from '../lib/output.js'
 import { readStdin } from '../lib/stdin.js'
@@ -77,6 +77,18 @@ function noteStaged(files: readonly StagedFile[]): void {
 // What a continue after a switch sends, as the dashboard's Continue does:
 // the next turn resumes the saved conversation.
 const CONTINUE_MESSAGE = 'Continue'
+
+// refusedModel is the session's model for a 403 `model_not_in_plan`, which
+// names Free's ceiling or, on one of Orca's free models, a tier with no
+// free-model share (amendment A5): the server sends both with one code and
+// param. Undefined for any other refusal, or when the model cannot be read.
+async function refusedModel(api: ApiContext, sessionId: string, code: string | undefined): Promise<string | undefined> {
+  if (code !== 'model_not_in_plan') return undefined
+  return withApi(api, (c) => c.sessionModel(sessionId)).then(
+    (current) => current.model,
+    () => undefined,
+  )
+}
 
 // switcher loads the other side of who pays for a session and switches it.
 // The REPL and the single-shot prompt share it. With freeModel (a Free plan
@@ -175,10 +187,15 @@ async function runSingleShot(
     const switchedAfterRefusal = async (err: unknown): Promise<null> => {
       const code = err instanceof APIError ? (err.code ?? undefined) : undefined
       const param = err instanceof APIError ? (err.param ?? undefined) : undefined
+      const model = await refusedModel(api, sessionId, code)
       if (refusedAtAdmission(code) && creditOut(code, param) && !json && interactive()) {
         nameSession()
         const reason = err instanceof Error ? err.message : String(err)
-        if (await offerSwitch(api, sessionId, 'orca_credit', reason, offersFreeModel(code, param))) return null
+        if (await offerSwitch(api, sessionId, 'orca_credit', reason, offersFreeModel(code, param, model))) return null
+      }
+      // A free model on a tier with no share: the server's message, then its ways.
+      if (err instanceof APIError && freeModelNotInPlan(code, model)) {
+        throw new CliError(extractErrorBody({ error: err.error }), ExitCode.Failure, planWords(code, param, model))
       }
       throw err
     }
@@ -270,7 +287,8 @@ async function runRepl(
       // switch and a Free plan refusal its ways forward.
       const errorCode = err instanceof APIError ? (err.code ?? undefined) : undefined
       const errorParam = err instanceof APIError ? (err.param ?? undefined) : undefined
-      return { terminated: 'error' as const, message: mapped.message, errorCode, errorParam, sessionId: id }
+      const errorModel = id ? await refusedModel(api, id, errorCode) : undefined
+      return { terminated: 'error' as const, message: mapped.message, errorCode, errorParam, errorModel, sessionId: id }
     }
   }
 

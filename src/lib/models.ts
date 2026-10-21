@@ -115,9 +115,10 @@ export function pickerItems(list: ModelGroups, include: (group: ModelGroup) => b
   })
 }
 
-// freeModels is the Orca credit models the server marks as the free model,
-// which it does only on Free (free-plan D3.16, F16): the list itself is the
-// server's, from its plan facts, never typed here.
+// freeModels is the Orca credit models the server marks as a free model,
+// which it does on every tier with a share (free-plan D3.16, F16, amendment
+// A4) and on none while they are off (A5): the list itself is the server's,
+// from its plan facts, never typed here.
 export function freeModels(list: ModelGroups): string[] {
   return list.groups
     .filter((group) => group.payer === 'orca_credit')
@@ -145,7 +146,8 @@ export function preselect(groups: readonly ModelGroup[], model: string): string 
 // creditOut names the credit that ran out, from the server's code and
 // param, never its message: a turn it ended (`usage_limit_exceeded` with
 // `orca_credit` or `provider_quota`), or a message it refused at admission
-// for Orca credit (`insufficient_quota`, or on Free `model_not_in_plan`).
+// for Orca credit (`insufficient_quota`, or `model_not_in_plan`: on Free a
+// model above the ceiling, on any tier with no share a free model, A5).
 // Free's included hour used up (`included_hours`) is machine time, which no
 // switch of model pays for.
 export function creditOut(code: string | undefined, param: string | undefined): 'orca_credit' | 'provider_quota' | null {
@@ -164,7 +166,8 @@ export function refusedAtAdmission(code: string | undefined): boolean {
 
 // offersFreeModel is a refusal whose ways forward include switching this
 // session to the free model (free-plan D3.16, F16): the switch then lists
-// the free model first.
-export function offersFreeModel(code: string | undefined, param: string | undefined): boolean {
-  return planActions(code, param).includes('free_model')
+// the free model first. `model` is the session's model, as planActions
+// reads it.
+export function offersFreeModel(code: string | undefined, param: string | undefined, model?: string): boolean {
+  return planActions(code, param, model).includes('free_model')
 }

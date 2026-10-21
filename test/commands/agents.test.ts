@@ -187,7 +187,11 @@ describe('agents create with no model, at a terminal', () => {
   it('offers the free model first, preselected, on Free (free-plan D3.16)', async () => {
     const file = await agentFile('name: support\n')
     pickItem.mockResolvedValueOnce(FREE)
-    const calls = stubFetch({ 'GET /api/models': jsonResponse(models(true)), 'POST /v1/agents': jsonResponse(agent(ID, 'support')) })
+    const calls = stubFetch({
+      'GET /api/models': jsonResponse(models(true)),
+      'GET /api/billing/wallet': jsonResponse({ tier: 'free' }),
+      'POST /v1/agents': jsonResponse(agent(ID, 'support')),
+    })
     await asTerminal(() => run(['agents', 'create', '-f', file]))
     const [, items, initial] = pickItem.mock.calls.at(-1) as [string, { value: string; detail: string }[], string | undefined]
     expect(items.map((item) => item.value)).toEqual([FREE, LUNA, 'anthropic/claude-sonnet-4-5'])
@@ -196,10 +200,31 @@ describe('agents create with no model, at a terminal', () => {
     expect(JSON.parse(calls.find((c) => c.method === 'POST')?.body ?? '{}')).toEqual({ name: 'support', model: FREE })
   })
 
-  it('keeps the server\'s order and preselects nothing on Pro and Max', async () => {
+  it('keeps the server\'s order and preselects nothing on Pro and Max, the free model marked (amendment A4)', async () => {
+    for (const tier of ['pro', 'max']) {
+      const file = await agentFile('name: support\n')
+      pickItem.mockResolvedValueOnce(LUNA)
+      stubFetch({
+        'GET /api/models': jsonResponse(models(true)),
+        'GET /api/billing/wallet': jsonResponse({ tier }),
+        'POST /v1/agents': jsonResponse(agent(ID, 'support')),
+      })
+      await asTerminal(() => run(['agents', 'create', '-f', file]))
+      const [, items, initial] = pickItem.mock.calls.at(-1) as [string, { value: string; detail: string }[], string | undefined]
+      expect(items.map((item) => item.value)).toEqual([LUNA, FREE, 'anthropic/claude-sonnet-4-5'])
+      expect(items[1].detail).toMatch(/free model$/)
+      expect(initial).toBeUndefined()
+    }
+  })
+
+  it('preselects nothing while the free models are off (amendment A5)', async () => {
     const file = await agentFile('name: support\n')
     pickItem.mockResolvedValueOnce(LUNA)
-    stubFetch({ 'GET /api/models': jsonResponse(models(false)), 'POST /v1/agents': jsonResponse(agent(ID, 'support')) })
+    stubFetch({
+      'GET /api/models': jsonResponse(models(false)),
+      'GET /api/billing/wallet': jsonResponse({ tier: 'free' }),
+      'POST /v1/agents': jsonResponse(agent(ID, 'support')),
+    })
     await asTerminal(() => run(['agents', 'create', '-f', file]))
     const [, items, initial] = pickItem.mock.calls.at(-1) as [string, { value: string }[], string | undefined]
     expect(items.map((item) => item.value)).toEqual([LUNA, 'anthropic/claude-sonnet-4-5'])

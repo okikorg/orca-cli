@@ -343,7 +343,7 @@ export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: C
       // terminated === 'error'
       pushItem({ kind: 'error', message: result.message || result.errorCode || 'upstream error' })
       // A Free plan refusal or stop: its ways forward, as words.
-      const ways = planWords(result.errorCode, result.errorParam)
+      const ways = planWords(result.errorCode, result.errorParam, result.errorModel)
       if (ways.length) pushItem({ kind: 'note', text: ways.join('\n') })
       // A credit ran out: ask whether to top up or switch who pays. Nothing
       // switches on its own.
@@ -352,7 +352,7 @@ export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: C
       const sessionId = sessionRef.current
       if (out && switcher && sessionId) {
         switcher
-          .load(sessionId, offersFreeModel(result.errorCode, result.errorParam))
+          .load(sessionId, offersFreeModel(result.errorCode, result.errorParam, result.errorModel))
           .then((offer) => setPause({ out, offer, resend }))
           .catch((err: unknown) => pushItem({ kind: 'error', message: err instanceof Error ? err.message : String(err) }))
       }
