@@ -274,7 +274,7 @@ outside a terminal the file must name the model; `orca models` lists the same
 names anywhere (`--payer orca` or `--payer anthropic` for one group, `--json`
 for the server's list). The server marks each Orca credit model for your
 plan: `orca models` shows "free model" for Orca's free models, on every plan
-(Free, Pro and Max each get the same daily share), and, on Free, "Pro and
+(each plan with its own daily share, on the pricing page), and, on Free, "Pro and
 Max" for a model Free cannot run on credit. On Free the picker offers the free
 model first.
 

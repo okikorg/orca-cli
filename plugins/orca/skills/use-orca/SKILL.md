@@ -60,7 +60,7 @@ orca agents list --json                      # only when the user does not know 
 
 `<agent>` is an agent id or the name of exactly one agent (the server says which; a shared name is refused with the ids). Add `--sandbox` (or `--template <template>`) to `chat` for a hosted sandbox, and `--vault <vault>` to let the session use a vault's MCP credentials (`orca vaults credentials add`); a template or vault is an id or a name, like an agent.
 
-Pick a model name for `agents create` from `orca models --json` (`--payer orca` for Orca credit, `--payer anthropic` for one provider's key). Each Orca credit model has a `plan` for this organization: `free` (one of Orca's free models, no charge, on every plan with a free-model share: Free, Pro and Max get the same daily share), `within_ceiling`, or `pro_and_max` (Free cannot run it on credit).
+Pick a model name for `agents create` from `orca models --json` (`--payer orca` for Orca credit, `--payer anthropic` for one provider's key). Each Orca credit model has a `plan` for this organization: `free` (one of Orca's free models, no charge, on every plan with a free-model share; each plan's daily share is on the pricing page), `within_ceiling`, or `pro_and_max` (Free cannot run it on credit).
 
 Work on a file in a sandbox, and get the results back:
 
