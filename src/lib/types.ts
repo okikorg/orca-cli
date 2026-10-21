@@ -171,8 +171,10 @@ export type Wallet = {
   // The email domain's age withheld Free's included hour and the free model.
   included_hours_withheld?: boolean
   // Free sandboxes have no network until the organization has credit; the
-  // message is the server's, said the same way everywhere.
-  network?: { off: boolean; message?: string }
+  // message is the server's, said the same way everywhere. Once it has
+  // credit, sandboxes_without_network counts the running sandboxes that
+  // started without it, with a message, while any do (amendment A6 (28)).
+  network?: { off: boolean; sandboxes_without_network?: number; message?: string }
   // On Free, where to ask for credit, in the server's words.
   credit_request?: { message: string; url: string } | null
 }
@@ -245,12 +247,14 @@ export type SandboxState = 'none' | 'awake' | 'going_to_sleep' | 'asleep' | 'wak
 
 // The newest sleep since the sandbox last woke, whoever started it. reason is
 // an open string (requested, idle, out_of_credit, hours_used_up, unpriced,
-// and more later); outcome is null while it is going to sleep.
+// suspended, network_on, and more later); outcome is null while it is going
+// to sleep, and discarded when a Free stop deleted a workspace it could not
+// save (free-plan F37). message is the server's, when it gives one.
 export type SandboxSleep = {
   reason: string
   started_at: number
   finished_at: number | null
-  outcome: 'asleep' | 'too_large' | 'failed' | 'interrupted' | null
+  outcome: 'asleep' | 'too_large' | 'failed' | 'interrupted' | 'discarded' | null
   message: string | null
 }
 

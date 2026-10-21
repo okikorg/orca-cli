@@ -20,6 +20,7 @@ import {
   itemText,
   requestSleep,
   sandboxStateWords,
+  sleepNote,
   sessionUsageRows,
   payerLabel,
   sessionEnvironment,
@@ -366,7 +367,9 @@ export function registerSessions(program: Command): void {
       if (json) return
       if (goingToSleep(view)) {
         console.log(`The sandbox of session ${id} is going to sleep. Check with: orca sessions get ${id}`)
-      } else if (view.state === 'none') {
+        return
+      }
+      if (view.state === 'none') {
         console.log(`Session ${id} has no sandbox to put to sleep.`)
       } else if (view.state === 'asleep' && !started) {
         console.log(`The sandbox of session ${id} is already asleep.`)
@@ -376,7 +379,11 @@ export function registerSessions(program: Command): void {
         )
       } else {
         console.log(`The sandbox of session ${id} is ${sandboxStateWords(view.state)}.`)
+        return
       }
+      // Why it slept, or what its last sleep found (free-plan F37, A6 (4), (26), (28)).
+      const note = sleepNote(view)
+      if (note) console.log(note)
     })
 
   sessions

@@ -106,9 +106,17 @@ function oneLine(text: string, max: number): string {
 
 // The server's session notices (orca-design free-plan D3.16), each
 // {type, message, at}: machine time nearly used, a turn ended at the free
-// model's calls or at Free's 30 minutes, a sandbox started without network.
-// None ends the turn.
-const NOTICES = new Set(['orca.compute.warning', 'orca.free_model.turn_limit', 'orca.turn.time_limit', 'orca.network.off'])
+// model's calls or at Free's 30 minutes, a sandbox started without network,
+// a new sandbox after a discarded workspace, a saved workspace near the size
+// Free keeps (amendment A6 (1), (2), (26)). None ends the turn.
+const NOTICES = new Set([
+  'orca.compute.warning',
+  'orca.free_model.turn_limit',
+  'orca.turn.time_limit',
+  'orca.network.off',
+  'orca.sandbox.discarded',
+  'orca.sandbox.workspace_near_limit',
+])
 
 // noticeText is the line a notice shows: its message as one line, the
 // network's after `network  off.` as every surface says it.
@@ -518,11 +526,28 @@ export async function waitForSleep(
   return view
 }
 
+// The words for the sleep reasons the design gives them (free-plan
+// amendment A6 (4), (28)). Any other reason says nothing more than asleep.
+const SLEEP_REASON_WORDS: Readonly<Record<string, string>> = {
+  suspended: 'Work for this organization is suspended. Ask on Discord: https://discord.gg/btTYzdzvqq',
+  network_on: 'The sandbox slept so that its next start has the network, now that your organization has credit.',
+}
+
+// sleepNote is what to say about a sleep that ended asleep: the server's
+// message (a Free workspace near its size, A6 (26)), else its reason's
+// words, else null.
+export function sleepNote(view: SessionSandbox): string | null {
+  const last = view.last_sleep
+  if (!last) return null
+  const note = last.message || SLEEP_REASON_WORDS[last.reason]
+  return note ? oneLine(note, 500) : null
+}
+
 // sleepFailure is why a sleep that has ended left the sandbox awake (too
 // large, failed, interrupted), or null when it did not.
 export function sleepFailure(view: SessionSandbox): string | null {
   const last = view.last_sleep
-  if (!last || last.outcome === null || last.outcome === 'asleep') return null
+  if (!last || last.outcome === null || last.outcome === 'asleep' || last.outcome === 'discarded') return null
   return last.message || 'The sandbox stayed awake.'
 }
 
