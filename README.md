@@ -337,11 +337,11 @@ with `Continue`. Outside a terminal or with `--json` it prints the reason and
 the session id and exits 1.
 
 On the Free plan, a refusal (a paid model with no credit, the free model's
-calls used up for today, the included machine time used up, the free model or Free sandboxes busy, the day's turns
-used) prints the server's message and its ways forward as
-words: switch this session to the free model, add a provider key, add credit,
-upgrade, or try again later, each with its command. Where the free model is one of them, the
-switch in a terminal lists it first.
+calls used up for today, the included machine time used up, the free model or
+Free sandboxes busy, the day's turns used) prints the server's message and its
+ways forward as words: switch this session to the free model, add a provider
+key, add credit, upgrade, or try again later, each with its command. Where the
+free model is one of them, the switch in a terminal lists it first.
 The free model's refusals reach every
 plan: its calls used up for today, the free model busy, the free model
 withdrawn (the switch then offers the next free model the server lists), the
