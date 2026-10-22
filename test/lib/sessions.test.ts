@@ -136,8 +136,8 @@ describe('the server\'s session notices (free-plan D3.16)', () => {
     expect(noticeText({ type: 'orca.turn.time_limit', message: 'This turn reached Free\'s 30 minutes.\u001b[2J' })).toBe(
       'This turn reached Free\'s 30 minutes.',
     )
-    expect(noticeText({ type: 'orca.network.off', message: 'Network is off on Free sandboxes.' })).toBe(
-      'network  off. Network is off on Free sandboxes.',
+    expect(noticeText({ type: 'orca.network.off', message: 'The network is off in Free sandboxes.' })).toBe(
+      'network  off. The network is off in Free sandboxes.',
     )
   })
 
