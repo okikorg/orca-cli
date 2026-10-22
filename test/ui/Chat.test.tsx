@@ -262,7 +262,7 @@ describe('Chat REPL', () => {
 })
 
 describe('Chat on the Free plan (free-plan D3.16)', () => {
-  const NETWORK = 'network  off. Network is off on Free sandboxes until your organization has credit.'
+  const NETWORK = 'network  off. The network is off in Free sandboxes until you add credit.'
 
   it('shows the server\'s notices in the transcript as they arrive', async () => {
     const send: SendTurn = async (_message, handlers) => {

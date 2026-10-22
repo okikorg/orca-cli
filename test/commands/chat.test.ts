@@ -265,7 +265,7 @@ function turnWithNotices(): Record<string, unknown>[] {
   return [events[0], notices[0], notices[1], ...events.slice(1, -2), notices[2], notices[3], ...events.slice(-2)]
 }
 
-const NETWORK = 'Network is off on Free sandboxes until your organization has credit. Add credit, or write to us on Discord (https://discord.gg/btTYzdzvqq).'
+const NETWORK = "The network is off in Free sandboxes until you add credit. Agents can still run code, but can't install packages or reach the internet."
 const WARNING = '5 minutes of included machine time left this month. Add credit to keep the sandbox running after that.'
 const TURN_LIMIT = "This turn reached the free model's 25 calls. Send a message to continue."
 const TIME_LIMIT = "This turn reached Free's 30 minutes. Send a message to continue."

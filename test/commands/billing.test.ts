@@ -26,8 +26,8 @@ const WALLET = {
 
 // A Free organization's wallet (free-plan D3.16): granted and paid credit,
 // the free model today, the network off and where to ask for credit.
-const NETWORK = 'Network is off on Free sandboxes until your organization has credit. Add credit, or write to us on Discord (https://discord.gg/btTYzdzvqq).'
-const MORE_CREDIT = 'Need more to try Orca? Write to us on Discord (https://discord.gg/btTYzdzvqq).'
+const NETWORK = "The network is off in Free sandboxes until you add credit. Agents can still run code, but can't install packages or reach the internet."
+const MORE_CREDIT = 'Need credit to try a paid model? Ask us on Discord: https://discord.gg/btTYzdzvqq'
 const FREE_WALLET = {
   ...WALLET,
   tier: 'free',
@@ -143,7 +143,7 @@ describe('billing wallet on Free (free-plan D3.16)', () => {
   })
 
   it('prints the network\'s message and count while running sandboxes started without it (amendment A6 (28))', async () => {
-    const ON = 'Your organization has credit, so the network is on. A running sandbox that started without it gets it after its next sleep.'
+    const ON = 'Your organization has credit, so the network is on. Sandboxes that started before then get it after their next sleep.'
     stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...FREE_WALLET, network: { off: false, sandboxes_without_network: 2, message: ON } }) })
     await run(['billing', 'wallet'])
     expect(stdout()).toContain('network_off\tfalse\nsandboxes_without_network\t2\n')

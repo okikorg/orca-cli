@@ -26,8 +26,8 @@ const NOTE = 'Your balance is below zero. Paid work resumes when credit brings i
 // A Free organization in October 2026 (free-plan D3.16): the free model
 // today, the network off, the request line, honoured signup credit and an
 // operator grant, soonest expiry first.
-const NETWORK = 'Network is off on Free sandboxes until your organization has credit. Add credit, or write to us on Discord (https://discord.gg/btTYzdzvqq).'
-const MORE_CREDIT = 'Need more to try Orca? Write to us on Discord (https://discord.gg/btTYzdzvqq).'
+const NETWORK = "The network is off in Free sandboxes until you add credit. Agents can still run code, but can't install packages or reach the internet."
+const MORE_CREDIT = 'Need credit to try a paid model? Ask us on Discord: https://discord.gg/btTYzdzvqq'
 const FREE_WALLET: Wallet = {
   ...WALLET,
   balance_micro_usd: 35_600_000,
@@ -119,7 +119,7 @@ describe('WalletView', () => {
   })
 
   it('prints the server\'s message while running sandboxes started without the network (amendment A6 (28))', () => {
-    const ON = 'Your organization has credit, so the network is on. A running sandbox that started without it gets it after its next sleep.'
+    const ON = 'Your organization has credit, so the network is on. Sandboxes that started before then get it after their next sleep.'
     const network = { off: false, sandboxes_without_network: 2, message: ON }
     for (const wallet of [{ ...FREE_WALLET, network }, { ...WALLET, network }]) {
       const frame = (render(<WalletView wallet={wallet} />).lastFrame() ?? '').replace(/\s+/g, ' ')
