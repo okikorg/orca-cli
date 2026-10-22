@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
-import { counterpart, creditOut, otherSide, payerOf, pickerItems, preselect, refusedAtAdmission } from '../../src/lib/models.js'
+import {
+  counterpart,
+  creditOut,
+  freeFirst,
+  freeModels,
+  modelRows,
+  offersFreeModel,
+  otherSide,
+  payerOf,
+  pickerItems,
+  preselect,
+  refusedAtAdmission,
+  switchCause,
+} from '../../src/lib/models.js'
 import { percentBps, tokenPrice } from '../../src/lib/money.js'
 import type { ModelGroups } from '../../src/lib/types.js'
 import { glyphs } from '../../src/ui/theme.js'
@@ -87,5 +100,90 @@ describe('the switch', () => {
     expect(creditOut('insufficient_quota', undefined)).toBe('orca_credit')
     expect(refusedAtAdmission('insufficient_quota')).toBe(true)
     expect(refusedAtAdmission('usage_limit_exceeded')).toBe(false)
+  })
+  it('on Free, offers the switch for a model refused at admission, never for machine time', () => {
+    // free-plan D3.16: a model not in the plan, or a paid model at $0.
+    expect(switchCause('model_not_in_plan', 'agent.model')).toBe('model_not_in_plan')
+    expect(refusedAtAdmission('model_not_in_plan')).toBe(true)
+    expect(creditOut('insufficient_quota', 'free_plan')).toBe('orca_credit')
+    // No switch of model pays for Free's included hour.
+    expect(creditOut('insufficient_quota', 'included_hours')).toBeNull()
+    expect(creditOut('usage_limit_exceeded', 'included_hours')).toBeNull()
+    // The free model leads the switch only where the refusal offers it.
+    expect(offersFreeModel('model_not_in_plan', 'agent.model')).toBe(true)
+    expect(offersFreeModel('insufficient_quota', 'free_plan')).toBe(true)
+    expect(offersFreeModel('insufficient_quota', 'free_model_daily')).toBe(false)
+    expect(offersFreeModel('insufficient_quota', undefined)).toBe(false)
+  })
+  it('never calls a plan refusal a credit that ran out, so it offers no top-up', () => {
+    // A model not in the plan: credit never admits it (amendment A5).
+    expect(creditOut('model_not_in_plan', 'agent.model')).toBeNull()
+    expect(switchCause('model_not_in_plan', 'agent.model', 'orca/openrouter/anthropic/claude-fable-5')).toBe('model_not_in_plan')
+    // A free model on a tier with no share: no switch, the server's message and its ways.
+    expect(switchCause('model_not_in_plan', 'agent.model', 'orca/openrouter/cohere/north-mini-code:free')).toBeNull()
+    // Credit refusals keep their own cause.
+    expect(switchCause('insufficient_quota', 'free_plan')).toBe('orca_credit')
+    expect(switchCause('usage_limit_exceeded', 'provider_quota')).toBe('provider_quota')
+    expect(switchCause('insufficient_quota', 'included_hours')).toBeNull()
+  })
+  it('offers a withdrawn free model the switch to the next one only while the server lists one (amendment A3 (3))', () => {
+    expect(refusedAtAdmission('free_model_unavailable')).toBe(true)
+    expect(switchCause('free_model_unavailable', 'agent.model', undefined, true)).toBe('free_model_unavailable')
+    expect(offersFreeModel('free_model_unavailable', 'agent.model', undefined, true)).toBe(true)
+    // The free models off (A5): nothing to switch to.
+    expect(switchCause('free_model_unavailable', 'agent.model', undefined, false)).toBeNull()
+    expect(offersFreeModel('free_model_unavailable', 'agent.model')).toBe(false)
+  })
+})
+
+// The same list for a Free organization: the server marks the free model
+// `free` and every other Orca credit model `within_ceiling` (free-plan
+// D3.16, F16; Free has no price ceiling since 2026-10-22).
+const FREE = 'orca/openrouter/cohere/north-mini-code:free'
+const FREE_LIST: ModelGroups = {
+  ...LIST,
+  groups: [
+    {
+      ...LIST.groups[0],
+      models: [
+        { ...LIST.groups[0].models[0], plan: 'within_ceiling' },
+        { id: 'orca/openrouter/anthropic/claude-fable-5', input_micro_usd_per_million: 10_000_000, output_micro_usd_per_million: 50_000_000, plan: 'within_ceiling' },
+        { id: FREE, input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' },
+      ],
+    },
+    ...LIST.groups.slice(1),
+  ],
+}
+
+describe('the free model', () => {
+  it('is the one the server marks, only on Free', () => {
+    expect(freeModels(FREE_LIST)).toEqual([FREE])
+    expect(freeModels(LIST)).toEqual([])
+  })
+  it('comes first in a picker, the rest in the server\'s order', () => {
+    const items = freeFirst(pickerItems(FREE_LIST), freeModels(FREE_LIST))
+    expect(items.map((item) => item.value)).toEqual([
+      FREE,
+      'orca/openrouter/openai/gpt-5.6-luna',
+      'orca/openrouter/anthropic/claude-fable-5',
+      'openrouter/openai/gpt-5.6-luna',
+      'anthropic/claude-sonnet-4-5',
+    ])
+    // No free model, no change.
+    expect(freeFirst(pickerItems(LIST), [])).toEqual(pickerItems(LIST))
+  })
+  it('and only the free model is marked in the picker\'s detail', () => {
+    const sep = glyphs.separator
+    const items = pickerItems(FREE_LIST)
+    expect(items.find((item) => item.value === FREE)?.detail).toBe(
+      `Orca credit, OpenRouter's price plus their 5.5% fee ${sep} $0.00 in, $0.00 out per million tokens ${sep} free model`,
+    )
+    expect(items.find((item) => item.value.includes('fable'))?.detail).not.toMatch(/Pro and Max|free model/)
+    expect(items.find((item) => item.value.endsWith('luna'))?.detail).not.toMatch(/Pro and Max|free model/)
+  })
+  it('keeps its plan in the flat rows the MCP server lists', () => {
+    const rows = modelRows(FREE_LIST, 'north')
+    expect(rows).toEqual([{ id: FREE, payer: 'orca', input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' }])
+    expect(modelRows(LIST, 'claude')[0]).not.toHaveProperty('plan')
   })
 })

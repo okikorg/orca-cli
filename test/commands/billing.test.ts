@@ -24,6 +24,27 @@ const WALLET = {
   openrouter_fee_bps: 550,
 }
 
+// A Free organization's wallet (free-plan D3.16): granted and paid credit,
+// the free model today, the network off and where to ask for credit.
+const NETWORK = 'Network is off on Free sandboxes until your organization has credit. Add credit, or write to us on Discord (https://discord.gg/btTYzdzvqq).'
+const MORE_CREDIT = 'Need more to try Orca? Write to us on Discord (https://discord.gg/btTYzdzvqq).'
+const FREE_WALLET = {
+  ...WALLET,
+  tier: 'free',
+  included_compute_seconds: 3_600,
+  used_compute_seconds: 1_440,
+  granted_credit_micro_usd: 12_400_000,
+  paid_credit_micro_usd: 6_100_000,
+  granted_credit: [
+    { kind: 'grant', grant_reason: 'on_request', granted_micro_usd: 20_000_000, left_micro_usd: 12_400_000, granted_at: 1_793_750_400, expires_at: 1_796_428_800 },
+  ],
+  expired_micro_usd: 0,
+  free_model_today: { calls_today: 40, calls_per_day: 100, available: true },
+  included_hours_withheld: false,
+  network: { off: true, message: NETWORK },
+  credit_request: { message: MORE_CREDIT, url: 'https://discord.gg/btTYzdzvqq' },
+}
+
 const { run, stdout, stderr } = commandHarness(registerBilling)
 
 afterEach(() => {
@@ -84,6 +105,57 @@ describe('billing wallet', () => {
     stubFetch({ 'GET /api/billing/wallet': jsonResponse(wallet) })
     await run(['--json', 'billing', 'wallet'])
     expect(JSON.parse(stdout())).toEqual(wallet)
+    expect(stderr()).toBe('')
+  })
+})
+
+describe('billing wallet on Free (free-plan D3.16)', () => {
+  it('adds granted and paid credit, each grant with its last day, and the free model today', async () => {
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse(FREE_WALLET) })
+    await run(['billing', 'wallet'])
+    expect(stdout()).toContain('granted_credit\t$12.40\n')
+    expect(stdout()).toContain('paid_credit\t$6.10\n')
+    // What is left, what was granted, and the last day it can be spent.
+    expect(stdout()).toContain('grant\t$12.40\t$20.00\t2026-12-04\n')
+    expect(stdout()).toContain('expired\t$0.00\n')
+    expect(stdout()).toContain('free_model_calls_today\t40\nfree_model_calls_per_day\t100\n')
+    expect(stdout()).toContain('network_off\ttrue\n')
+    expect(stdout()).toContain('included_hours_withheld\tfalse\n')
+    // The server's messages go to stderr, the rows stay key and value.
+    expect(stdout()).not.toContain('Discord')
+    expect(stderr()).toBe(`network  off. ${NETWORK}\nmore credit  ${MORE_CREDIT}\n`)
+  })
+
+  it('says when Free\'s included hour and free model are withheld (amendment A2)', async () => {
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...FREE_WALLET, included_hours_withheld: true, network: { off: false }, credit_request: null }) })
+    await run(['billing', 'wallet'])
+    expect(stdout()).toContain('included_hours_withheld\ttrue\n')
+    expect(stderr()).toBe(
+      "Free's included hour and free model are not available for this organization. Add credit, or bring your own provider key.\n",
+    )
+  })
+
+  it('passes every new field through with --json', async () => {
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse(FREE_WALLET) })
+    await run(['--json', 'billing', 'wallet'])
+    expect(JSON.parse(stdout())).toEqual(FREE_WALLET)
+    expect(stderr()).toBe('')
+  })
+
+  it('prints the network\'s message and count while running sandboxes started without it (amendment A6 (28))', async () => {
+    const ON = 'Your organization has credit, so the network is on. A running sandbox that started without it gets it after its next sleep.'
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...FREE_WALLET, network: { off: false, sandboxes_without_network: 2, message: ON } }) })
+    await run(['billing', 'wallet'])
+    expect(stdout()).toContain('network_off\tfalse\nsandboxes_without_network\t2\n')
+    expect(stderr()).toContain(`network  on. ${ON}\n`)
+  })
+
+  it('adds nothing on Pro, where the server sends no Free plan fields', async () => {
+    stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...WALLET, free_model_today: null, network: { off: false }, credit_request: null }) })
+    await run(['billing', 'wallet'])
+    expect(stdout()).not.toContain('free_model')
+    expect(stdout()).toContain('network_off\tfalse\n')
+    expect(stdout()).not.toContain('sandboxes_without_network')
     expect(stderr()).toBe('')
   })
 })

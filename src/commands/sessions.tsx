@@ -20,6 +20,7 @@ import {
   itemText,
   requestSleep,
   sandboxStateWords,
+  sleepNote,
   sessionUsageRows,
   payerLabel,
   sessionEnvironment,
@@ -139,6 +140,9 @@ export function registerSessions(program: Command): void {
         return
       }
       const rows = sessionUsageRows(session.usage)
+      // Why the sandbox last slept, or what that sleep found (free-plan F37,
+      // A6 (4), (26), (28)): a notice shown live in chat stays readable here.
+      const sleep = sleepNote({ last_sleep: session.last_sleep ?? null })
       if (mode === 'plain') {
         printPlainRows([
           ['id', session.id],
@@ -149,6 +153,7 @@ export function registerSessions(program: Command): void {
           ['status', session.status],
           ['environment', session.environment.type],
           ...(session.sandbox ? [['sandbox', session.sandbox]] : []),
+          ...(sleep ? [['lastSleep', sleep]] : []),
           ['created', formatTime(session.created_at)],
           ['lastActive', formatTime(session.last_active_at)],
           ...rows.map((row) => [row.key, row.plain]),
@@ -172,6 +177,7 @@ export function registerSessions(program: Command): void {
           <Field width={LABEL_WIDTH} label="pays" value={payerLabel(session.payer)} />
           <Field width={LABEL_WIDTH} label="environment" value={session.environment.type} />
           {session.sandbox ? <Field width={LABEL_WIDTH} label="sandbox" value={sandboxStateWords(session.sandbox)} /> : null}
+          {sleep ? <Field width={LABEL_WIDTH} label="last sleep" value={sleep} /> : null}
           <Field width={LABEL_WIDTH} label="created" value={formatTime(session.created_at)} />
           <Field width={LABEL_WIDTH} label="last active" value={formatTime(session.last_active_at)} />
           {rows.map((row) => (
@@ -366,7 +372,9 @@ export function registerSessions(program: Command): void {
       if (json) return
       if (goingToSleep(view)) {
         console.log(`The sandbox of session ${id} is going to sleep. Check with: orca sessions get ${id}`)
-      } else if (view.state === 'none') {
+        return
+      }
+      if (view.state === 'none') {
         console.log(`Session ${id} has no sandbox to put to sleep.`)
       } else if (view.state === 'asleep' && !started) {
         console.log(`The sandbox of session ${id} is already asleep.`)
@@ -376,7 +384,11 @@ export function registerSessions(program: Command): void {
         )
       } else {
         console.log(`The sandbox of session ${id} is ${sandboxStateWords(view.state)}.`)
+        return
       }
+      // Why it slept, or what its last sleep found (free-plan F37, A6 (4), (26), (28)).
+      const note = sleepNote(view)
+      if (note) console.log(note)
     })
 
   sessions

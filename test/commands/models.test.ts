@@ -29,15 +29,34 @@ const MODELS: ModelGroups = {
 
 const [luna, auto] = MODELS.groups[0].models
 const ORCA_ROWS = [
-  `${luna.id}\torca\t${priceLine(luna)}\n`,
-  `${auto.id}\torca\t${priceLine(auto)}\n`,
+  `${luna.id}\torca\t${priceLine(luna)}\t-\n`,
+  `${auto.id}\torca\t${priceLine(auto)}\t-\n`,
 ]
-const ANTHROPIC_ROWS = ['anthropic/claude-sonnet-4-5\tanthropic\t-\n']
+const ANTHROPIC_ROWS = ['anthropic/claude-sonnet-4-5\tanthropic\t-\t-\n']
+
+// The same answer for a Free organization (free-plan D3.16): the server
+// marks each Orca credit model with what Free allows of it.
+const FREE = 'orca/openrouter/cohere/north-mini-code:free'
+const FABLE = 'orca/openrouter/anthropic/claude-fable-5'
+const FREE_MODELS: ModelGroups = {
+  ...MODELS,
+  groups: [
+    {
+      ...MODELS.groups[0],
+      models: [
+        { ...luna, plan: 'within_ceiling' },
+        { id: FREE, input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' },
+        { id: FABLE, input_micro_usd_per_million: 10_000_000, output_micro_usd_per_million: 50_000_000, plan: 'within_ceiling' },
+      ],
+    },
+    MODELS.groups[1],
+  ],
+}
 
 const { run, stdout, stderr } = commandHarness(registerModels)
 
 describe('orca models', () => {
-  it('prints one plain row per model: id, who pays, and the price', async () => {
+  it('prints one plain row per model: id, who pays, the price and the plan mark', async () => {
     stubFetch({ 'GET /api/models': jsonResponse(MODELS) })
     await run(['models'])
     expect(stdout()).toBe([...ORCA_ROWS, ...ANTHROPIC_ROWS].join(''))
@@ -86,5 +105,22 @@ describe('orca models', () => {
     await run(['models'])
     expect(stderr()).toContain('OpenAI: the server could not read this list.')
     expect(stdout()).toBe([...ORCA_ROWS, ...ANTHROPIC_ROWS].join(''))
+  })
+
+  it('marks the free model, as the server says, and nothing else: Free has no price ceiling', async () => {
+    stubFetch({ 'GET /api/models': jsonResponse(FREE_MODELS) })
+    await run(['models', '--payer', 'orca'])
+    const [lunaRow, freeRow, fableRow] = stdout().trimEnd().split('\n').map((line) => line.split('\t'))
+    expect(lunaRow[0]).toBe(luna.id)
+    expect(lunaRow[3]).toBe('-')
+    expect(freeRow).toEqual([FREE, 'orca', '$0.00 in, $0.00 out per million tokens', 'free model'])
+    expect(fableRow[0]).toBe(FABLE)
+    expect(fableRow[3]).toBe('-')
+  })
+
+  it('passes the plan field through with --json', async () => {
+    stubFetch({ 'GET /api/models': jsonResponse(FREE_MODELS) })
+    await run(['--json', 'models'])
+    expect(JSON.parse(stdout())).toEqual(FREE_MODELS)
   })
 })

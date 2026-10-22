@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 
 import { groupHeading, payerWord, priceLine, withPayer } from '../lib/models.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
+import { planColumn, planWord } from '../lib/plan.js'
 import type { PickModel } from '../lib/types.js'
 import { hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
@@ -13,7 +14,8 @@ const MODEL_COLUMN = 80
 // `orca models` lists every model a member can pick, grouped by who pays,
 // from GET /api/models: the picker's list, outside a terminal too
 // (orca-design publish-cli, D5.7, amended 2026-10-12). Every name and price
-// is the server's.
+// is the server's, and so is each Orca credit model's plan mark (free-plan
+// D3.16, F16): "free model" for one of Orca's free models, else nothing.
 export function registerModels(program: Command): void {
   program
     .command('models')
@@ -33,7 +35,9 @@ export function registerModels(program: Command): void {
       }
       if (mode === 'plain') {
         printPlainRows(
-          list.groups.flatMap((group) => group.models.map((m) => [m.id, payerWord(group), priceLine(m) ?? '-'])),
+          list.groups.flatMap((group) =>
+            group.models.map((m) => [m.id, payerWord(group), priceLine(m) ?? '-', planWord(m.plan) ?? '-']),
+          ),
         )
         return
       }
@@ -59,6 +63,7 @@ export function registerModels(program: Command): void {
                 ...(group.payer === 'orca_credit'
                   ? [{ header: 'openrouter price', get: (m: PickModel) => priceLine(m) ?? '-', max: MODEL_COLUMN }]
                   : []),
+                ...planColumn(group.models),
               ]}
               rows={group.models}
             />

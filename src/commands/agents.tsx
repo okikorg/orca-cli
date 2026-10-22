@@ -5,7 +5,7 @@ import { toPage } from '../lib/api.js'
 import { findAgent, hasModel, loadAgentFile, missingModel, resolveAgentId } from '../lib/agents.js'
 import { CliError, ExitCode } from '../lib/errors.js'
 import { formatTime } from '../lib/format.js'
-import { pickerItems } from '../lib/models.js'
+import { freeFirst, freeModels, pickerItems } from '../lib/models.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
 import { accentVerb, hintText } from '../ui/theme.js'
 import { confirm } from './prompts.js'
@@ -55,17 +55,21 @@ async function resolveAgent(ref: string | undefined, verb: string, api: ApiConte
 
 // pickModel opens the model picker over every model the organization can
 // pick, by who pays (orca-design model-billing D3.13): Orca credit with
-// OpenRouter's prices and fee, then each provider with a saved key.
+// OpenRouter's prices and fee, then each provider with a saved key. On Free
+// the free model the server marks comes first and is preselected
+// (free-plan D3.16, F16); the server marks it on Pro and Max too (amendment
+// A4), where the picker keeps the server's order and preselects nothing.
 async function pickModel(api: ApiContext): Promise<string> {
-  const list = await withApi(api, (c) => c.models())
-  const items = pickerItems(list)
+  const [list, wallet] = await withApi(api, (c) => Promise.all([c.models(), c.wallet()]))
+  const free = wallet.tier === 'free' ? freeModels(list) : []
+  const items = freeFirst(pickerItems(list), free)
   if (items.length === 0) {
     throw new CliError('no models to pick from: the model lists could not be read', ExitCode.Failure, [
       'Name the model in the file instead, such as model: orca/openrouter/openai/gpt-5.6-luna',
     ])
   }
   const { pickItem } = await import('../ui/AgentPicker.js')
-  return pickItem('Select a model (type to filter)', items)
+  return pickItem('Select a model (type to filter)', items, free[0])
 }
 
 async function renderAgentDetail(a: Agent): Promise<void> {

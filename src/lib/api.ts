@@ -15,6 +15,7 @@ import type { Credential } from 'openai/resources/beta/agents/vaults/credentials
 import { APIConnectionTimeoutError, APIError as OpenAIAPIError, APIConnectionError } from 'openai/error'
 
 import { CliError, ExitCode } from './errors.js'
+import { planWords } from './plan.js'
 import type {
   APIKey,
   APIKeyIssued,
@@ -142,14 +143,29 @@ export function mapApiError(err: unknown, opts: { contextName: string; apiUrl: s
   let status: number | undefined
   let reason = ''
   let param: string | null = null
+  let code: string | null = null
   if (err instanceof ApiError) {
     status = err.status
     reason = extractErrorBody(err.body)
     param = errorParam(err.body)
+    code = err.code
   } else if (err instanceof OpenAIAPIError && err.status !== undefined) {
     status = err.status
     reason = extractErrorBody({ error: err.error })
     param = errorParam({ error: err.error })
+    code = errorCode({ error: err.error })
+  }
+  // A Free plan refusal (free-plan D3.16) is the server's message as it is,
+  // then its ways forward, whatever the status: a 403 there is the plan's
+  // answer, not the key's role.
+  const ways = planWords(code, param)
+  if (reason && ways.length) return new CliError(reason, ExitCode.Failure, ways)
+  // A suspension (free-plan F26) refuses starts and uploads with a 403 and
+  // the server's message, which says where to ask; a kept-objects limit
+  // (sessions stored, F33, and the other object caps) with one that names
+  // the limit and says to delete one. Neither is the key's role.
+  if (reason && (code === 'organization_suspended' || code === 'object_limit_exceeded')) {
+    return new CliError(reason, ExitCode.Failure)
   }
   if (reason && param) reason = `${reason} (${param})`
   if (status !== undefined) {

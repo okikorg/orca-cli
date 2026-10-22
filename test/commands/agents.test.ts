@@ -2,12 +2,17 @@ import { writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { registerAgents } from '../../src/commands/agents.js'
 import { ExitCode } from '../../src/lib/errors.js'
 import { commandHarness, list } from '../helpers/cli.js'
 import { jsonResponse, stubFetch } from '../helpers/fetch-mock.js'
+
+// The model picker, so a test can see what it offers and answer for the
+// person at the terminal.
+const pickItem = vi.hoisted(() => vi.fn())
+vi.mock('../../src/ui/AgentPicker.js', () => ({ pickItem, pickOne: vi.fn() }))
 
 const ID = 'agent_' + '1'.repeat(32)
 const OTHER = 'agent_' + '2'.repeat(32)
@@ -143,6 +148,87 @@ describe('agents create and update', () => {
     await expect(run(['agents', 'create', '-f', file])).rejects.toMatchObject({
       message: '400: Unknown agent field: color (color)',
     })
+  })
+})
+
+describe('agents create with no model, at a terminal', () => {
+  const FREE = 'orca/openrouter/cohere/north-mini-code:free'
+  const LUNA = 'orca/openrouter/openai/gpt-5.6-luna'
+  const models = (free: boolean) => ({
+    object: 'list',
+    openrouter_fee_bps: 550,
+    groups: [
+      {
+        payer: 'orca_credit',
+        provider: 'openrouter',
+        label: 'Orca credit',
+        available: true,
+        models: [
+          { id: LUNA, input_micro_usd_per_million: 400_000, output_micro_usd_per_million: 1_800_000, plan: 'within_ceiling' },
+          ...(free ? [{ id: FREE, input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' }] : []),
+        ],
+      },
+      { payer: 'own_key', provider: 'anthropic', label: 'Anthropic', available: true, models: [{ id: 'anthropic/claude-sonnet-4-5' }] },
+    ],
+  })
+
+  async function asTerminal(fn: () => Promise<void>): Promise<void> {
+    const [stdin, stdoutTty] = [process.stdin.isTTY, process.stdout.isTTY]
+    process.stdin.isTTY = true
+    process.stdout.isTTY = true
+    try {
+      await fn()
+    } finally {
+      process.stdin.isTTY = stdin
+      process.stdout.isTTY = stdoutTty
+    }
+  }
+
+  it('offers the free model first, preselected, on Free (free-plan D3.16)', async () => {
+    const file = await agentFile('name: support\n')
+    pickItem.mockResolvedValueOnce(FREE)
+    const calls = stubFetch({
+      'GET /api/models': jsonResponse(models(true)),
+      'GET /api/billing/wallet': jsonResponse({ tier: 'free' }),
+      'POST /v1/agents': jsonResponse(agent(ID, 'support')),
+    })
+    await asTerminal(() => run(['agents', 'create', '-f', file]))
+    const [, items, initial] = pickItem.mock.calls.at(-1) as [string, { value: string; detail: string }[], string | undefined]
+    expect(items.map((item) => item.value)).toEqual([FREE, LUNA, 'anthropic/claude-sonnet-4-5'])
+    expect(items[0].detail).toMatch(/free model$/)
+    expect(initial).toBe(FREE)
+    expect(JSON.parse(calls.find((c) => c.method === 'POST')?.body ?? '{}')).toEqual({ name: 'support', model: FREE })
+  })
+
+  it('keeps the server\'s order and preselects nothing on Pro and Max, the free model marked (amendment A4)', async () => {
+    for (const tier of ['pro', 'max']) {
+      const file = await agentFile('name: support\n')
+      pickItem.mockResolvedValueOnce(LUNA)
+      stubFetch({
+        'GET /api/models': jsonResponse(models(true)),
+        'GET /api/billing/wallet': jsonResponse({ tier }),
+        'POST /v1/agents': jsonResponse(agent(ID, 'support')),
+      })
+      await asTerminal(() => run(['agents', 'create', '-f', file]))
+      const [, items, initial] = pickItem.mock.calls.at(-1) as [string, { value: string; detail: string }[], string | undefined]
+      expect(items.map((item) => item.value)).toEqual([LUNA, FREE, 'anthropic/claude-sonnet-4-5'])
+      expect(items[1].detail).toMatch(/free model$/)
+      expect(initial).toBeUndefined()
+    }
+  })
+
+  it('preselects nothing while the free models are off (amendment A5)', async () => {
+    const file = await agentFile('name: support\n')
+    pickItem.mockResolvedValueOnce(LUNA)
+    stubFetch({
+      'GET /api/models': jsonResponse(models(false)),
+      'GET /api/billing/wallet': jsonResponse({ tier: 'free' }),
+      'POST /v1/agents': jsonResponse(agent(ID, 'support')),
+    })
+    await asTerminal(() => run(['agents', 'create', '-f', file]))
+    const [, items, initial] = pickItem.mock.calls.at(-1) as [string, { value: string }[], string | undefined]
+    expect(items.map((item) => item.value)).toEqual([LUNA, 'anthropic/claude-sonnet-4-5'])
+    expect(initial).toBeUndefined()
   })
 })
 

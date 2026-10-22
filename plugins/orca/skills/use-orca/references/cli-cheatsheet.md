@@ -35,7 +35,7 @@ orca agents get <agent> --json
 orca agents create -f agent.yaml --json         # YAML or JSON POST /v1/agents body; - for stdin
 orca agents update <agent> -f fields.yaml       # only the fields in the file change
 orca agents delete <agent> --yes
-orca models [--payer orca|<provider>] --json    # every model name you can use, grouped by who pays; plain: id, payer, price
+orca models [--payer orca|<provider>] --json    # every model name you can use, grouped by who pays; plain: id, payer, price, plan mark
 
 orca chat <agent> "prompt"                      # new session, one turn; <agent> may be a name, no lookup first
 orca chat <agent> --session <id> "prompt"       # continue a session
@@ -87,7 +87,7 @@ Kits are published by Orca; `kit` works as well as `kits`. `copy` sends the vers
 ## Account
 
 ```bash
-orca billing wallet --json                      # balance (micro-USD), plan, period, packs
+orca billing wallet --json                      # balance (micro-USD), granted and paid credit, plan, period, packs, Free plan fields
 orca billing buy pro|max|plan:pro|plan:max|pack:<cents> [--no-open]   # admin; prints the checkout link
 orca billing manage [--no-open]                 # admin; prints the billing portal link
 orca usage [summary] [--days n] [--group-by model|provider|credential|session|agent] [--session id] [--meter m] --json

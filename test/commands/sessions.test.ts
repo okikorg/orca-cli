@@ -220,6 +220,42 @@ describe('sessions get: sandbox', () => {
     await run(['--json', 'sessions', 'get', SESSION_ID])
     expect(JSON.parse(stdout())).toMatchObject({ id: SESSION_ID, sandbox: 'asleep' })
   })
+
+  const DISCARDED = 'The workspace was larger than the 100 MiB Free keeps, so it was not saved.'
+  const NEAR =
+    'This workspace is 83 MiB of the 100 MiB Free keeps. Over 100 MiB it is not saved when the sandbox sleeps, and the next message starts an empty sandbox. Delete files in /workspace to stay under it.'
+
+  it.each([
+    ['a discarded workspace (free-plan F37)', sandboxView('none', { reason: 'hours_used_up', outcome: 'discarded', message: DISCARDED }), DISCARDED],
+    ['a workspace near the size Free keeps (A6 (26))', sandboxView('asleep', { reason: 'idle', outcome: 'asleep', message: NEAR }), NEAR],
+    [
+      'a suspension (A6 (4))',
+      sandboxView('asleep', { reason: 'suspended', outcome: 'asleep' }),
+      'Work for this organization is suspended. Ask on Discord: https://discord.gg/btTYzdzvqq',
+    ],
+    [
+      'the network turned on (A6 (28))',
+      sandboxView('asleep', { reason: 'network_on', outcome: 'asleep' }),
+      'The sandbox slept so that its next start has the network, now that your organization has credit.',
+    ],
+  ])('says why the sandbox last slept after %s', async (_name, view, note) => {
+    stubFetch(getRoutes({ [`GET ${SANDBOX}`]: jsonResponse(view) }))
+    await run(['sessions', 'get', SESSION_ID])
+    expect(stdout()).toContain(`\nlastSleep\t${note}\n`)
+  })
+
+  it('says nothing more for a sleep with nothing to say', async () => {
+    stubFetch(getRoutes({ [`GET ${SANDBOX}`]: jsonResponse(sandboxView('asleep', { outcome: 'asleep', reason: 'idle' })) }))
+    await run(['sessions', 'get', SESSION_ID])
+    expect(stdout()).not.toContain('lastSleep')
+  })
+
+  it('adds last_sleep, as the server sent it, to the --json object', async () => {
+    const view = sandboxView('none', { reason: 'hours_used_up', outcome: 'discarded', message: DISCARDED })
+    stubFetch(getRoutes({ [`GET ${SANDBOX}`]: jsonResponse(view) }))
+    await run(['--json', 'sessions', 'get', SESSION_ID])
+    expect(JSON.parse(stdout())).toMatchObject({ sandbox: 'none', last_sleep: view.last_sleep })
+  })
 })
 
 describe('sessions sleep', () => {
@@ -263,6 +299,33 @@ describe('sessions sleep', () => {
     stubFetch({ [SLEEP]: jsonResponse(sandboxView('none')) })
     await run(['sessions', 'sleep', SESSION_ID])
     expect(stdout()).toBe(`Session ${SESSION_ID} has no sandbox to put to sleep.\n`)
+  })
+
+  it.each([
+    ['suspended', 'Work for this organization is suspended. Ask on Discord: https://discord.gg/btTYzdzvqq'],
+    ['network_on', 'The sandbox slept so that its next start has the network, now that your organization has credit.'],
+  ])('says why when it is already asleep for %s (free-plan A6 (4), (28))', async (reason, words) => {
+    stubFetch({ [SLEEP]: jsonResponse(sandboxView('asleep', { reason, outcome: 'asleep' })) })
+    await run(['sessions', 'sleep', SESSION_ID])
+    expect(stdout()).toBe(`The sandbox of session ${SESSION_ID} is already asleep.\n${words}\n`)
+  })
+
+  it('prints the server\'s message under the sleep when it gives one (free-plan A6 (26))', async () => {
+    const near =
+      'This workspace is 83 MiB of the 100 MiB Free keeps. Over 100 MiB it is not saved when the sandbox sleeps, and the next message starts an empty sandbox. Delete files in /workspace to stay under it.'
+    stubFetch({
+      [SLEEP]: jsonResponse(sandboxView('going_to_sleep', {}), { status: 202 }),
+      [`GET ${SANDBOX}`]: views(sandboxView('asleep', { outcome: 'asleep', message: near, finished_at: 1_783_245_609 })),
+    })
+    await runOnFakeClock(['sessions', 'sleep', SESSION_ID])
+    expect(stdout()).toBe(`${ASLEEP_LINE}${near}\n`)
+  })
+
+  it('says a discarded workspace was not kept, with no sandbox to put to sleep (free-plan F37)', async () => {
+    const message = 'The workspace was larger than the 100 MiB Free keeps, so it was not saved.'
+    stubFetch({ [SLEEP]: jsonResponse(sandboxView('none', { reason: 'hours_used_up', outcome: 'discarded', message })) })
+    await run(['sessions', 'sleep', SESSION_ID])
+    expect(stdout()).toBe(`Session ${SESSION_ID} has no sandbox to put to sleep.\n${message}\n`)
   })
 
   it('returns once the sleep starts with --no-wait', async () => {

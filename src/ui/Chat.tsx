@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { ChatEvent, ChatToolStatus, ChatTurnResult } from '../lib/sessions.js'
 import { renderMarkdown, stripControlSequences } from '../lib/markdown.js'
-import { creditOut, refusedAtAdmission } from '../lib/models.js'
+import { offersFreeModel, refusedAtAdmission, switchCause, type SwitchCause } from '../lib/models.js'
+import { planWords } from '../lib/plan.js'
 import { SwitchPrompt, type SwitchChoice, type SwitchOffer } from './SwitchPrompt.js'
 import { colorEnabled, glyphs, theme } from './theme.js'
 
@@ -21,9 +22,10 @@ export type SendTurn = (
 
 // Switcher is the switch of who pays for the session (orca-design
 // model-billing D3.13), injected like send: `load` reads the other side's
-// models (with the one to preselect, if any), `apply` posts the choice.
+// models (with the one to preselect, if any), and with freeModel the free
+// model first (free-plan D3.16); `apply` posts the choice.
 export type Switcher = {
-  load: (sessionId: string) => Promise<SwitchOffer>
+  load: (sessionId: string, freeModel?: boolean) => Promise<SwitchOffer>
   apply: (sessionId: string, model: string) => Promise<void>
 }
 
@@ -31,16 +33,27 @@ export type ChatProps = {
   agentLabel: string
   initialSessionId?: string
   send: SendTurn
-  // Offered when a turn ends because a credit ran out; absent, the REPL
-  // only reports it.
+  // Offered when a turn ends because a credit ran out, or the plan refused
+  // the model; absent, the REPL only reports it.
   switcher?: Switcher
   onExit: (sessionId?: string) => void
 }
 
-// The switch prompt after a credit ran out: which credit, the other side's
-// models, and `resend`, the message to send again after a switch when the
-// server refused it at admission (a turn it ended continues instead).
-type Pause = { out: 'orca_credit' | 'provider_quota'; offer: SwitchOffer; resend?: string }
+// The switch prompt after a credit ran out or a plan refusal: why, the other
+// side's models, and `resend`, the message to send again after a switch
+// when the server refused it at admission (a turn it ended continues
+// instead).
+type Pause = { out: SwitchCause; offer: SwitchOffer; resend?: string }
+
+// What declining the switch leaves to do before the next message: a top-up,
+// or an upgrade for a model not in the organization's plan. Nothing more for
+// a free model withdrawn: its ways are already shown.
+const DECLINED: Record<SwitchCause, string | null> = {
+  orca_credit: 'Top up, then send a message to continue this session.',
+  provider_quota: 'Top up, then send a message to continue this session.',
+  model_not_in_plan: 'Upgrade, then send a message to continue this session.',
+  free_model_unavailable: null,
+}
 
 // What a continue after a switch sends: the next turn resumes the saved
 // conversation.
@@ -288,6 +301,10 @@ export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: C
             // (not the delta) also catches sequences split across deltas.
             accum += event.text
             setLiveText(stripControlSequences(accum))
+          } else if (event.type === 'notice') {
+            // The server's notice (free-plan D3.16) goes in the transcript
+            // as it arrives; the turn goes on.
+            pushItem({ kind: 'note', text: event.text })
           } else if (event.type === 'tool') {
             const previous = tools.get(event.id)
             tools.set(event.id, {
@@ -336,14 +353,17 @@ export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: C
     } else {
       // terminated === 'error'
       pushItem({ kind: 'error', message: result.message || result.errorCode || 'upstream error' })
-      // A credit ran out: ask whether to top up or switch who pays. Nothing
-      // switches on its own.
-      const out = creditOut(result.errorCode, result.errorParam)
+      // A Free plan refusal or stop: its ways forward, as words.
+      const ways = planWords(result.errorCode, result.errorParam, result.errorModel, result.errorFreeModel)
+      if (ways.length) pushItem({ kind: 'note', text: ways.join('\n') })
+      // A credit ran out or the plan refused the model: ask whether to switch
+      // or take the other way. Nothing switches on its own.
+      const out = switchCause(result.errorCode, result.errorParam, result.errorModel, result.errorFreeModel)
       const resend = refusedAtAdmission(result.errorCode) ? lastMessageRef.current : undefined
       const sessionId = sessionRef.current
       if (out && switcher && sessionId) {
         switcher
-          .load(sessionId)
+          .load(sessionId, offersFreeModel(result.errorCode, result.errorParam, result.errorModel, result.errorFreeModel))
           .then((offer) => setPause({ out, offer, resend }))
           .catch((err: unknown) => pushItem({ kind: 'error', message: err instanceof Error ? err.message : String(err) }))
       }
@@ -354,9 +374,10 @@ export function Chat({ agentLabel, initialSessionId, send, switcher, onExit }: C
   function finishPause(choice: SwitchChoice) {
     const sessionId = sessionRef.current
     const resend = pause?.resend
+    const declined = pause ? DECLINED[pause.out] : null
     setPause(null)
     if (choice.kind === 'top-up' || !switcher || !sessionId) {
-      pushItem({ kind: 'note', text: 'Top up, then send a message to continue this session.' })
+      if (declined) pushItem({ kind: 'note', text: declined })
       return
     }
     if (choice.kind === 'no-models') {

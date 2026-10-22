@@ -151,21 +151,73 @@ export type Wallet = {
   // OpenRouter's credit fee on tokens and searches on Orca credit, in basis
   // points. The CLI shows it and does no arithmetic with it.
   openrouter_fee_bps: number
+  // The Free plan (orca-design free-plan D3.16). Each is absent from a server
+  // older than it.
+  // Granted credit left now, and the rest of the balance, which never
+  // expires: granted credit is spent first.
+  granted_credit_micro_usd?: number
+  paid_credit_micro_usd?: number
+  // Live grants with something left, soonest expiry first.
+  granted_credit?: GrantedCredit[]
+  // Granted credit that expired unspent.
+  expired_micro_usd?: number
+  // The organization's free-model calls today, on every tier with a share
+  // (free-plan amendment A4); null on a tier whose share is none or 0 (A5).
+  // Named apart from the plan facts' `free_model` (the model list), which
+  // the wallet also carries (amendment A2).
+  free_model_today?: WalletFreeModel | null
+  // The plan facts' free models, in order; empty while they are off (A5).
+  free_model?: { models: string[] } | null
+  // The email domain's age withheld Free's included machine time and the
+  // free model.
+  included_hours_withheld?: boolean
+  // Free sandboxes have no network until the organization has credit; the
+  // message is the server's, said the same way everywhere. Once it has
+  // credit, sandboxes_without_network counts the running sandboxes that
+  // started without it, with a message, while any do (amendment A6 (28)).
+  network?: { off: boolean; sandboxes_without_network?: number; message?: string }
+  // On Free, where to ask for credit, in the server's words.
+  credit_request?: { message: string; url: string } | null
 }
+
+// One grant with credit left: an operator grant (`grant`, with its reason
+// code) or honoured signup credit (`signup`). expires_at is the first moment
+// it no longer counts, 00:00 UTC the day after its last day.
+export type GrantedCredit = {
+  kind: 'grant' | 'signup'
+  grant_reason: string | null
+  granted_micro_usd: number
+  left_micro_usd: number
+  granted_at: number
+  expires_at: number
+}
+
+// The free model's calls today against the organization's share a day;
+// available is false when it cannot run now.
+export type WalletFreeModel = { calls_today: number; calls_per_day: number; available: boolean }
 
 // -- Models -------------------------------------------------------------------
 
 // Who pays for a model's calls (orca-design model-billing D3.13).
 export type Payer = 'orca_credit' | 'own_key'
 
+// What the organization's plan allows of an Orca credit model (orca-design
+// free-plan D3.16, F16): `free` is a free model (on every tier with a
+// share, amendment A4), `within_ceiling` runs on credit. The server sends
+// `pro_and_max` only when Free's terms set a price ceiling, which they have
+// not since 2026-10-22; the CLI shows no mark for either.
+export type ModelPlan = 'free' | 'within_ceiling' | 'pro_and_max'
+
 // One model a member can pick. Prices are OpenRouter's, Orca credit only, in
 // micro-USD per million tokens; null where OpenRouter has no fixed price.
+// plan is on Orca credit models only, absent from an older server.
 export type PickModel = {
   id: string
   name?: string
   context_length?: number
   input_micro_usd_per_million?: number | null
   output_micro_usd_per_million?: number | null
+  plan?: ModelPlan
 }
 
 export type ModelGroup = {
@@ -197,12 +249,14 @@ export type SandboxState = 'none' | 'awake' | 'going_to_sleep' | 'asleep' | 'wak
 
 // The newest sleep since the sandbox last woke, whoever started it. reason is
 // an open string (requested, idle, out_of_credit, hours_used_up, unpriced,
-// and more later); outcome is null while it is going to sleep.
+// suspended, network_on, and more later); outcome is null while it is going
+// to sleep, and discarded when a Free stop deleted a workspace it could not
+// save (free-plan F37). message is the server's, when it gives one.
 export type SandboxSleep = {
   reason: string
   started_at: number
   finished_at: number | null
-  outcome: 'asleep' | 'too_large' | 'failed' | 'interrupted' | null
+  outcome: 'asleep' | 'too_large' | 'failed' | 'interrupted' | 'discarded' | null
   message: string | null
 }
 

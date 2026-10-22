@@ -135,6 +135,76 @@ describe('mapApiError', () => {
     expect(mapApiError(quota, CTX).message).toBe('429: Your plan runs 1 sessions at once')
   })
 
+  it('prints a Free plan refusal as the server wrote it, with its ways forward, never as the key\'s role', () => {
+    // free-plan D3.16: a 403 model_not_in_plan is the plan's answer.
+    const message = 'This model is not part of this plan.'
+    const notInPlan = OpenAIAPIError.generate(
+      403,
+      { error: { message, type: 'invalid_request_error', param: 'agent.model', code: 'model_not_in_plan' } },
+      undefined,
+      new Headers(),
+    )
+    expect(mapApiError(notInPlan, CTX)).toMatchObject({
+      exitCode: ExitCode.Failure,
+      message,
+      detail: [
+        'Upgrade: orca billing buy pro, or orca billing buy max',
+        'Switch this session to the free model (orca chat offers it at a terminal)',
+      ],
+    })
+    // The same on the /api client, by code and param. The daily share's
+    // three messages are each the server's as sent (amendment A6 (32)).
+    const tail = 'They reset at 00:00 UTC. Add your own OpenRouter key, or add credit to use another model.'
+    for (const message of [
+      `Your organization has used today's 100 free-model calls. ${tail}`,
+      `You have used today's 100 free-model calls. ${tail}`,
+      `A free-model turn sets aside 25 calls, and 7 of today's are left. ${tail}`,
+    ]) {
+      const daily = new ApiError('429', 429, { error: { message, param: 'free_model_daily', code: 'insufficient_quota' } })
+      expect(mapApiError(daily, CTX)).toMatchObject({
+        exitCode: ExitCode.Failure,
+        message,
+        detail: [
+          'Add your own OpenRouter key: in the dashboard, Settings, Providers',
+          'Add credit: orca billing buy pack:<cents> (orca billing wallet lists the packs)',
+        ],
+      })
+    }
+    // The Free plan's rate limits carry a param (amendment A2).
+    const busy = OpenAIAPIError.generate(
+      429,
+      { error: { message: 'The free model is busy. Try again in a minute, or add your own OpenRouter key.', param: 'free_model_busy', code: 'rate_limit_exceeded' } },
+      undefined,
+      new Headers(),
+    )
+    expect(mapApiError(busy, CTX)).toMatchObject({
+      exitCode: ExitCode.Failure,
+      message: 'The free model is busy. Try again in a minute, or add your own OpenRouter key.',
+      detail: ['Try again in a minute', 'Add your own OpenRouter key: in the dashboard, Settings, Providers'],
+    })
+    // A 503 for the free model withdrawn is not a retry-later.
+    const gone = new ApiError('503', 503, { error: { message: 'Orca\'s free model is not available right now.', code: 'free_model_unavailable' } })
+    expect(mapApiError(gone, CTX).message).toBe('Orca\'s free model is not available right now.')
+    expect(mapApiError(gone, CTX).detail).toHaveLength(2)
+  })
+
+  it('shows a suspension\'s 403 as the server\'s message, with nothing to do and no key blamed (free-plan F26)', () => {
+    const message = 'Work for this organization is suspended. Ask on Discord: https://discord.gg/btTYzdzvqq'
+    const err = mapApiError(new ApiError('403', 403, { error: { message, type: 'permission_denied', param: null, code: 'organization_suspended' } }), CTX)
+    expect(err).toMatchObject({ exitCode: ExitCode.Failure, message })
+    expect(err.detail ?? []).toEqual([])
+  })
+
+  it('shows a kept-objects limit as the server\'s message, exit 1, with no key or role blamed (free-plan F33)', () => {
+    const message = 'Your organization keeps 200 sessions, the most it can on Free. Delete one to start another.'
+    const err = mapApiError(new ApiError('403', 403, { error: { message, type: 'permission_denied', param: null, code: 'object_limit_exceeded' } }), CTX)
+    expect(err).toMatchObject({ exitCode: ExitCode.Failure, message })
+    expect(err.message).not.toContain('not allowed')
+    // Any other 403 is still the key's role.
+    const role = mapApiError(new ApiError('403', 403, { error: { message: 'Admins only', code: 'permission_denied' } }), CTX)
+    expect(role).toMatchObject({ exitCode: ExitCode.Auth, message: 'not allowed: Admins only (context "test")' })
+  })
+
   it('maps an unreachable host to a connectivity error', () => {
     expect(mapApiError(new TypeError('fetch failed'), CTX).message).toContain('cannot reach http://test:8080')
     expect(mapApiError(new APIConnectionError({ message: 'Connection error.' }), CTX).message).toContain('cannot reach')

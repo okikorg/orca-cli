@@ -253,7 +253,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'list_models',
-    'List the model names an agent can use, one row each: id, payer (orca for Orca credit, else the provider whose saved key pays) and, for Orca credit, OpenRouter\'s price per million tokens in micro-USD; Orca credit pays that plus OpenRouter\'s fee (openrouter_fee_bps). The list is long: narrow it with query (part of the name, such as luna or claude) or payer, and page with limit and after. Use an id as an agent\'s model.',
+    'List the model names an agent can use, one row each: id, payer (orca for Orca credit, else the provider whose saved key pays) and, for Orca credit, OpenRouter\'s price per million tokens in micro-USD and plan: free for one of Orca\'s free models (no charge, on every plan with a free-model share; none are listed while they are off); every other Orca credit model runs on credit on every plan, Free included. Orca credit pays the price plus OpenRouter\'s fee (openrouter_fee_bps). The list is long: narrow it with query (part of the name, such as luna or claude) or payer, and page with limit and after. Use an id as an agent\'s model.',
     {
       payer: z.string().optional().describe('orca, or a provider such as anthropic'),
       query: z.string().optional().describe('only names containing this, in any case'),
@@ -296,7 +296,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'get_session',
-    'Fetch one session: status, environment, error; model (what its next turn runs on), agent_model and payer (orca_credit or own_key); sandbox (none, awake, going_to_sleep, asleep or waking); and usage: its all-time usage summary by model with cost in micro-USD.',
+    'Fetch one session: status, environment, error; model (what its next turn runs on), agent_model and payer (orca_credit or own_key); sandbox (none, awake, going_to_sleep, asleep or waking) and last_sleep (its newest sleep: reason, outcome and the server\'s message, such as a workspace discarded or near the size Free keeps); and usage: its all-time usage summary by model with cost in micro-USD.',
     { id: z.string() },
     async (client, args) => sessionView(client, args.id as string),
   )
@@ -605,7 +605,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'get_wallet',
-    'The credit wallet: balance, credited and charged (micro-USD), plan tier, period, compute allowance, and the credit packs on sale.',
+    'The credit wallet: balance, credited and charged (micro-USD), plan tier, period, compute allowance (included_compute_seconds, used_compute_seconds), and the credit packs on sale. granted_credit_micro_usd is credit Orca granted, spent first, and paid_credit_micro_usd the rest, which never expires; granted_credit lists each grant with left_micro_usd and expires_at (00:00 UTC the day after its last day); expired_micro_usd is granted credit that expired unspent. free_model_today is calls_today of calls_per_day, the free model\'s share today, on every plan with a share (null on a plan with none; free_model is the plan facts\' list of free models, empty while they are off). On the Free plan: network (off is true while Free sandboxes have no network, with the message to show; once the organization has credit, off is false, with sandboxes_without_network and a message while running sandboxes that started without it remain), credit_request (where to ask for credit, with its message), and included_hours_withheld (true when Free\'s included machine time and free model are not available for this organization).',
     {},
     async (client) => client.wallet(),
   )

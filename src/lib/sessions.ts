@@ -33,7 +33,7 @@ import {
   type StagedFile,
   type StagedUpload,
 } from './staging.js'
-import type { SandboxState, SessionModel, SessionSandbox, UsageSummary } from './types.js'
+import type { SandboxSleep, SandboxState, SessionModel, SessionSandbox, UsageSummary } from './types.js'
 import { groupCost } from './usage.js'
 
 // A tool line's status: running, done, failed, or stopped (cut off by the
@@ -42,10 +42,12 @@ export type ChatToolStatus = 'running' | 'ok' | 'error' | 'stopped'
 
 // A tool event carries a web search's query and, when it failed, the
 // server's reason (model-billing, Web search, The item), both one line of
-// remote text with control bytes stripped. Other tools carry neither.
+// remote text with control bytes stripped. Other tools carry neither. A
+// notice is one of the server's session notices, as the line to show.
 export type ChatEvent =
   | { type: 'delta'; text: string }
   | { type: 'tool'; id: string; name?: string; status: ChatToolStatus; query?: string; reason?: string }
+  | { type: 'notice'; text: string }
 
 // How a turn ended:
 //   done    - the turn completed (message is the reply text)
@@ -58,8 +60,16 @@ export type ChatTurnResult = {
   message: string
   errorCode?: string
   // The error's param: with usage_limit_exceeded, `orca_credit` or
-  // `provider_quota` says whose credit ran out.
+  // `provider_quota` says whose credit ran out, and Free's stops name
+  // theirs (`included_hours`, `free_model_capacity`, free-plan D3.16).
   errorParam?: string
+  // The session's model, read for a `model_not_in_plan` refusal: one of
+  // Orca's free models there is a tier with no share (amendment A5).
+  errorModel?: string
+  // Whether the server lists a free model that can run, read for a
+  // `free_model_unavailable` refusal: the switch goes to it (amendment A3
+  // (3)); none listed means the free models are off (A5).
+  errorFreeModel?: boolean
 }
 
 export type StreamTurnOptions = {
@@ -96,6 +106,28 @@ function toolName(item: AgentOutputItem | AgentSessionItem): string | null {
 function oneLine(text: string, max: number): string {
   const line = stripControlSequences(text).replace(/\s+/g, ' ').trim()
   return line.length > max ? `${line.slice(0, max - 3).trimEnd()}...` : line
+}
+
+// The server's session notices (orca-design free-plan D3.16), each
+// {type, message, at}: machine time nearly used, a turn ended at the free
+// model's calls or at Free's time limit, a sandbox started without network,
+// a new sandbox after a discarded workspace, a saved workspace near the size
+// Free keeps (amendment A6 (1), (2), (26)). None ends the turn.
+const NOTICES = new Set([
+  'orca.compute.warning',
+  'orca.free_model.turn_limit',
+  'orca.turn.time_limit',
+  'orca.network.off',
+  'orca.sandbox.discarded',
+  'orca.sandbox.workspace_near_limit',
+])
+
+// noticeText is the line a notice shows: its message as one line, the
+// network's after `network  off.` as every surface says it.
+export function noticeText(event: { type: string; message?: unknown }): string | null {
+  if (!NOTICES.has(event.type) || typeof event.message !== 'string' || !event.message.trim()) return null
+  const message = oneLine(event.message, 500)
+  return event.type === 'orca.network.off' ? `network  off. ${message}` : message
 }
 
 // webSearchQuery is what a web search searched for. The server sets the
@@ -176,6 +208,12 @@ export async function streamTurn(
   try {
     for await (const event of stream) {
       opts.onRaw?.(event)
+      // The SDK's union does not list Orca's notices; they arrive as sent.
+      const notice = noticeText(event as { type: string; message?: unknown })
+      if (notice !== null) {
+        opts.onEvent?.({ type: 'notice', text: notice })
+        continue
+      }
       switch (event.type) {
         case 'agent.session.turn.created':
           if (followed === null && event.turn.subagent_id === null) followed = event.turn_id
@@ -416,6 +454,10 @@ export type SessionView = Omit<AgentSession, 'usage'> & {
   agent_model: string
   payer: SessionModel['payer']
   sandbox?: SandboxState
+  // The sandbox's newest sleep since it last woke, with the server's message
+  // (a discarded or near-limit workspace, free-plan A6 (1), (26)), as
+  // GET /api/sessions/{id}/sandbox gives it; present with `sandbox`.
+  last_sleep?: SandboxSleep | null
 }
 
 // sessionView reads one session, its usage and its model from their one
@@ -425,9 +467,10 @@ export async function sessionView(client: ApiClient, id: string): Promise<Sessio
   const session = await (await client.v1()).beta.agents.sessions.retrieve(id)
   const usage = await client.usage({ start: 0, session: id, group_by: 'model' })
   const model = await client.sessionModel(id)
-  // The sandbox line is extra: a failed read leaves it out, never the session.
+  // The sandbox lines are extra: a failed read leaves them out, never the
+  // session.
   const sandbox = await client.sessionSandbox(id).then(
-    (view) => view.state,
+    (view) => view,
     () => undefined,
   )
   // `usage` replaces the /v1 object's own field.
@@ -437,7 +480,7 @@ export async function sessionView(client: ApiClient, id: string): Promise<Sessio
     model: model.model,
     agent_model: model.agent_model,
     payer: model.payer,
-    ...(sandbox ? { sandbox } : {}),
+    ...(sandbox ? { sandbox: sandbox.state, last_sleep: sandbox.last_sleep } : {}),
   }
 }
 
@@ -492,11 +535,28 @@ export async function waitForSleep(
   return view
 }
 
+// The words for the sleep reasons the design gives them (free-plan
+// amendment A6 (4), (28)). Any other reason says nothing more than asleep.
+const SLEEP_REASON_WORDS: Readonly<Record<string, string>> = {
+  suspended: 'Work for this organization is suspended. Ask on Discord: https://discord.gg/btTYzdzvqq',
+  network_on: 'The sandbox slept so that its next start has the network, now that your organization has credit.',
+}
+
+// sleepNote is what to say about a sandbox's last sleep: the server's
+// message (a discarded workspace, or a Free workspace near its size, A6 (1),
+// (26)), else its reason's words, else null.
+export function sleepNote(view: Pick<SessionSandbox, 'last_sleep'>): string | null {
+  const last = view.last_sleep
+  if (!last) return null
+  const note = last.message || SLEEP_REASON_WORDS[last.reason]
+  return note ? oneLine(note, 500) : null
+}
+
 // sleepFailure is why a sleep that has ended left the sandbox awake (too
 // large, failed, interrupted), or null when it did not.
 export function sleepFailure(view: SessionSandbox): string | null {
   const last = view.last_sleep
-  if (!last || last.outcome === null || last.outcome === 'asleep') return null
+  if (!last || last.outcome === null || last.outcome === 'asleep' || last.outcome === 'discarded') return null
   return last.message || 'The sandbox stayed awake.'
 }
 

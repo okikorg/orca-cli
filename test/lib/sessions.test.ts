@@ -2,7 +2,7 @@ import OpenAI from 'openai'
 import type { AgentSessionItem } from 'openai/resources/beta/agents/agents'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { itemText, sandboxStateWords, streamTurn, type ChatEvent } from '../../src/lib/sessions.js'
+import { itemText, noticeText, sandboxStateWords, streamTurn, type ChatEvent } from '../../src/lib/sessions.js'
 import { stubFetch } from '../helpers/fetch-mock.js'
 import { SESSION_ID, session, turnRoutes } from '../helpers/session-events.js'
 
@@ -122,5 +122,37 @@ describe('sandboxStateWords', () => {
       'waking up',
       'hibernating',
     ])
+  })
+})
+
+describe('the server\'s session notices (free-plan D3.16)', () => {
+  it('are the four Orca notices, each its message as one clean line', () => {
+    expect(noticeText({ type: 'orca.compute.warning', message: '5 minutes of included\nmachine time left this month.' })).toBe(
+      '5 minutes of included machine time left this month.',
+    )
+    expect(noticeText({ type: 'orca.free_model.turn_limit', message: 'This turn reached the free model\'s 25 calls.' })).toBe(
+      'This turn reached the free model\'s 25 calls.',
+    )
+    expect(noticeText({ type: 'orca.turn.time_limit', message: 'This turn reached Free\'s 30 minutes.\u001b[2J' })).toBe(
+      'This turn reached Free\'s 30 minutes.',
+    )
+    expect(noticeText({ type: 'orca.network.off', message: 'Network is off on Free sandboxes.' })).toBe(
+      'network  off. Network is off on Free sandboxes.',
+    )
+  })
+
+  it('include the workspace\'s two, a discard and a size near Free\'s cap (amendment A6 (1), (2), (26))', () => {
+    const discarded = 'This session has a new sandbox. The last workspace was larger than the 100 MiB Free keeps, so it was not saved.'
+    expect(noticeText({ type: 'orca.sandbox.discarded', message: discarded })).toBe(discarded)
+    const near =
+      'This workspace is 83 MiB of the 100 MiB Free keeps. Over 100 MiB it is not saved when the sandbox sleeps, and the next message starts an empty sandbox. Delete files in /workspace to stay under it.'
+    expect(noticeText({ type: 'orca.sandbox.workspace_near_limit', size_bytes: 87_031_808, limit_bytes: 104_857_600, message: near } as never)).toBe(near)
+  })
+
+  it('leave every other event, and a notice with no message, to the stream', () => {
+    expect(noticeText({ type: 'agent.session.idle' })).toBeNull()
+    expect(noticeText({ type: 'orca.something.new', message: 'x' })).toBeNull()
+    expect(noticeText({ type: 'orca.network.off' })).toBeNull()
+    expect(noticeText({ type: 'orca.network.off', message: '  ' })).toBeNull()
   })
 })
