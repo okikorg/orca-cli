@@ -123,7 +123,7 @@ describe('billing wallet on Free (free-plan D3.16)', () => {
     expect(stdout()).toContain('included_hours_withheld\tfalse\n')
     // The server's messages go to stderr, the rows stay key and value.
     expect(stdout()).not.toContain('Discord')
-    expect(stderr()).toBe(`network  off. ${NETWORK}\nmore credit  ${MORE_CREDIT}\n`)
+    expect(stderr()).toBe(`network  ${NETWORK}\nmore credit  ${MORE_CREDIT}\n`)
   })
 
   it('says when Free\'s included hour and free model are withheld (amendment A2)', async () => {
@@ -147,7 +147,7 @@ describe('billing wallet on Free (free-plan D3.16)', () => {
     stubFetch({ 'GET /api/billing/wallet': jsonResponse({ ...FREE_WALLET, network: { off: false, sandboxes_without_network: 2, message: ON } }) })
     await run(['billing', 'wallet'])
     expect(stdout()).toContain('network_off\tfalse\nsandboxes_without_network\t2\n')
-    expect(stderr()).toContain(`network  on. ${ON}\n`)
+    expect(stderr()).toContain(`network  ${ON}\n`)
   })
 
   it('adds nothing on Pro, where the server sends no Free plan fields', async () => {

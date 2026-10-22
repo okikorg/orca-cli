@@ -122,12 +122,11 @@ const NOTICES = new Set([
   'orca.sandbox.workspace_near_limit',
 ])
 
-// noticeText is the line a notice shows: its message as one line, the
-// network's after `network  off.` as every surface says it.
+// noticeText is the line a notice shows: its message as one line. The
+// network's message says itself that the network is off (A10).
 export function noticeText(event: { type: string; message?: unknown }): string | null {
   if (!NOTICES.has(event.type) || typeof event.message !== 'string' || !event.message.trim()) return null
-  const message = oneLine(event.message, 500)
-  return event.type === 'orca.network.off' ? `network  off. ${message}` : message
+  return oneLine(event.message, 500)
 }
 
 // webSearchQuery is what a web search searched for. The server sets the
