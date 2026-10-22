@@ -46,8 +46,8 @@ export type ChatProps = {
 type Pause = { out: SwitchCause; offer: SwitchOffer; resend?: string }
 
 // What declining the switch leaves to do before the next message: a top-up,
-// or an upgrade for a model that needs Pro or Max. Nothing more for a free
-// model withdrawn: its ways are already shown.
+// or an upgrade for a model not in the organization's plan. Nothing more for
+// a free model withdrawn: its ways are already shown.
 const DECLINED: Record<SwitchCause, string | null> = {
   orca_credit: 'Top up, then send a message to continue this session.',
   provider_quota: 'Top up, then send a message to continue this session.',

@@ -30,8 +30,8 @@ function switchLabel(out: SwitchCause, offer: SwitchOffer): string {
 }
 
 // otherWay is the question and the choice beside the switch: a top-up for a
-// credit that ran out, an upgrade for a model that needs Pro or Max
-// (free-plan D3.16, F14), and for a free model withdrawn, keeping the
+// credit that ran out, an upgrade for a model not in the organization's
+// plan (free-plan D3.16), and for a free model withdrawn, keeping the
 // session as it is (amendment A3 (3)).
 function otherWay(out: SwitchCause, offer: SwitchOffer): { question: string; label: string } {
   switch (out) {

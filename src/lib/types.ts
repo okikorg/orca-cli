@@ -203,8 +203,9 @@ export type Payer = 'orca_credit' | 'own_key'
 
 // What the organization's plan allows of an Orca credit model (orca-design
 // free-plan D3.16, F16): `free` is a free model (on every tier with a
-// share, amendment A4), `within_ceiling` runs on credit, `pro_and_max`
-// needs Pro or Max.
+// share, amendment A4), `within_ceiling` runs on credit. The server sends
+// `pro_and_max` only when Free's terms set a price ceiling, which they have
+// not since 2026-10-22; the CLI shows no mark for either.
 export type ModelPlan = 'free' | 'within_ceiling' | 'pro_and_max'
 
 // One model a member can pick. Prices are OpenRouter's, Orca credit only, in

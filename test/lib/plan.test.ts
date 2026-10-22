@@ -4,20 +4,21 @@ import { freeModelNotInPlan, planActions, planColumn, planWord, planWords } from
 import type { PickModel } from '../../src/lib/types.js'
 
 describe('the plan marks (free-plan D3.16)', () => {
-  it('name the free model and the models that need Pro or Max, and nothing else', () => {
+  it('name the free model, and nothing else: Free has no price ceiling (2026-10-22)', () => {
     expect(planWord('free')).toBe('free model')
-    expect(planWord('pro_and_max')).toBe('Pro and Max')
+    // The server sends pro_and_max only with a ceiling in Free's terms: no mark.
+    expect(planWord('pro_and_max')).toBeUndefined()
     expect(planWord('within_ceiling')).toBeUndefined()
     expect(planWord(undefined)).toBeUndefined()
   })
 
-  it('make a column only where the server marks a model', () => {
+  it('make a column only where a free model is listed', () => {
     const marked: PickModel[] = [{ id: 'a', plan: 'free' }, { id: 'b', plan: 'within_ceiling' }, { id: 'c', plan: 'pro_and_max' }]
     const [column] = planColumn(marked)
     expect(column.header).toBe('plan')
-    expect(marked.map(column.get)).toEqual(['free model', '', 'Pro and Max'])
-    // Pro and Max, or an older server: every model runs, no column.
-    expect(planColumn([{ id: 'a', plan: 'within_ceiling' }, { id: 'b' }])).toEqual([])
+    expect(marked.map(column.get)).toEqual(['free model', '', ''])
+    // No free model listed, or an older server: no column.
+    expect(planColumn([{ id: 'a', plan: 'within_ceiling' }, { id: 'b', plan: 'pro_and_max' }, { id: 'c' }])).toEqual([])
   })
 })
 
@@ -54,7 +55,7 @@ describe('a refusal\'s ways forward', () => {
     expect(planActions('rate_limit_exceeded', undefined)).toEqual([])
   })
 
-  it('tell a free model on a plan with no share from Free\'s ceiling by the session\'s model (amendment A5)', () => {
+  it('tell a free model on a plan with no share from any other model by the session\'s model (amendment A5)', () => {
     const free = 'orca/openrouter/cohere/north-mini-code:free'
     expect(freeModelNotInPlan('model_not_in_plan', free)).toBe(true)
     expect(freeModelNotInPlan('model_not_in_plan', 'orca/openrouter/anthropic/claude-fable-5')).toBe(false)

@@ -312,14 +312,14 @@ describe('Chat on the Free plan (free-plan D3.16)', () => {
     expect(lastFrame() ?? '').not.toContain('Top up, or switch')
   }, 20000)
 
-  it('after a model refused on Free, prints the ways forward and asks to upgrade or switch, the free model first, never to top up', async () => {
+  it('after a model the plan refuses, prints the ways forward and asks to upgrade or switch, the free model first, never to top up', async () => {
     const sent: string[] = []
     const send: SendTurn = async (message) => {
       sent.push(message)
       if (sent.length === 1) {
         return {
           terminated: 'error',
-          message: 'This model needs Pro or Max.',
+          message: 'This model is not part of this plan.',
           errorCode: 'model_not_in_plan',
           errorParam: 'agent.model',
           sessionId: 'sess_1',
@@ -388,10 +388,10 @@ describe('Chat after a plan refusal (free-plan D3.16)', () => {
     stdin.write('\r')
   }
 
-  it('declining the switch for a model that needs Pro or Max says to upgrade, not to top up', async () => {
+  it('declining the switch for a model the plan refuses says to upgrade, not to top up', async () => {
     const send: SendTurn = async () => ({
       terminated: 'error',
-      message: 'This model needs Pro or Max.',
+      message: 'This model is not part of this plan.',
       errorCode: 'model_not_in_plan',
       errorParam: 'agent.model',
       sessionId: 'sess_1',

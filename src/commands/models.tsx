@@ -15,7 +15,7 @@ const MODEL_COLUMN = 80
 // from GET /api/models: the picker's list, outside a terminal too
 // (orca-design publish-cli, D5.7, amended 2026-10-12). Every name and price
 // is the server's, and so is each Orca credit model's plan mark (free-plan
-// D3.16, F16): "free model", or "Pro and Max" for one Free cannot run.
+// D3.16, F16): "free model" for one of Orca's free models, else nothing.
 export function registerModels(program: Command): void {
   program
     .command('models')

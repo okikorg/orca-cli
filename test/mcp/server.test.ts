@@ -495,7 +495,9 @@ describe('orca mcp serve: models, artifacts and staged files', () => {
     const rows = JSON.parse(firstText(await client.callTool({ name: 'list_models', arguments: { payer: 'orca' } })))
     expect(rows.items).toEqual([{ ...free, payer: 'orca' }])
     const tool = (await client.listTools()).tools.find((t) => t.name === 'list_models')
-    for (const word of ['plan', 'free', 'within_ceiling', 'pro_and_max']) expect(tool?.description).toContain(word)
+    for (const word of ['plan', 'free', 'runs on credit on every plan']) expect(tool?.description).toContain(word)
+    // Free has no price ceiling (2026-10-22): the description names none.
+    expect(tool?.description).not.toMatch(/ceiling|pro_and_max|Pro or Max/)
   })
 
   it('get_wallet\'s description names granted and paid credit and the Free plan fields (free-plan D3.16)', async () => {

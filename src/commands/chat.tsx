@@ -89,9 +89,9 @@ function noteStaged(files: readonly StagedFile[]): void {
 const CONTINUE_MESSAGE = 'Continue'
 
 // refusedModel is the session's model for a 403 `model_not_in_plan`, which
-// names Free's ceiling or, on one of Orca's free models, a tier with no
-// free-model share (amendment A5): the server sends both with one code and
-// param. Undefined for any other refusal, or when the model cannot be read.
+// on one of Orca's free models is a tier with no free-model share
+// (amendment A5), and on any other model the plan's own refusal: the server
+// sends both with one code and param. Undefined for any other refusal, or when the model cannot be read.
 async function refusedModel(api: ApiContext, sessionId: string, code: string | undefined): Promise<string | undefined> {
   if (code !== 'model_not_in_plan') return undefined
   return withApi(api, (c) => c.sessionModel(sessionId)).then(

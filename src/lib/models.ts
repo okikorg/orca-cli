@@ -157,7 +157,7 @@ export function creditOut(code: string | undefined, param: string | undefined): 
 
 // SwitchCause is why a session is offered a switch of model: a credit ran
 // out, or the plan refused the model at admission (free-plan D3.16): a model
-// that needs Pro or Max (F14), or a free model withdrawn while another is
+// not in the organization's plan, or a free model withdrawn while another is
 // listed (amendment A3 (3)). Neither plan refusal is a credit refusal, so
 // neither offers a top-up.
 export type SwitchCause = 'orca_credit' | 'provider_quota' | 'model_not_in_plan' | 'free_model_unavailable'

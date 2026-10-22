@@ -289,8 +289,8 @@ describe('orca chat on the Free plan (free-plan D3.16)', () => {
     expect(stderr()).not.toContain(NETWORK)
   })
 
-  it('prints a model refused on Free as the server wrote it, with the ways forward, exit 1', async () => {
-    const message = 'This model needs Pro or Max. On Free, use the free model (cohere/north-mini-code:free), your own key, or a model up to $3/M input and $15/M output on credit you add. Upgrade: https://app.orcapods.ai/settings/plans'
+  it('prints a model the plan refuses as the server wrote it, with the ways forward, exit 1', async () => {
+    const message = 'This model is not part of this plan.'
     stubFetch({
       ...agentRoute(),
       'POST /v1/agents/sessions': jsonResponse(session()),
@@ -311,7 +311,7 @@ describe('orca chat on the Free plan (free-plan D3.16)', () => {
     expect(stderr()).toContain(`session ${SESSION_ID}`)
   })
 
-  it('tells a free model on a plan with no share from Free\'s ceiling by the session\'s model (amendment A5)', async () => {
+  it('tells a free model on a plan with no share from any other model by the session\'s model (amendment A5)', async () => {
     const message = "Orca's free model is not part of this plan. Switch this session to another model, or run it on your own OpenRouter key."
     stubFetch({
       ...agentRoute(),
@@ -454,7 +454,7 @@ describe('the switch on Free', () => {
         label: 'Orca credit',
         available: true,
         models: [
-          { id: 'orca/openrouter/anthropic/claude-fable-5', input_micro_usd_per_million: 10_000_000, output_micro_usd_per_million: 50_000_000, plan: 'pro_and_max' },
+          { id: 'orca/openrouter/anthropic/claude-fable-5', input_micro_usd_per_million: 10_000_000, output_micro_usd_per_million: 50_000_000, plan: 'within_ceiling' },
           { id: FREE, input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' },
         ],
       },

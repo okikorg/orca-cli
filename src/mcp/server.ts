@@ -253,7 +253,7 @@ export function buildMcpServer(getClient: ClientSource): McpServer {
 
   tool(
     'list_models',
-    'List the model names an agent can use, one row each: id, payer (orca for Orca credit, else the provider whose saved key pays) and, for Orca credit, OpenRouter\'s price per million tokens in micro-USD and plan, what this organization\'s plan allows: free (one of Orca\'s free models, no charge, on every plan with a free-model share; none are listed while they are off), within_ceiling (runs on credit), or pro_and_max (needs Pro or Max; on Free it is refused). Orca credit pays the price plus OpenRouter\'s fee (openrouter_fee_bps). The list is long: narrow it with query (part of the name, such as luna or claude) or payer, and page with limit and after. Use an id as an agent\'s model.',
+    'List the model names an agent can use, one row each: id, payer (orca for Orca credit, else the provider whose saved key pays) and, for Orca credit, OpenRouter\'s price per million tokens in micro-USD and plan: free for one of Orca\'s free models (no charge, on every plan with a free-model share; none are listed while they are off); every other Orca credit model runs on credit on every plan, Free included. Orca credit pays the price plus OpenRouter\'s fee (openrouter_fee_bps). The list is long: narrow it with query (part of the name, such as luna or claude) or payer, and page with limit and after. Use an id as an agent\'s model.',
     {
       payer: z.string().optional().describe('orca, or a provider such as anthropic'),
       query: z.string().optional().describe('only names containing this, in any case'),

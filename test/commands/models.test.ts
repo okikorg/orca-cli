@@ -46,7 +46,7 @@ const FREE_MODELS: ModelGroups = {
       models: [
         { ...luna, plan: 'within_ceiling' },
         { id: FREE, input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' },
-        { id: FABLE, input_micro_usd_per_million: 10_000_000, output_micro_usd_per_million: 50_000_000, plan: 'pro_and_max' },
+        { id: FABLE, input_micro_usd_per_million: 10_000_000, output_micro_usd_per_million: 50_000_000, plan: 'within_ceiling' },
       ],
     },
     MODELS.groups[1],
@@ -107,7 +107,7 @@ describe('orca models', () => {
     expect(stdout()).toBe([...ORCA_ROWS, ...ANTHROPIC_ROWS].join(''))
   })
 
-  it('marks the free model and the models that need Pro or Max, as the server says, and nothing else', async () => {
+  it('marks the free model, as the server says, and nothing else: Free has no price ceiling', async () => {
     stubFetch({ 'GET /api/models': jsonResponse(FREE_MODELS) })
     await run(['models', '--payer', 'orca'])
     const [lunaRow, freeRow, fableRow] = stdout().trimEnd().split('\n').map((line) => line.split('\t'))
@@ -115,7 +115,7 @@ describe('orca models', () => {
     expect(lunaRow[3]).toBe('-')
     expect(freeRow).toEqual([FREE, 'orca', '$0.00 in, $0.00 out per million tokens', 'free model'])
     expect(fableRow[0]).toBe(FABLE)
-    expect(fableRow[3]).toBe('Pro and Max')
+    expect(fableRow[3]).toBe('-')
   })
 
   it('passes the plan field through with --json', async () => {

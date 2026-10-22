@@ -188,7 +188,7 @@ orca agents create -f agent.yaml           # YAML or JSON; - for stdin
 orca agents update <agent> -f fields.yaml  # only the fields in the file change
 orca agents delete [agent] [--yes]
 
-orca models [--payer orca|<provider>]   # every model you can use, grouped by who pays, with Free's plan marks
+orca models [--payer orca|<provider>]   # every model you can use, grouped by who pays, with the free model marked
 
 orca sessions list [--agent agent]
 orca sessions get <id>                   # its model, sandbox, why the sandbox last slept, usage
@@ -274,9 +274,9 @@ outside a terminal the file must name the model; `orca models` lists the same
 names anywhere (`--payer orca` or `--payer anthropic` for one group, `--json`
 for the server's list). The server marks each Orca credit model for your
 plan: `orca models` shows "free model" for Orca's free models, on every plan
-(each plan with its own daily share, on the pricing page), and, on Free, "Pro and
-Max" for a model Free cannot run on credit. On Free the picker offers the free
-model first.
+(each plan with its own daily share, on the pricing page). Credit pays for
+every other Orca credit model on every plan, Free included. On Free the picker
+offers the free model first.
 
 `orca chat <agent> [prompt]` runs a turn on a `/v1` session with your API key.
 Without `--session` it creates a session of the agent first (no environment by
@@ -336,14 +336,12 @@ exists there), applies from the next turn for this session only, and continues
 with `Continue`. Outside a terminal or with `--json` it prints the reason and
 the session id and exits 1.
 
-On the Free plan, a refusal (a model that needs Pro or Max, a paid model with
-no credit, the free model's calls used up for today, the included machine
-time used up, the free model or Free sandboxes busy, the day's turns
+On the Free plan, a refusal (a paid model with no credit, the free model's
+calls used up for today, the included machine time used up, the free model or Free sandboxes busy, the day's turns
 used) prints the server's message and its ways forward as
 words: switch this session to the free model, add a provider key, add credit,
 upgrade, or try again later, each with its command. Where the free model is one of them, the
-switch in a terminal lists it first. For a model that needs Pro or Max the
-terminal asks whether to upgrade or switch this session, never to top up.
+switch in a terminal lists it first.
 The free model's refusals reach every
 plan: its calls used up for today, the free model busy, the free model
 withdrawn (the switch then offers the next free model the server lists), the

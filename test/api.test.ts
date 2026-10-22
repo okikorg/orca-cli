@@ -137,8 +137,7 @@ describe('mapApiError', () => {
 
   it('prints a Free plan refusal as the server wrote it, with its ways forward, never as the key\'s role', () => {
     // free-plan D3.16: a 403 model_not_in_plan is the plan's answer.
-    const message =
-      'This model needs Pro or Max. On Free, use the free model (cohere/north-mini-code:free), your own key, or a model up to $3/M input and $15/M output on credit you add. Upgrade: https://app.orcapods.ai/settings/plans'
+    const message = 'This model is not part of this plan.'
     const notInPlan = OpenAIAPIError.generate(
       403,
       { error: { message, type: 'invalid_request_error', param: 'agent.model', code: 'model_not_in_plan' } },
