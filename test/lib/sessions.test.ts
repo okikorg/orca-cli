@@ -137,7 +137,7 @@ describe('the server\'s session notices (free-plan D3.16)', () => {
       'This turn reached Free\'s 30 minutes.',
     )
     expect(noticeText({ type: 'orca.network.off', message: 'The network is off in Free sandboxes.' })).toBe(
-      'network  off. The network is off in Free sandboxes.',
+      'The network is off in Free sandboxes.',
     )
   })
 

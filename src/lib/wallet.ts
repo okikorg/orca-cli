@@ -33,14 +33,15 @@ export function freeModelCalls(w: Wallet): string | null {
   return `${today.calls_today} of ${today.calls_per_day} calls today`
 }
 
-// networkLine is the network line: "off." and the server's message while
-// Free sandboxes have none; "on." and its message while running sandboxes
-// still lack it once the organization has credit (amendment A6 (28)). Null
-// when the network is on with nothing to say.
+// networkLine is the network line: the server's message, which says itself
+// whether the network is off (Free sandboxes until credit) or on with running
+// sandboxes that still lack it (amendment A6 (28), A10). "off." alone from a
+// server that sends no message. Null when the network is on with nothing to say.
 export function networkLine(w: Wallet): string | null {
   const network = w.network
-  if (!network || (!network.off && !network.message)) return null
-  return `${network.off ? 'off.' : 'on.'} ${stripControlSequences(network.message ?? '')}`.trimEnd()
+  if (!network) return null
+  const message = stripControlSequences(network.message ?? '').trim()
+  return message || (network.off ? 'off.' : null)
 }
 
 // creditRequest is where a Free organization asks for credit, in the

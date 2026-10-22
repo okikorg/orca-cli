@@ -78,7 +78,8 @@ describe('WalletView', () => {
     expect(frame).toContain('WALLET · free plan')
     expect(frame).toContain('machine time 1 h included: 0.4 h used, resets 1 November')
     expect(frame).toContain('free model 40 of 100 calls today')
-    expect(frame).toContain(`network off. ${NETWORK}`)
+    expect(frame).toContain(`network ${NETWORK}`)
+    expect(frame).not.toContain('off. ')
     expect(frame).toContain(`more credit ${MORE_CREDIT}`)
   })
 
@@ -118,12 +119,18 @@ describe('WalletView', () => {
     expect(frame).not.toContain('network')
   })
 
+  it('prints the network\'s message alone, never "off." twice (A10); "off." only from a server that sends no message', () => {
+    const frame = (render(<WalletView wallet={{ ...FREE_WALLET, network: { off: true } }} />).lastFrame() ?? '').replace(/\s+/g, ' ')
+    expect(frame).toContain('network off.')
+  })
+
   it('prints the server\'s message while running sandboxes started without the network (amendment A6 (28))', () => {
     const ON = 'Your organization has credit, so the network is on. Sandboxes that started before then get it after their next sleep.'
     const network = { off: false, sandboxes_without_network: 2, message: ON }
     for (const wallet of [{ ...FREE_WALLET, network }, { ...WALLET, network }]) {
       const frame = (render(<WalletView wallet={wallet} />).lastFrame() ?? '').replace(/\s+/g, ' ')
-      expect(frame).toContain(`network on. ${ON}`)
+      expect(frame).toContain(`network ${ON}`)
+      expect(frame).not.toContain('on. Your')
     }
   })
 
