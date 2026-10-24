@@ -2,19 +2,31 @@
 // server writes every message; the CLI adds only the ways forward the
 // dashboard offers as buttons, here as words with the command for each.
 
-import type { ModelPlan, PickModel } from './types.js'
+import { DEFAULT_DASHBOARD_URL } from './defaults.js'
+import type { ModelGroups, ModelPlan, PickModel } from './types.js'
 
 // planWord is an Orca credit model's mark, as `orca models` and the pickers
-// show it: a free model (on every tier with a share, amendment A4), or
-// nothing. Credit pays for every other Orca credit model on every plan,
-// Free included, so no other mark is shown.
+// show it: a free model (on every tier with a share, amendment A4), a model
+// above Free's price ceiling, which Free lists but does not run (A12 (6)),
+// or nothing.
 export function planWord(plan: ModelPlan | undefined): string | undefined {
-  return plan === 'free' ? 'free model' : undefined
+  return plan === 'free' ? 'free model' : plan === 'pro_and_max' ? 'Pro and Max' : undefined
 }
 
-// planColumn is a model table's plan column: present only where a free
-// model is listed. The free models are marked on every tier (amendment A4);
-// with them off or on a tier with no share (A5), there is no column.
+// needsCreditLine is the line under a list the server cut to the free
+// models because the organization is on Free without credit (A12 (4)):
+// the dashboard's Wallet, or the CLI's own wallet with no dashboard set.
+export function needsCreditLine(list: ModelGroups, dashboardUrl?: string | null): string | undefined {
+  const cut = list.groups.some((group) => group.payer === 'orca_credit' && group.needs_credit === true)
+  if (!cut) return undefined
+  const dashboard = dashboardUrl ?? DEFAULT_DASHBOARD_URL
+  return `Add credit to use other models: ${dashboard ? `${dashboard.replace(/\/+$/, '')}/wallet` : 'orca billing wallet'}`
+}
+
+// planColumn is a model table's plan column: present only where a model is
+// marked. The free models are marked on every tier (amendment A4); with
+// them off or on a tier with no share (A5), and nothing above a ceiling,
+// there is no column.
 export function planColumn(models: readonly PickModel[]): { header: string; get: (m: PickModel) => string }[] {
   return models.some((m) => planWord(m.plan)) ? [{ header: 'plan', get: (m) => planWord(m.plan) ?? '' }] : []
 }

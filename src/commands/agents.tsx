@@ -7,6 +7,7 @@ import { CliError, ExitCode } from '../lib/errors.js'
 import { formatTime } from '../lib/format.js'
 import { freeFirst, freeModels, pickerItems } from '../lib/models.js'
 import { interactive, outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
+import { needsCreditLine } from '../lib/plan.js'
 import { accentVerb, hintText } from '../ui/theme.js'
 import { confirm } from './prompts.js'
 import {
@@ -68,6 +69,9 @@ async function pickModel(api: ApiContext): Promise<string> {
       'Name the model in the file instead, such as model: orca/openrouter/openai/gpt-5.6-luna',
     ])
   }
+  // Free without credit: the server listed only the free models (A12 (4)).
+  const credit = needsCreditLine(list, api.resolved.dashboardUrl)
+  if (credit) process.stderr.write(`${hintText(credit)}\n`)
   const { pickItem } = await import('../ui/AgentPicker.js')
   return pickItem('Select a model (type to filter)', items, free[0])
 }

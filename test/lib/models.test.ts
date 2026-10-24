@@ -137,8 +137,8 @@ describe('the switch', () => {
 })
 
 // The same list for a Free organization: the server marks the free model
-// `free` and every other Orca credit model `within_ceiling` (free-plan
-// D3.16, F16; Free has no price ceiling since 2026-10-22).
+// `free`, Luna `within_ceiling`, and Fable above Free's $3/$15 ceiling
+// `pro_and_max` (free-plan D3.16, F16, A12).
 const FREE = 'orca/openrouter/cohere/north-mini-code:free'
 const FREE_LIST: ModelGroups = {
   ...LIST,
@@ -147,7 +147,7 @@ const FREE_LIST: ModelGroups = {
       ...LIST.groups[0],
       models: [
         { ...LIST.groups[0].models[0], plan: 'within_ceiling' },
-        { id: 'orca/openrouter/anthropic/claude-fable-5', input_micro_usd_per_million: 10_000_000, output_micro_usd_per_million: 50_000_000, plan: 'within_ceiling' },
+        { id: 'orca/openrouter/anthropic/claude-fable-5', input_micro_usd_per_million: 10_000_000, output_micro_usd_per_million: 50_000_000, plan: 'pro_and_max' },
         { id: FREE, input_micro_usd_per_million: 0, output_micro_usd_per_million: 0, plan: 'free' },
       ],
     },
@@ -172,14 +172,18 @@ describe('the free model', () => {
     // No free model, no change.
     expect(freeFirst(pickerItems(LIST), [])).toEqual(pickerItems(LIST))
   })
-  it('and only the free model is marked in the picker\'s detail', () => {
+  it('and the free model and the models above Free\'s ceiling are marked in the picker\'s detail (A12 (6))', () => {
     const sep = glyphs.separator
     const items = pickerItems(FREE_LIST)
     expect(items.find((item) => item.value === FREE)?.detail).toBe(
       `Orca credit, OpenRouter's price plus their 5.5% fee ${sep} $0.00 in, $0.00 out per million tokens ${sep} free model`,
     )
-    expect(items.find((item) => item.value.includes('fable'))?.detail).not.toMatch(/Pro and Max|free model/)
+    expect(items.find((item) => item.value.includes('fable'))?.detail).toMatch(/Pro and Max$/)
     expect(items.find((item) => item.value.endsWith('luna'))?.detail).not.toMatch(/Pro and Max|free model/)
+  })
+  it('and a model above Free\'s ceiling cannot be picked (A12 (6))', () => {
+    const items = pickerItems(FREE_LIST)
+    expect(items.filter((item) => item.disabled).map((item) => item.value)).toEqual(['orca/openrouter/anthropic/claude-fable-5'])
   })
   it('keeps its plan in the flat rows the MCP server lists', () => {
     const rows = modelRows(FREE_LIST, 'north')

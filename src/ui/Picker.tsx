@@ -10,6 +10,8 @@ export type PickerItem = {
   // Optional trailing metadata (id, status, age); rendered subtle after the
   // label so callers can pack context into a row without a second column.
   detail?: string
+  // Shown dimmed and never submitted; the detail says why.
+  disabled?: boolean
 }
 
 type PickerProps = {
@@ -57,7 +59,7 @@ export function Picker({ items, onSubmit, onCancel, placeholder, initial }: Pick
       return
     }
     if (key.return) {
-      if (active >= 0) onSubmit(filtered[active].value)
+      if (active >= 0 && !filtered[active].disabled) onSubmit(filtered[active].value)
       return
     }
     if (key.upArrow) {
@@ -88,7 +90,9 @@ export function Picker({ items, onSubmit, onCancel, placeholder, initial }: Pick
         return (
           <Box key={it.value}>
             <Text color={theme.accent}>{isActive ? `${glyphs.pointer} ` : '  '}</Text>
-            <Text color={isActive ? theme.accent : undefined}>{it.label}</Text>
+            <Text color={isActive ? theme.accent : undefined} dimColor={it.disabled}>
+              {it.label}
+            </Text>
             {it.detail ? <Text color={theme.subtle}> {it.detail}</Text> : null}
           </Box>
         )
