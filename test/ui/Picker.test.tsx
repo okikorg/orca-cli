@@ -87,6 +87,24 @@ describe('Picker', () => {
     expect(picked).toBe('sales-bot')
   })
 
+  it('skips a disabled row: enter on it picks nothing (A12 (6))', async () => {
+    let picked: string | undefined
+    const withDisabled: PickerItem[] = [items[0], { ...items[1], disabled: true }, items[2]]
+    const { stdin, lastFrame } = render(<Picker items={withDisabled} onSubmit={(v) => (picked = v)} onCancel={() => {}} />)
+    await waitFor(() => (lastFrame() ?? '').includes('triage'))
+    await ready(stdin as unknown as EventEmitter)
+    stdin.write('\x1B[B') // down arrow -> the disabled row
+    await waitFor(() => ((lastFrame() ?? '').split('\n').find((r) => r.includes('sales-bot')) ?? '').trimStart().startsWith(glyphs.pointer))
+    stdin.write('\r')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(picked).toBeUndefined()
+    stdin.write('\x1B[B') // -> triage
+    await waitFor(() => ((lastFrame() ?? '').split('\n').find((r) => r.includes('triage')) ?? '').trimStart().startsWith(glyphs.pointer))
+    stdin.write('\r')
+    await waitFor(() => picked !== undefined)
+    expect(picked).toBe('triage')
+  })
+
   it('cancels on escape without submitting', async () => {
     let cancelled = false
     let picked: string | undefined

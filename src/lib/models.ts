@@ -100,17 +100,18 @@ export function modelRows(list: ModelGroups, query?: string): ModelRow[] {
   )
 }
 
-export type ModelItem = { label: string; value: string; detail: string }
+export type ModelItem = { label: string; value: string; detail: string; disabled?: boolean }
 
 // pickerItems lists the groups' models for the terminal picker, in the
 // server's order. The group (who pays), the price and the plan's mark go in
-// each row's detail, since the picker has no headings.
+// each row's detail, since the picker has no headings. A model above Free's
+// ceiling is shown and cannot be picked (A12 (6)).
 export function pickerItems(list: ModelGroups, include: (group: ModelGroup) => boolean = () => true): ModelItem[] {
   return list.groups.filter(include).flatMap((group) => {
     const heading = groupHeading(group, list.openrouter_fee_bps)
     return group.models.map((model) => {
       const detail = [heading, priceLine(model), planWord(model.plan)].filter(Boolean).join(` ${glyphs.separator} `)
-      return { label: model.id, value: model.id, detail }
+      return { label: model.id, value: model.id, detail, ...(model.plan === 'pro_and_max' ? { disabled: true } : {}) }
     })
   })
 }

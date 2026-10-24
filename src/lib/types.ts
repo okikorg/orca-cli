@@ -203,9 +203,9 @@ export type Payer = 'orca_credit' | 'own_key'
 
 // What the organization's plan allows of an Orca credit model (orca-design
 // free-plan D3.16, F16): `free` is a free model (on every tier with a
-// share, amendment A4), `within_ceiling` runs on credit. The server sends
-// `pro_and_max` only when Free's terms set a price ceiling, which they have
-// not since 2026-10-22; the CLI shows no mark for either.
+// share, amendment A4), `within_ceiling` runs on credit, and `pro_and_max`
+// is above Free's price ceiling: listed on Free with credit, never picked
+// (A12 (6)).
 export type ModelPlan = 'free' | 'within_ceiling' | 'pro_and_max'
 
 // One model a member can pick. Prices are OpenRouter's, Orca credit only, in
@@ -226,6 +226,9 @@ export type ModelGroup = {
   label: string
   // False when the server could not read this list; it then has no models.
   available: boolean
+  // Orca credit only: true when Free without credit cut the list to the
+  // free models (A12 (4)); absent from an older server.
+  needs_credit?: boolean
   models: PickModel[]
 }
 

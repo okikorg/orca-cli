@@ -2,7 +2,7 @@ import type { Command } from 'commander'
 
 import { groupHeading, payerWord, priceLine, withPayer } from '../lib/models.js'
 import { outputMode, printJson, printPlainRows, renderStatic } from '../lib/output.js'
-import { planColumn, planWord } from '../lib/plan.js'
+import { needsCreditLine, planColumn, planWord } from '../lib/plan.js'
 import type { PickModel } from '../lib/types.js'
 import { hintText } from '../ui/theme.js'
 import { apiContext, globalFlags, withApi } from './shared.js'
@@ -15,7 +15,9 @@ const MODEL_COLUMN = 80
 // from GET /api/models: the picker's list, outside a terminal too
 // (orca-design publish-cli, D5.7, amended 2026-10-12). Every name and price
 // is the server's, and so is each Orca credit model's plan mark (free-plan
-// D3.16, F16): "free model" for one of Orca's free models, else nothing.
+// D3.16, F16, A12 (6)): "free model" for one of Orca's free models, "Pro and
+// Max" above Free's price ceiling, else nothing; and when Free without
+// credit cut the list, a line saying credit is what it needs.
 export function registerModels(program: Command): void {
   program
     .command('models')
@@ -33,6 +35,8 @@ export function registerModels(program: Command): void {
       for (const group of list.groups.filter((g) => !g.available)) {
         console.error(hintText(`${group.label}: the server could not read this list.`))
       }
+      const credit = needsCreditLine(list, api.resolved.dashboardUrl)
+      if (credit) console.error(hintText(credit))
       if (mode === 'plain') {
         printPlainRows(
           list.groups.flatMap((group) =>

@@ -1,24 +1,36 @@
 import { describe, expect, it } from 'vitest'
 
-import { freeModelNotInPlan, planActions, planColumn, planWord, planWords } from '../../src/lib/plan.js'
-import type { PickModel } from '../../src/lib/types.js'
+import { freeModelNotInPlan, needsCreditLine, planActions, planColumn, planWord, planWords } from '../../src/lib/plan.js'
+import type { ModelGroups, PickModel } from '../../src/lib/types.js'
 
 describe('the plan marks (free-plan D3.16)', () => {
-  it('name the free model, and nothing else: Free has no price ceiling (2026-10-22)', () => {
+  it('name the free model and the models above Free\'s ceiling (A12 (6))', () => {
     expect(planWord('free')).toBe('free model')
-    // The server sends pro_and_max only with a ceiling in Free's terms: no mark.
-    expect(planWord('pro_and_max')).toBeUndefined()
+    expect(planWord('pro_and_max')).toBe('Pro and Max')
     expect(planWord('within_ceiling')).toBeUndefined()
     expect(planWord(undefined)).toBeUndefined()
   })
 
-  it('make a column only where a free model is listed', () => {
+  it('make a column only where a model is marked', () => {
     const marked: PickModel[] = [{ id: 'a', plan: 'free' }, { id: 'b', plan: 'within_ceiling' }, { id: 'c', plan: 'pro_and_max' }]
     const [column] = planColumn(marked)
     expect(column.header).toBe('plan')
-    expect(marked.map(column.get)).toEqual(['free model', '', ''])
-    // No free model listed, or an older server: no column.
-    expect(planColumn([{ id: 'a', plan: 'within_ceiling' }, { id: 'b', plan: 'pro_and_max' }, { id: 'c' }])).toEqual([])
+    expect(marked.map(column.get)).toEqual(['free model', '', 'Pro and Max'])
+    expect(planColumn([{ id: 'b', plan: 'pro_and_max' }]).length).toBe(1)
+    // Nothing marked, or an older server: no column.
+    expect(planColumn([{ id: 'a', plan: 'within_ceiling' }, { id: 'c' }])).toEqual([])
+  })
+
+  it('say credit is what the list needs, when the server cut it (A12 (4), (6))', () => {
+    const list = (needs_credit?: boolean): ModelGroups => ({
+      object: 'list',
+      openrouter_fee_bps: 550,
+      groups: [{ payer: 'orca_credit', provider: 'openrouter', label: 'Orca credit', available: true, ...(needs_credit === undefined ? {} : { needs_credit }), models: [] }],
+    })
+    expect(needsCreditLine(list(true), 'https://app.orcapods.ai')).toBe('Add credit to use other models: https://app.orcapods.ai/wallet')
+    expect(needsCreditLine(list(false), 'https://app.orcapods.ai')).toBeUndefined()
+    expect(needsCreditLine(list(true), 'https://dash.example/')).toBe('Add credit to use other models: https://dash.example/wallet')
+    expect(needsCreditLine(list(), 'https://app.orcapods.ai')).toBeUndefined()
   })
 })
 
