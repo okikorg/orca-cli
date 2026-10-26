@@ -181,10 +181,12 @@ export type Wallet = {
 }
 
 // One grant with credit left: an operator grant (`grant`, with its reason
-// code) or honoured signup credit (`signup`). expires_at is the first moment
-// it no longer counts, 00:00 UTC the day after its last day.
+// code), honoured signup credit (`signup`), or credit carried over from Orca
+// 1.x that was given a last day (`opening`, orca-design D3.16 A13).
+// expires_at is the first moment it no longer counts, 00:00 UTC the day
+// after its last day.
 export type GrantedCredit = {
-  kind: 'grant' | 'signup'
+  kind: 'grant' | 'signup' | 'opening'
   grant_reason: string | null
   granted_micro_usd: number
   left_micro_usd: number
